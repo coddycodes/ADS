@@ -186,7 +186,7 @@ fn run() -> Result<(), VerificationError> {
     let arguments = env::args_os().skip(1).collect::<Vec<_>>();
     let [config_path, manifest_path, assets_dir] = arguments.as_slice() else {
         return Err(verification_error(
-            "Usage: bibcode-updater-verifier <tauri-release-config> <latest-json> <assets-dir>",
+            "Usage: coddy-studio-updater-verifier <tauri-release-config> <latest-json> <assets-dir>",
         ));
     };
     let verified = verify_release(
@@ -254,7 +254,7 @@ mod tests {
                 target.to_owned(),
                 json!({
                     "signature": signature,
-                    "url": format!("https://github.com/mubeda/BibCode/releases/download/v1.2.3/{artifact}")
+                    "url": format!("https://github.com/mubeda/CoddyStudio/releases/download/v1.2.3/{artifact}")
                 }),
             )
         })

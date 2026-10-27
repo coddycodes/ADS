@@ -1,13 +1,13 @@
 import {
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   EnvironmentId,
   type DesktopEnvironmentBootstrap,
   type ExecutionEnvironmentDescriptor,
-} from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import * as Effect from "effect/Effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -146,8 +146,8 @@ describe("environmentBootstrap", () => {
     await installDescriptorApi();
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/bibcode/environment")).toBe(
-      "https://remote.example.com/.well-known/bibcode/environment",
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/coddy-studio/environment")).toBe(
+      "https://remote.example.com/.well-known/coddy-studio/environment",
     );
   });
 
@@ -156,8 +156,8 @@ describe("environmentBootstrap", () => {
     await installDescriptorApi();
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/bibcode/environment")).toBe(
-      "https://remote.example.com/.well-known/bibcode/environment",
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/coddy-studio/environment")).toBe(
+      "https://remote.example.com/.well-known/coddy-studio/environment",
     );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
@@ -170,8 +170,8 @@ describe("environmentBootstrap", () => {
     await installDescriptorApi();
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/bibcode/environment")).toBe(
-      "https://remote.example.com/.well-known/bibcode/environment",
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/coddy-studio/environment")).toBe(
+      "https://remote.example.com/.well-known/coddy-studio/environment",
     );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
@@ -223,8 +223,8 @@ describe("environmentBootstrap", () => {
     await installDescriptorApi();
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/bibcode/environment")).toBe(
-      "http://localhost:5735/.well-known/bibcode/environment",
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/coddy-studio/environment")).toBe(
+      "http://localhost:5735/.well-known/coddy-studio/environment",
     );
   });
 
@@ -250,8 +250,8 @@ describe("environmentBootstrap", () => {
     await installDescriptorApi();
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/bibcode/environment")).toBe(
-      "http://127.0.0.1:3773/.well-known/bibcode/environment",
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/coddy-studio/environment")).toBe(
+      "http://127.0.0.1:3773/.well-known/coddy-studio/environment",
     );
   });
 
@@ -350,7 +350,7 @@ describe("environmentBootstrap", () => {
     expect(readPrimaryEnvironmentTarget).toThrowError(
       expect.objectContaining({ _tag: "DesktopPrimaryEnvironmentWithheldError" }),
     );
-    expect(() => resolvePrimaryEnvironmentHttpUrl("/.well-known/bibcode/environment")).toThrowError(
+    expect(() => resolvePrimaryEnvironmentHttpUrl("/.well-known/coddy-studio/environment")).toThrowError(
       expect.objectContaining({ _tag: "DesktopPrimaryEnvironmentWithheldError" }),
     );
     expect(
@@ -409,8 +409,8 @@ describe("environmentBootstrap", () => {
         wsBaseUrl: "wss://app.example.test/",
       },
     });
-    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/bibcode/environment")).toBe(
-      "https://app.example.test/.well-known/bibcode/environment",
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/coddy-studio/environment")).toBe(
+      "https://app.example.test/.well-known/coddy-studio/environment",
     );
   });
 
@@ -475,7 +475,7 @@ describe("environmentBootstrap", () => {
 
   it("preserves an unsupported window-origin protocol", () => {
     vi.stubGlobal("window", {
-      location: { origin: "file:///tmp/bibcode/" },
+      location: { origin: "file:///tmp/coddy-studio/" },
       history: { replaceState: vi.fn() },
     });
 
@@ -498,7 +498,7 @@ import { IDBFactory } from "fake-indexeddb";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { PlatformConnectionSource } from "@bibcode/client-runtime/platform";
+import { PlatformConnectionSource } from "@coddy/client-runtime/platform";
 import { connectionPlatformLayer } from "../../connection/platform";
 import { PrimaryEnvironmentHttpClient, layer as primaryHttpClientLayer } from "./httpClient";
 import { makePrimaryEnvironmentHttpLayer } from "./httpLayer";
@@ -550,7 +550,7 @@ describe("cookie primary platform bootstrap", () => {
               sessionCookieName: "inert-session",
             },
           });
-        if (url.pathname === "/.well-known/bibcode/environment")
+        if (url.pathname === "/.well-known/coddy-studio/environment")
           return Response.json(BASE_ENVIRONMENT);
         throw new Error("Unexpected primary bootstrap request");
       });
@@ -578,7 +578,7 @@ describe("cookie primary platform bootstrap", () => {
         expect(requests.map((request) => [request.path, request.port])).toEqual([
           ["/api/auth/browser-session", "4885"],
           ["/api/auth/session", "4885"],
-          ["/.well-known/bibcode/environment", "4885"],
+          ["/.well-known/coddy-studio/environment", "4885"],
         ]);
         expect(requests.at(-1)?.credentials).toBe("include");
       }).pipe(Effect.provide(connectionPlatformLayer), Effect.scoped);

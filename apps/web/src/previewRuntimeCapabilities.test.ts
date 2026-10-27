@@ -1,4 +1,4 @@
-import type { DesktopPreviewBridge } from "@bibcode/contracts";
+import type { DesktopPreviewBridge } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { supportsPreviewRuntimeCapability } from "./previewRuntimeCapabilities";

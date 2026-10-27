@@ -3,7 +3,7 @@ import type {
   TerminalConsoleTheme,
   TerminalSessionSnapshot,
   TerminalSize,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import {
   createTerminalTranscript,

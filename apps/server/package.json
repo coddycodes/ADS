@@ -1,12 +1,12 @@
 {
-  "name": "bibcode",
+  "name": "coddy-studio",
   "version": "0.11.0",
   "private": true,
   "scripts": {
-    "build": "node ../../scripts/run-msvc.mjs cargo build -p bibcode-server",
-    "dev": "node ../../scripts/run-msvc.mjs cargo run -p bibcode-server --bin bibcode -- serve --no-browser",
-    "start": "node ../../scripts/run-msvc.mjs cargo run -p bibcode-server --bin bibcode --",
-    "test": "node ../../scripts/run-msvc.mjs cargo test -p bibcode-server -j 2",
-    "typecheck": "node ../../scripts/run-msvc.mjs cargo check -p bibcode-server --all-targets"
+    "build": "node ../../scripts/run-msvc.mjs cargo build -p coddy-studio-server",
+    "dev": "node ../../scripts/run-msvc.mjs cargo run -p coddy-studio-server --bin coddy-studio -- serve --no-browser",
+    "start": "node ../../scripts/run-msvc.mjs cargo run -p coddy-studio-server --bin coddy-studio --",
+    "test": "node ../../scripts/run-msvc.mjs cargo test -p coddy-studio-server -j 2",
+    "typecheck": "node ../../scripts/run-msvc.mjs cargo check -p coddy-studio-server --all-targets"
   }
 }

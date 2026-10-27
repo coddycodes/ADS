@@ -22,7 +22,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get},
 };
-use bibcode_server::{
+use coddy_studio_server::{
     preview::gateway::{
         GatewaySessions,
         capability::CapabilityIssuer,
@@ -45,8 +45,8 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
-const SESSION_COOKIE: &str = "bibcode_session_3773";
-const EXPIRED_COPY: &str = "This preview link expired. Go back to BiBCode and open it again.";
+const SESSION_COOKIE: &str = "coddy_studio_session_3773";
+const EXPIRED_COPY: &str = "This preview link expired. Go back to Coddy Studio and open it again.";
 const THREAD: &str = "thread-1";
 
 /// Principal fake: the session's expiry, and whether checks hang (a stalled repository).
@@ -100,8 +100,8 @@ async fn redirect(headers: HeaderMap) -> Response {
         .into_response();
     for cookie in [
         "app=1; Domain=localhost; Path=/",
-        "bibcode_session_3773=stolen; Path=/",
-        "bibcode-gw-1=stolen; Path=/",
+        "coddy_studio_session_3773=stolen; Path=/",
+        "coddy-studio-gw-1=stolen; Path=/",
     ] {
         response
             .headers_mut()
@@ -297,7 +297,7 @@ impl Gateway {
     async fn bootstrap_with(&self, cap: &str) -> reqwest::Response {
         self.http
             .get(format!(
-                "{}/__bibcode/bootstrap?cap={cap}&to=%2F%3Fkey%3Dab",
+                "{}/__coddy-studio/bootstrap?cap={cap}&to=%2F%3Fkey%3Dab",
                 self.base
             ))
             .send()
@@ -310,7 +310,7 @@ impl Gateway {
         let response = self
             .http
             .get(format!(
-                "{}/__bibcode/bootstrap?cap={}&to=%2F&ui={}",
+                "{}/__coddy-studio/bootstrap?cap={}&to=%2F&ui={}",
                 self.base,
                 self.capability(),
                 percent_encoding::utf8_percent_encode(ui, percent_encoding::NON_ALPHANUMERIC)
@@ -365,10 +365,10 @@ fn closed_port() -> u16 {
 }
 
 #[tokio::test]
-async fn bibcode_can_frame_previews_and_follow_their_navigation() {
+async fn coddy_studio_can_frame_previews_and_follow_their_navigation() {
     let (upstream, _) = start_upstream().await;
     let gateway = Gateway::default_for(upstream).await;
-    // A session opened by a browser-mode BiBCode UI, which frames the preview.
+    // A session opened by a browser-mode Coddy Studio UI, which frames the preview.
     let cookie = gateway.framed_session_cookie("http://127.0.0.1:3773").await;
 
     let page = gateway
@@ -400,7 +400,7 @@ async fn bibcode_can_frame_previews_and_follow_their_navigation() {
     );
     assert_eq!(
         page.text().await.unwrap(),
-        "<!doctype html><html><head><script src=\"/__bibcode/frame.js\"></script>\
+        "<!doctype html><html><head><script src=\"/__coddy-studio/frame.js\"></script>\
 <title>App</title></head><body>hi</body></html>"
     );
 
@@ -486,10 +486,10 @@ async fn bibcode_can_frame_previews_and_follow_their_navigation() {
         .unwrap();
     assert_eq!(echoed["accept-encoding"], "gzip, br");
 
-    // The reporter needs no session; it does nothing outside BiBCode's frame.
+    // The reporter needs no session; it does nothing outside Coddy Studio's frame.
     let script = gateway
         .http
-        .get(format!("{}/__bibcode/frame.js", gateway.base))
+        .get(format!("{}/__coddy-studio/frame.js", gateway.base))
         .send()
         .await
         .unwrap();
@@ -503,7 +503,7 @@ async fn bibcode_can_frame_previews_and_follow_their_navigation() {
             .text()
             .await
             .unwrap()
-            .contains("bibcode-preview-frame")
+            .contains("coddy-studio-preview-frame")
     );
 }
 
@@ -546,7 +546,7 @@ async fn an_expired_preview_explains_itself_inside_the_frame() {
     let expired = gateway
         .http
         .get(format!("{}/page", gateway.base))
-        .header(header::COOKIE, "bibcode-gw-1=gone")
+        .header(header::COOKIE, "coddy-studio-gw-1=gone")
         .send()
         .await
         .unwrap();
@@ -596,7 +596,7 @@ async fn opening_a_framed_preview_in_a_tab_keeps_the_frame_working() {
     let response = gateway
         .http
         .get(format!(
-            "{}/__bibcode/bootstrap?cap={}&to=%2F",
+            "{}/__coddy-studio/bootstrap?cap={}&to=%2F",
             gateway.base,
             gateway.capability()
         ))
@@ -636,7 +636,7 @@ async fn bootstrap_remembers_only_a_ui_origin_on_the_gateway_host() {
     let gateway = Gateway::default_for(upstream).await;
     let bootstrap = |ui: &str| {
         let url = format!(
-            "{}/__bibcode/bootstrap?cap={}&to=%2F&ui={}",
+            "{}/__coddy-studio/bootstrap?cap={}&to=%2F&ui={}",
             gateway.base,
             gateway.capability(),
             percent_encoding::utf8_percent_encode(ui, percent_encoding::NON_ALPHANUMERIC)
@@ -652,7 +652,9 @@ async fn bootstrap_remembers_only_a_ui_origin_on_the_gateway_host() {
     );
     let page = framed.text().await.unwrap();
     assert!(
-        page.contains(r#"sessionStorage.setItem("bibcode-ui-origin","http://127.0.0.1:3773")"#),
+        page.contains(
+            r#"sessionStorage.setItem("coddy-studio-ui-origin","http://127.0.0.1:3773")"#
+        ),
         "{page}"
     );
 
@@ -683,7 +685,10 @@ async fn bootstrap_sets_port_named_cookie_and_redirects_via_page() {
         .unwrap()
         .to_owned();
     assert!(
-        set_cookie.starts_with(&format!("bibcode-gw-{}=", gateway.running.gateway_port)),
+        set_cookie.starts_with(&format!(
+            "coddy-studio-gw-{}=",
+            gateway.running.gateway_port
+        )),
         "{set_cookie}"
     );
     // Lax, so an OAuth provider's top-level redirect back to the app carries it.
@@ -707,7 +712,7 @@ async fn bootstrap_rejects_invalid_target_without_consuming_the_capability() {
     let response = gateway
         .http
         .get(format!(
-            "{}/__bibcode/bootstrap?cap={cap}&to=https%3A%2F%2Fevil.test%2F",
+            "{}/__coddy-studio/bootstrap?cap={cap}&to=https%3A%2F%2Fevil.test%2F",
             gateway.base
         ))
         .send()
@@ -790,7 +795,9 @@ async fn forwards_get_with_host_rewrite_and_stripped_credentials() {
         .get(format!("{}/echo", gateway.base))
         .header(
             header::COOKIE,
-            format!("{cookie}; {SESSION_COOKIE}=secret; app=1; bibcode-gw-9=other; theme=dark"),
+            format!(
+                "{cookie}; {SESSION_COOKIE}=secret; app=1; coddy-studio-gw-9=other; theme=dark"
+            ),
         )
         .header(header::AUTHORIZATION, "Bearer secret")
         .header("dpop", "proof")

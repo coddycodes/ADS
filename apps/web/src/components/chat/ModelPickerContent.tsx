@@ -2,8 +2,8 @@ import {
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
-} from "@bibcode/contracts";
-import { resolveSelectableModel } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { resolveSelectableModel } from "@coddy/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { SearchIcon } from "lucide-react";

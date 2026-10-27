@@ -11,13 +11,13 @@ import {
   RelayEnvironmentHealthResponseProofPayload,
   RelayEnvironmentMintResponse,
   RelayEnvironmentMintResponseProofPayload,
-} from "@bibcode/contracts/relay";
-import { EnvironmentHttpBadRequestError } from "@bibcode/contracts";
+} from "@coddy/contracts/relay";
+import { EnvironmentHttpBadRequestError } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
-import { RELAY_HEALTH_RESPONSE_TYP, RELAY_MINT_RESPONSE_TYP } from "@bibcode/shared/relayJwt";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { RELAY_HEALTH_RESPONSE_TYP, RELAY_MINT_RESPONSE_TYP } from "@coddy/shared/relayJwt";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -71,7 +71,7 @@ const settings = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "bibcode-relay",
+  clerkJwtAudience: "coddy-studio-relay",
   cloudMintPrivateKey: Redacted.make(cloudKeyPair.privateKey),
   cloudMintPublicKey: cloudKeyPair.publicKey,
   managedEndpointBaseDomain: "example.test",
@@ -98,7 +98,7 @@ function signMintResponse(
 ): RelayEnvironmentMintResponse {
   const requestProof = decodeRequestProof<RelayCloudMintCredentialProofPayload>(request.proof);
   const payload = {
-    iss: `bibcode-env:${requestProof.environmentId}`,
+    iss: `coddy-studio-env:${requestProof.environmentId}`,
     aud: "https://relay.example.test",
     sub: requestProof.environmentId,
     jti: "mint-response-jti",
@@ -125,7 +125,7 @@ function signHealthResponse(
 ): RelayEnvironmentHealthResponse {
   const requestProof = decodeRequestProof<RelayCloudEnvironmentHealthProofPayload>(request.proof);
   const payload = {
-    iss: `bibcode-env:${requestProof.environmentId}`,
+    iss: `coddy-studio-env:${requestProof.environmentId}`,
     aud: "https://relay.example.test",
     sub: requestProof.environmentId,
     jti: "health-response-jti",
@@ -483,10 +483,10 @@ describe("EnvironmentConnector", () => {
         environmentId: "env-connector-test",
       });
 
-      expect(seenUrls).toEqual(["https://env.example.test/api/bibcode-connect/health"]);
+      expect(seenUrls).toEqual(["https://env.example.test/api/coddy-connect/health"]);
       expect(seenProofs[0]).toMatchObject({
         iss: "https://relay.example.test",
-        aud: "bibcode-env:env-connector-test",
+        aud: "coddy-studio-env:env-connector-test",
         sub: "user_123",
         environmentId: "env-connector-test",
         scope: ["environment:status"],
@@ -869,10 +869,10 @@ describe("EnvironmentConnector", () => {
         clientProofKeyThumbprint: "client-proof-key-thumbprint",
       });
 
-      expect(seenUrls).toEqual(["https://env.example.test/api/bibcode-connect/mint-credential"]);
+      expect(seenUrls).toEqual(["https://env.example.test/api/coddy-connect/mint-credential"]);
       expect(seenProofs[0]).toMatchObject({
         iss: "https://relay.example.test",
-        aud: "bibcode-env:env-connector-test",
+        aud: "coddy-studio-env:env-connector-test",
         sub: "user_123",
         environmentId: "env-connector-test",
         clientProofKeyThumbprint: "client-proof-key-thumbprint",
@@ -1107,7 +1107,7 @@ describe("EnvironmentConnector", () => {
     };
     const transport = new HttpClientError.HttpClientError({
       reason: new HttpClientError.TransportError({
-        request: HttpClientRequest.post("https://env.example.test/connect/bibcode-mint-credential"),
+        request: HttpClientRequest.post("https://env.example.test/connect/coddy-studio-mint-credential"),
         description: "offline",
       }),
     });

@@ -1,5 +1,5 @@
-import { DEFAULT_SERVER_SETTINGS, type EnvironmentId, type ServerConfig } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { DEFAULT_SERVER_SETTINGS, type EnvironmentId, type ServerConfig } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { environmentId } from "./git-data.ts";
 
 // Complete shape follows packages/client-runtime/src/rpc/session.test.ts SERVER_CONFIG.
@@ -27,7 +27,7 @@ export function makeGitFixtureServerConfig(
       policy: "loopback-browser",
       bootstrapMethods: ["one-time-token"],
       sessionMethods: ["browser-session-cookie", "bearer-access-token"],
-      sessionCookieName: "bibcode_session",
+      sessionCookieName: "coddy_studio_session",
     },
     cwd: "/component-fixtures/issue27",
     keybindingsConfigPath: "/component-fixtures/issue27/keybindings.json",

@@ -6,7 +6,7 @@ import type {
   ServerProcessResourceHistorySummary,
   ServerProcessResourceTotals,
   ServerProcessUiCoverage,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 
 import { formatCpuPercent, formatMemoryBytes } from "../status-bar/statusBarFormat";
@@ -85,7 +85,7 @@ export interface ResourceDiagnosticsBanner {
 }
 
 export interface ResourceTotalsPresentation {
-  readonly title: "Combined" | "BiBCode Core" | "External Tooling";
+  readonly title: "Combined" | "Coddy Studio Core" | "External Tooling";
   readonly memoryLabel: string;
   readonly cpuLabel: string;
   readonly processCountLabel: string;
@@ -121,7 +121,7 @@ export interface LiveProcessesPresentation {
 }
 
 export interface ResourceHistorySummaryPresentation {
-  readonly title: "Combined" | "BiBCode Core" | "External Tooling";
+  readonly title: "Combined" | "Coddy Studio Core" | "External Tooling";
   readonly valueLabel: string;
 }
 
@@ -465,7 +465,7 @@ export function presentLiveProcesses(input: {
     availability: stale ? "stale" : "available",
     summary: {
       combined: presentTotals("Combined", diagnostics.totals.combined),
-      core: presentTotals("BiBCode Core", diagnostics.totals.core),
+      core: presentTotals("Coddy Studio Core", diagnostics.totals.core),
       external: presentTotals("External Tooling", diagnostics.totals.external),
     },
     rows: diagnostics.processes
@@ -628,7 +628,7 @@ export function presentResourceHistory(input: {
         valueLabel: formatCpuTime(history.cpuSecondsApprox.combined),
       },
       core: {
-        title: "BiBCode Core",
+        title: "Coddy Studio Core",
         valueLabel: formatCpuTime(history.cpuSecondsApprox.core),
       },
       external: {

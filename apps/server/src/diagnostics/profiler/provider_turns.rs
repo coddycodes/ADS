@@ -1,5 +1,5 @@
 //! Provider turn failures: a turn the provider ended as failed, recorded by provider, the
-//! provider's own name for why it ended, and the error class BiBCode gave it. Repeats of the
+//! provider's own name for why it ended, and the error class Coddy Studio gave it. Repeats of the
 //! same failure accumulate in one finding, so a thread that keeps hitting the same wall (such
 //! as a full context window) is visible without reading the conversation.
 

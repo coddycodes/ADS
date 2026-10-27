@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { PullRequestsOperationError } from "@bibcode/contracts";
+import { PullRequestsOperationError } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

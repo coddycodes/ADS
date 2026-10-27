@@ -1,4 +1,4 @@
-import { CommandId, MessageId, ProjectId, ThreadId } from "@bibcode/contracts";
+import { CommandId, MessageId, ProjectId, ThreadId } from "@coddy/contracts";
 import { type CxOptions, cx } from "class-variance-authority";
 import * as Hex from "effect/encoding/Hex";
 import { twMerge } from "tailwind-merge";

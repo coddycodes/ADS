@@ -7,13 +7,13 @@ import {
   type RemotePairingCodePayload,
   type ServerConfig,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   PairingCodeParseError,
   PairingCodeUnsupportedVersionError,
   encodePairingCode,
-} from "@bibcode/shared/pairingCode";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/shared/pairingCode";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -331,7 +331,7 @@ const makeHarness = Effect.fn("TestPairingAdd.makeHarness")(function* (
     if (options.descriptorFailure === true) {
       return Promise.reject(new TypeError("network unavailable"));
     }
-    if (!url.endsWith("/.well-known/bibcode/environment")) {
+    if (!url.endsWith("/.well-known/coddy-studio/environment")) {
       return Promise.reject(new Error(`Unexpected plaintext request: ${url}`));
     }
     return Promise.resolve(Response.json(currentDescriptor));
@@ -487,7 +487,7 @@ describe("verifyAndAddPairingCode", () => {
       const harness = yield* makeHarness();
       yield* harness.run(validPayload());
       expect(harness.httpCalls).toEqual([
-        "http://192.168.1.20:3773/.well-known/bibcode/environment",
+        "http://192.168.1.20:3773/.well-known/coddy-studio/environment",
       ]);
     }),
   );
@@ -530,7 +530,7 @@ describe("verifyAndAddPairingCode", () => {
 
   it.effect("adds a server whose declared id matches the client's own local environment id", () =>
     Effect.gen(function* () {
-      // Every BiBCode server declares the same environment id, so the client's
+      // Every Coddy Studio server declares the same environment id, so the client's
       // own local environment and a remote host both call themselves "local".
       // The saved entry is keyed by the host's storage instance id instead.
       const localEnvironmentId = EnvironmentId.make("local");

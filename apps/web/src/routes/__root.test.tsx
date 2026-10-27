@@ -252,12 +252,12 @@ vi.mock("../editorPreferences", () => ({
   resolveAndPersistPreferredEditor: () => s.preferredEditor,
 }));
 
-vi.mock("@bibcode/client-runtime/environment", () => ({
+vi.mock("@coddy/client-runtime/environment", () => ({
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopedProjectKey: () => "scoped-project-key",
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error ?? new Error("failed"),
 }));
 

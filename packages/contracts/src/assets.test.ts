@@ -90,7 +90,7 @@ describe("AssetResource", () => {
     const resources = [
       { _tag: "workspace-file", threadId: "thread-1", path: "src/main.ts" },
       { _tag: "attachment", attachmentId: "attachment-1" },
-      { _tag: "project-favicon", cwd: "C:/work/bibcode" },
+      { _tag: "project-favicon", cwd: "C:/work/coddy-studio" },
     ] as const;
 
     for (const resource of resources) {
@@ -165,7 +165,7 @@ describe("asset access errors", () => {
     });
     const faviconResource = decodeResource({
       _tag: "project-favicon",
-      cwd: "C:/work/bibcode",
+      cwd: "C:/work/coddy-studio",
     });
     const cause = new Error("asset failure");
     const cases = [

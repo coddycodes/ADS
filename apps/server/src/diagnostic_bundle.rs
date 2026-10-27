@@ -150,7 +150,7 @@ fn build_bundle(
         .into_inner();
     Ok(DiagnosticBundle {
         filename: format!(
-            "bibcode-diagnostics-{:04}{:02}{:02}T{:02}{:02}{:02}Z.zip",
+            "coddy-studio-diagnostics-{:04}{:02}{:02}T{:02}{:02}{:02}Z.zip",
             generated_at.year(),
             u8::from(generated_at.month()),
             generated_at.day(),

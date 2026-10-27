@@ -12,7 +12,7 @@ import { NfpmInstallationError, installNfpm, planNfpmInstall } from "./install-n
 const temporaryRoots: string[] = [];
 
 function temporaryRoot(): string {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-nfpm-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-nfpm-"));
   temporaryRoots.push(root);
   return root;
 }

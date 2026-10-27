@@ -1,5 +1,5 @@
-import { createWorktreeEnvironmentAtoms } from "@bibcode/client-runtime/state/worktrees";
-import type { ScopedProjectRef } from "@bibcode/contracts";
+import { createWorktreeEnvironmentAtoms } from "@coddy/client-runtime/state/worktrees";
+import type { ScopedProjectRef } from "@coddy/contracts";
 import { useEffect } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";

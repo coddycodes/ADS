@@ -1,4 +1,4 @@
-import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
+import type { AtomCommandResult } from "@coddy/client-runtime/state/runtime";
 
 export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;

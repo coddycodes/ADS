@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::diagnostics::profiler::crash;
+use coddy_studio_server::diagnostics::profiler::crash;
 use tokio::sync::watch;
 
 /// The local environment's setting as last seen. The monitor follows it until [`stop`] drops
@@ -42,7 +42,7 @@ pub(crate) fn start() {
 
 /// From then on the in-process server's committed setting drives the monitor, for as long as
 /// that server runs.
-pub(crate) fn follow_server(handle: &bibcode_server::ServerHandle) {
+pub(crate) fn follow_server(handle: &coddy_studio_server::ServerHandle) {
     let Some(mut committed) = handle.profiler_enabled_signal() else {
         return;
     };

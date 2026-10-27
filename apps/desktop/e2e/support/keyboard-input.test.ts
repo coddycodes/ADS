@@ -51,14 +51,14 @@ function installNativeEnterTransport(): void {
 
 function expectKeyboardOwnershipReleased(target: HTMLElement): void {
   const globals = window as Window & {
-    __bibcodeDesktopUiKeyboardOwnership?: unknown;
-    __bibcodeDesktopUiKeyCapture?: unknown;
-    __bibcodeDesktopUiKeyTarget?: unknown;
+    __coddyStudioDesktopUiKeyboardOwnership?: unknown;
+    __coddyStudioDesktopUiKeyCapture?: unknown;
+    __coddyStudioDesktopUiKeyTarget?: unknown;
   };
-  expect(document.querySelector("[data-bibcode-keyboard-probe]")).toBeNull();
-  expect(globals.__bibcodeDesktopUiKeyboardOwnership).toBeUndefined();
-  expect(globals.__bibcodeDesktopUiKeyCapture).toBeUndefined();
-  expect(globals.__bibcodeDesktopUiKeyTarget).toBeUndefined();
+  expect(document.querySelector("[data-coddy-studio-keyboard-probe]")).toBeNull();
+  expect(globals.__coddyStudioDesktopUiKeyboardOwnership).toBeUndefined();
+  expect(globals.__coddyStudioDesktopUiKeyCapture).toBeUndefined();
+  expect(globals.__coddyStudioDesktopUiKeyTarget).toBeUndefined();
   expect(document.activeElement).toBe(target);
 }
 
@@ -355,7 +355,7 @@ describe("sendFocusedKeyboardKey", () => {
     });
 
     await expect(sendFocusedKeyboardKey("Enter")).rejects.toThrow("driver unavailable");
-    expect(document.querySelector("[data-bibcode-keyboard-probe]")).toBeNull();
+    expect(document.querySelector("[data-coddy-studio-keyboard-probe]")).toBeNull();
     expect(document.activeElement).toBe(button);
   });
 
@@ -417,7 +417,7 @@ describe("sendFocusedKeyboardKey", () => {
         new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Tab" }),
       );
       const probeNext = target?.nextElementSibling;
-      if (probeNext instanceof HTMLElement && target?.closest("[data-bibcode-keyboard-probe]")) {
+      if (probeNext instanceof HTMLElement && target?.closest("[data-coddy-studio-keyboard-probe]")) {
         probeNext.focus();
       } else {
         next.focus();

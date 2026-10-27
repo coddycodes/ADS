@@ -90,7 +90,7 @@
       "threadId": "thread-1",
       "turnId": "turn-1",
       "checkpointTurnCount": 1,
-      "checkpointRef": "refs/bibcode/checkpoints/thread-1/turn/1",
+      "checkpointRef": "refs/coddy-studio/checkpoints/thread-1/turn/1",
       "status": "ready",
       "files": [],
       "assistantMessageId": "assistant-1",

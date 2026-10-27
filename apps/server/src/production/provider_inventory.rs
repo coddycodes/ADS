@@ -57,7 +57,7 @@ const LOCAL_OPENCODE_HEALTH_TIMEOUT: Duration = Duration::from_millis(250);
 const LOCAL_OPENCODE_INVENTORY_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCAL_OPENCODE_STARTUP_ATTEMPTS: usize = 50;
 /// A configured OpenCode 2 server answered, but its catalogs could not be read.
-const OPENCODE_2_CATALOG_UNREADABLE: &str = "BiBCode couldn't read this OpenCode server's models, agents and commands, so chats use its default model. They are read again at the next provider check.";
+const OPENCODE_2_CATALOG_UNREADABLE: &str = "Coddy Studio couldn't read this OpenCode server's models, agents and commands, so chats use its default model. They are read again at the next provider check.";
 const PROBE_OUTPUT_LIMIT: usize = 256 * 1024;
 
 #[derive(Clone)]
@@ -74,6 +74,7 @@ struct ProviderDefinition {
     configured_service_tier: Option<String>,
     endpoint: Option<String>,
     server_password: Option<String>,
+    data_dir: Option<String>,
     environment: Vec<(OsString, OsString)>,
 }
 
@@ -230,7 +231,7 @@ fn definitions(settings: &Value) -> Vec<ProviderDefinition> {
                                         .and_then(|value| value.get("enabled"))
                                         .and_then(Value::as_bool)
                                 })
-                                .unwrap_or(true),
+                                .unwrap_or(driver == "coddy"),
                         ),
                         binary_path: string_setting(config, "binaryPath")
                             .or_else(|| string_setting(legacy_settings, "binaryPath"))
@@ -253,6 +254,10 @@ fn definitions(settings: &Value) -> Vec<ProviderDefinition> {
                             .or_else(|| string_setting(legacy_settings, "serverPassword"))
                             .filter(|value| !value.is_empty())
                             .map(str::to_owned),
+                        data_dir: string_setting(config, "dataDir")
+                            .or_else(|| string_setting(legacy_settings, "dataDir"))
+                            .filter(|value| !value.trim().is_empty())
+                            .map(str::to_owned),
                         environment: provider_environment(instance),
                     }
                 })
@@ -260,7 +265,7 @@ fn definitions(settings: &Value) -> Vec<ProviderDefinition> {
         })
         .unwrap_or_default();
 
-    for driver in ["codex", "claudeAgent", "cursor", "grok", "opencode"] {
+    for driver in ["codex", "claudeAgent", "coddy", "cursor", "grok", "opencode"] {
         if definitions
             .iter()
             .any(|definition| definition.driver == driver)
@@ -278,7 +283,7 @@ fn definitions(settings: &Value) -> Vec<ProviderDefinition> {
                 driver_settings
                     .and_then(|value| value.get("enabled"))
                     .and_then(Value::as_bool)
-                    .unwrap_or(true),
+                    .unwrap_or(driver == "coddy"),
             ),
             binary_path: string_setting(driver_settings, "binaryPath")
                 .unwrap_or_else(|| default_provider_binary(driver))
@@ -294,6 +299,9 @@ fn definitions(settings: &Value) -> Vec<ProviderDefinition> {
                 .map(str::to_owned),
             server_password: string_setting(driver_settings, "serverPassword")
                 .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            data_dir: string_setting(driver_settings, "dataDir")
+                .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned),
             environment: Vec::new(),
         });
@@ -641,7 +649,7 @@ async fn probe_one_snapshot(
         );
     };
     if !include_slow_capabilities {
-        // A version BiBCode cannot drive must not read Ready until the full probe runs.
+        // A version Coddy Studio cannot drive must not read Ready until the full probe runs.
         if definition.driver == "opencode" {
             let output =
                 run_command(&executable, &["--version"], cwd, &definition.environment).await;
@@ -717,6 +725,21 @@ async fn probe_one_snapshot(
 
     let mut versioned_model_catalog = false;
     match definition.driver.as_str() {
+        "coddy" => {
+            if include_slow_capabilities
+                && version_output.as_ref().is_some_and(|output| output.success)
+                && let Some(discovered) = probe_coddy_models(
+                    &executable,
+                    definition.data_dir.as_deref(),
+                    cwd,
+                    &definition.environment,
+                )
+                .await
+            {
+                models = discovered;
+                rich_metadata = RichMetadataOutcome::Succeeded;
+            }
+        }
         "codex" => {
             if include_slow_capabilities
                 && let Some(inventory) = probe_codex(
@@ -839,7 +862,7 @@ async fn probe_one_snapshot(
             }
         }
         "opencode" => {
-            // A version BiBCode cannot drive is reported without starting its server.
+            // A version Coddy Studio cannot drive is reported without starting its server.
             if let Some(opencode::OpenCodeCliSupport::Unsupported(unsupported)) =
                 version.as_deref().map(opencode::cli_support)
             {
@@ -1213,33 +1236,34 @@ async fn probe_claude_metadata_with_cancellation(
         let stdout = child.stdout().take()?;
         let mut lines = BufReader::new(stdout).lines();
 
-        write_claude_control_request(&mut stdin, "bibcode-inventory", "initialize")
+        write_claude_control_request(&mut stdin, "coddy-studio-inventory", "initialize")
             .await
             .ok()?;
         let initialization = timeout(
             CLAUDE_CAPABILITIES_TIMEOUT,
-            read_claude_control_response(&mut lines, "bibcode-inventory"),
+            read_claude_control_response(&mut lines, "coddy-studio-inventory"),
         )
         .await
         .ok()
         .flatten()?;
         let mut metadata = parse_claude_initialization_response(&initialization, custom_models);
 
-        let skills = if write_claude_control_request(&mut stdin, "bibcode-skills", "reload_skills")
-            .await
-            .is_ok()
-        {
-            timeout(
-                CLAUDE_SKILLS_TIMEOUT,
-                read_claude_control_response(&mut lines, "bibcode-skills"),
-            )
-            .await
-            .ok()
-            .flatten()
-            .and_then(|response| parse_claude_skills_response(&response, &initialization))
-        } else {
-            None
-        };
+        let skills =
+            if write_claude_control_request(&mut stdin, "coddy-studio-skills", "reload_skills")
+                .await
+                .is_ok()
+            {
+                timeout(
+                    CLAUDE_SKILLS_TIMEOUT,
+                    read_claude_control_response(&mut lines, "coddy-studio-skills"),
+                )
+                .await
+                .ok()
+                .flatten()
+                .and_then(|response| parse_claude_skills_response(&response, &initialization))
+            } else {
+                None
+            };
         let _ = stdin.shutdown().await;
         if let Some(skills) = skills {
             metadata.capabilities.skills = skills;
@@ -1373,6 +1397,45 @@ async fn probe_codex(
     result
 }
 
+/// Reads the Coddy CLI's resolved catalog (`coddy cli models --json`) and keeps
+/// only the provider prefixes the Studio policy allows (Coddy by default).
+async fn probe_coddy_models(
+    executable: &Path,
+    data_dir: Option<&str>,
+    cwd: &Path,
+    environment: &[(OsString, OsString)],
+) -> Option<Vec<Value>> {
+    let mut args = vec!["cli", "models", "--json"];
+    if let Some(data_dir) = data_dir.filter(|value| !value.trim().is_empty()) {
+        args.push("-D");
+        args.push(data_dir);
+    }
+    let output = run_command(executable, &args, cwd, environment).await?;
+    if !output.success {
+        return None;
+    }
+    let entries: Vec<Value> = serde_json::from_str(&output.stdout).ok()?;
+    let policy = crate::server_settings::policy::current();
+    let models = entries
+        .into_iter()
+        .filter_map(|entry| {
+            let provider = entry.get("provider_id")?.as_str()?;
+            if !policy.model_provider_allowed(provider) {
+                return None;
+            }
+            let slug = entry.get("id")?.as_str()?;
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or(slug);
+            Some(json!({
+                "slug": slug,
+                "name": name,
+                "isCustom": false,
+                "capabilities": { "optionDescriptors": [] },
+            }))
+        })
+        .collect::<Vec<_>>();
+    (!models.is_empty()).then_some(models)
+}
+
 async fn probe_cursor_models(
     executable: &Path,
     endpoint: Option<&str>,
@@ -1416,7 +1479,7 @@ async fn probe_cursor_models(
                         "fs": { "readTextFile": false, "writeTextFile": false },
                         "terminal": false,
                     },
-                    "clientInfo": { "name": "bibcode-rust", "version": env!("CARGO_PKG_VERSION") },
+                    "clientInfo": { "name": "coddy-studio-rust", "version": env!("CARGO_PKG_VERSION") },
                 }),
             )
             .await
@@ -1441,7 +1504,7 @@ async fn probe_cursor_models(
         .and_then(|value| value.as_array().cloned())
 }
 
-/// The wire a configured OpenCode server speaks, or the version it reports when BiBCode cannot
+/// The wire a configured OpenCode server speaks, or the version it reports when Coddy Studio cannot
 /// drive it. A server that does not answer is read as OpenCode 1, as before.
 pub(super) async fn opencode_server_protocol(
     endpoint: &str,
@@ -1480,7 +1543,7 @@ async fn probe_opencode(
     .await
 }
 
-/// OpenCode 2 catalogs are read for `cwd`, the directory BiBCode's sessions use; OpenCode 1
+/// OpenCode 2 catalogs are read for `cwd`, the directory Coddy Studio's sessions use; OpenCode 1
 /// inventory reads stay unscoped, as they always were.
 async fn probe_opencode_with_timeout(
     endpoint: &str,
@@ -1729,7 +1792,7 @@ where
                 let protocol = match local_opencode_api(&endpoint, Some(&local_password)).await {
                     opencode::OpenCodeServerApi::V1 => opencode::OpenCodeProtocol::V1,
                     opencode::OpenCodeServerApi::V2 { .. } => opencode::OpenCodeProtocol::V2,
-                    // BiBCode cannot read these catalogs: stop now instead of waiting it out.
+                    // Coddy Studio cannot read these catalogs: stop now instead of waiting it out.
                     opencode::OpenCodeServerApi::Unsupported { .. } => return None,
                     opencode::OpenCodeServerApi::Unavailable => {
                         sleep(Duration::from_millis(100)).await;
@@ -1934,10 +1997,10 @@ fn snapshot_owned_message(
     result["supportsConversationRewind"] = json!(crate::provider::supports_conversation_rewind(
         &definition.driver
     ));
-    if matches!(definition.driver.as_str(), "codex" | "claudeAgent") {
+    if matches!(definition.driver.as_str(), "codex" | "claudeAgent" | "coddy") {
         result["supportsMcpStatus"] = json!(true);
     }
-    if matches!(definition.driver.as_str(), "codex" | "claudeAgent") {
+    if matches!(definition.driver.as_str(), "codex" | "claudeAgent" | "coddy") {
         result["supportsContextWindowUsage"] = json!(true);
     }
     result
@@ -1946,7 +2009,7 @@ fn snapshot_owned_message(
 fn is_builtin_driver(driver: &str) -> bool {
     matches!(
         driver,
-        "codex" | "claudeAgent" | "cursor" | "grok" | "opencode"
+        "codex" | "claudeAgent" | "coddy" | "cursor" | "grok" | "opencode"
     )
 }
 
@@ -1976,11 +2039,11 @@ mod tests {
             // null stdin, so its read completes immediately without a request.
             let executable = sandbox.executable_script(
                 "inventory-probe",
-                "IFS= read -r request\n/usr/bin/env -0 > \"$BIBCODE_TEST_PROVIDER_ENVIRONMENT_FILE\"",
+                "IFS= read -r request\n/usr/bin/env -0 > \"$CODDY_STUDIO_TEST_PROVIDER_ENVIRONMENT_FILE\"",
                 "",
             );
             let environment = vec![(
-                OsString::from("BIBCODE_TEST_PROVIDER_ENVIRONMENT_FILE"),
+                OsString::from("CODDY_STUDIO_TEST_PROVIDER_ENVIRONMENT_FILE"),
                 output_path.as_os_str().to_owned(),
             )];
             // The fixture records the launched environment, then closes the
@@ -2072,17 +2135,19 @@ mod tests {
     async fn inventory_instance_path_outranks_ambient_path_in_an_isolated_process() {
         const CASE: &str = "provider-inventory-path-precedence";
         const TEST_NAME: &str = "production::provider_inventory::tests::inventory_instance_path_outranks_ambient_path_in_an_isolated_process";
-        const SENTINEL: &str = "BIBCODE_TEST_ISOLATED_CASE_DONE=provider-inventory-path-precedence";
+        const SENTINEL: &str =
+            "CODDY_STUDIO_TEST_ISOLATED_CASE_DONE=provider-inventory-path-precedence";
 
         if TestSandbox::is_isolated_case(CASE, TEST_NAME) {
             let instance = std::path::PathBuf::from(
-                std::env::var_os("BIBCODE_TEST_INSTANCE_PATH").expect("isolated instance PATH"),
+                std::env::var_os("CODDY_STUDIO_TEST_INSTANCE_PATH")
+                    .expect("isolated instance PATH"),
             );
             let root = std::path::PathBuf::from(
-                std::env::var_os("BIBCODE_TEST_ROOT").expect("isolated inventory root"),
+                std::env::var_os("CODDY_STUDIO_TEST_ROOT").expect("isolated inventory root"),
             );
             let ambient_executable = std::path::PathBuf::from(
-                std::env::var_os("BIBCODE_TEST_AMBIENT_EXECUTABLE")
+                std::env::var_os("CODDY_STUDIO_TEST_AMBIENT_EXECUTABLE")
                     .expect("isolated ambient executable"),
             );
             assert_eq!(
@@ -2133,10 +2198,10 @@ mod tests {
             TEST_NAME,
             &[
                 ("PATH", ambient.as_os_str()),
-                ("BIBCODE_TEST_INSTANCE_PATH", instance.as_os_str()),
-                ("BIBCODE_TEST_ROOT", sandbox.root().as_os_str()),
+                ("CODDY_STUDIO_TEST_INSTANCE_PATH", instance.as_os_str()),
+                ("CODDY_STUDIO_TEST_ROOT", sandbox.root().as_os_str()),
                 (
-                    "BIBCODE_TEST_AMBIENT_EXECUTABLE",
+                    "CODDY_STUDIO_TEST_AMBIENT_EXECUTABLE",
                     ambient_executable.as_os_str(),
                 ),
             ],
@@ -2156,8 +2221,8 @@ mod tests {
     #[ignore = "needs a live OpenCode 2 server"]
     async fn live_opencode_2_inventory() {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
-        let endpoint = var("BIBCODE_OPENCODE_V2_LIVE");
-        let password = var("BIBCODE_OPENCODE_V2_PASSWORD");
+        let endpoint = var("CODDY_STUDIO_OPENCODE_V2_LIVE");
+        let password = var("CODDY_STUDIO_OPENCODE_V2_PASSWORD");
         assert_eq!(
             opencode_server_protocol(&endpoint, Some(&password)).await,
             Ok(opencode::OpenCodeProtocol::V2)
@@ -2167,7 +2232,7 @@ mod tests {
             Some(&password),
             &[],
             opencode::OpenCodeProtocol::V2,
-            Path::new(&var("BIBCODE_OPENCODE_V2_DIRECTORY")),
+            Path::new(&var("CODDY_STUDIO_OPENCODE_V2_DIRECTORY")),
         )
         .await
         .expect("catalogs");
@@ -2175,7 +2240,7 @@ mod tests {
             inventory
                 .models
                 .iter()
-                .any(|model| model.slug == var("BIBCODE_OPENCODE_V2_MODEL"))
+                .any(|model| model.slug == var("CODDY_STUDIO_OPENCODE_V2_MODEL"))
         );
         assert!(
             inventory
@@ -2187,15 +2252,15 @@ mod tests {
     }
 
     /// Starts a real OpenCode 2 binary the way inventory does and reads its catalogs. Set
-    /// `BIBCODE_OPENCODE_V2_BINARY` (a copy under the temporary directory, which the hermetic
-    /// test guard allows), `BIBCODE_OPENCODE_V2_HOME` (a scratch home whose configuration points
-    /// the default model at a scripted local endpoint), `BIBCODE_OPENCODE_V2_DIRECTORY` and
-    /// `BIBCODE_OPENCODE_V2_MODEL`.
+    /// `CODDY_STUDIO_OPENCODE_V2_BINARY` (a copy under the temporary directory, which the hermetic
+    /// test guard allows), `CODDY_STUDIO_OPENCODE_V2_HOME` (a scratch home whose configuration points
+    /// the default model at a scripted local endpoint), `CODDY_STUDIO_OPENCODE_V2_DIRECTORY` and
+    /// `CODDY_STUDIO_OPENCODE_V2_MODEL`.
     #[tokio::test]
     #[ignore = "needs a live OpenCode 2 binary"]
     async fn live_opencode_2_local_inventory() {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
-        let home = std::path::PathBuf::from(var("BIBCODE_OPENCODE_V2_HOME"));
+        let home = std::path::PathBuf::from(var("CODDY_STUDIO_OPENCODE_V2_HOME"));
         let environment = [
             ("HOME", home.clone()),
             ("XDG_CONFIG_HOME", home.join(".config")),
@@ -2205,8 +2270,8 @@ mod tests {
         ]
         .map(|(name, value)| (OsString::from(name), value.into_os_string()));
         let inventory = probe_local_opencode(
-            Path::new(&var("BIBCODE_OPENCODE_V2_BINARY")),
-            Path::new(&var("BIBCODE_OPENCODE_V2_DIRECTORY")),
+            Path::new(&var("CODDY_STUDIO_OPENCODE_V2_BINARY")),
+            Path::new(&var("CODDY_STUDIO_OPENCODE_V2_DIRECTORY")),
             &[],
             &environment,
         )
@@ -2216,11 +2281,11 @@ mod tests {
             inventory
                 .models
                 .iter()
-                .any(|model| model.slug == var("BIBCODE_OPENCODE_V2_MODEL"))
+                .any(|model| model.slug == var("CODDY_STUDIO_OPENCODE_V2_MODEL"))
         );
     }
 
-    /// A CLI whose version BiBCode cannot drive is reported without starting its server.
+    /// A CLI whose version Coddy Studio cannot drive is reported without starting its server.
     #[cfg(unix)]
     #[tokio::test]
     async fn an_unknown_opencode_cli_version_is_reported_without_starting_a_server() {
@@ -2263,7 +2328,7 @@ mod tests {
         assert!(!marker.exists(), "no server may be started");
     }
 
-    /// The quick probe reads OpenCode's `--version` too, so a version BiBCode cannot drive never
+    /// The quick probe reads OpenCode's `--version` too, so a version Coddy Studio cannot drive never
     /// reads Ready, while a supported one stays ready.
     #[cfg(unix)]
     #[tokio::test]
@@ -2909,6 +2974,7 @@ mod tests {
             configured_service_tier: None,
             endpoint: None,
             server_password: None,
+            data_dir: None,
             environment: Vec::new(),
         };
 

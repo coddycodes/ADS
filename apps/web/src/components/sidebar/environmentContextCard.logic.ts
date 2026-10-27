@@ -3,8 +3,8 @@ import {
   type CompatVerdict,
   type ConnectionTarget,
   type EnvironmentConnectionPresentation,
-} from "@bibcode/client-runtime/connection";
-import type { ServerConfig } from "@bibcode/contracts";
+} from "@coddy/client-runtime/connection";
+import type { ServerConfig } from "@coddy/contracts";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import {
@@ -72,7 +72,7 @@ export function buildEnvironmentContextCardView(input: {
     hasReason:
       (input.connection.phase === "reconnecting" || input.connection.phase === "error") &&
       Boolean(input.connection.error),
-    versionLine: serverVersion === null ? null : `BiBCode v${serverVersion}`,
+    versionLine: serverVersion === null ? null : `Coddy Studio v${serverVersion}`,
     compatBadge: resolveCompatBadge(compat),
     showUpdateActions: selectRemoteUpdateControlCapability(input.serverConfig),
     manualUpdates: input.serverConfig?.environment.remoteUpdateSupport?.installMode === "manual",

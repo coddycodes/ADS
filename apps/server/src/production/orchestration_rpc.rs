@@ -2046,7 +2046,10 @@ mod tests {
     }
     fn test_upload_registry() -> UploadRegistry {
         UploadRegistry::new(
-            std::env::temp_dir().join(format!("bibcode-test-uploads-{}", uuid::Uuid::new_v4())),
+            std::env::temp_dir().join(format!(
+                "coddy-studio-test-uploads-{}",
+                uuid::Uuid::new_v4()
+            )),
             crate::transfer::staging::UploadLimits::default(),
             Arc::new(tokio::time::Instant::now),
         )
@@ -2745,12 +2748,12 @@ mod tests {
 
     /// #78 timings on a synthetic store shaped like the reporting machine's: 15 projects,
     /// 50 threads (2 archived), 1,300 messages and 170,000 activities of about 1.5 KB.
-    /// `BIBCODE_ISSUE78_BENCH_DIR` sets where the database file goes; run with
-    /// `cargo test -p bibcode-server --lib shell_snapshot_timing -- --ignored --nocapture`.
+    /// `CODDY_STUDIO_ISSUE78_BENCH_DIR` sets where the database file goes; run with
+    /// `cargo test -p coddy-studio-server --lib shell_snapshot_timing -- --ignored --nocapture`.
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "builds a store of about 300 MB; run by hand for timings"]
     async fn shell_snapshot_timing_on_a_large_store() {
-        let directory = std::env::var_os("BIBCODE_ISSUE78_BENCH_DIR")
+        let directory = std::env::var_os("CODDY_STUDIO_ISSUE78_BENCH_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
             .join(format!("issue-78-{}", uuid::Uuid::new_v4()));
@@ -5107,7 +5110,7 @@ mod tests {
         assert_eq!(outbox.thread_id, "local-draft-thread");
         assert_eq!(outbox.message_id, "local-draft-message");
         assert_eq!(outbox.provider_instance_id, "codex");
-        let frozen_fingerprint = outbox.payload["_bibcodeProviderRouteFingerprint"]
+        let frozen_fingerprint = outbox.payload["_coddyStudioProviderRouteFingerprint"]
             .as_str()
             .expect("admission persists a provider route fingerprint");
         assert_eq!(frozen_fingerprint.len(), 64);
@@ -5124,8 +5127,8 @@ mod tests {
         .await
         .expect("unchanged settings refreeze deterministically");
         assert_eq!(
-            repeated_payload["_bibcodeProviderRouteFingerprint"],
-            outbox.payload["_bibcodeProviderRouteFingerprint"]
+            repeated_payload["_coddyStudioProviderRouteFingerprint"],
+            outbox.payload["_coddyStudioProviderRouteFingerprint"]
         );
 
         socket
@@ -6847,7 +6850,7 @@ mod tests {
     /// The resume wire contract: a `resume` input, the snapshot and `unchanged` items with their
     /// revisions, and a later patch. Revisions are per process, so they become placeholders.
     /// `threadStreamParity.test.ts` decodes and applies it. Regenerate with
-    /// `BIBCODE_UPDATE_THREAD_STREAM_FIXTURE=1`.
+    /// `CODDY_STUDIO_UPDATE_THREAD_STREAM_FIXTURE=1`.
     #[tokio::test]
     async fn thread_stream_resume_fixture_matches_the_wire() {
         const AT: &str = "2026-07-10T10:00:00.000Z";
@@ -6903,7 +6906,7 @@ mod tests {
         assert_eq!(revisions.len(), 2, "the patch moves the revision once");
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../packages/contracts/fixtures/thread-stream/resume.json");
-        if std::env::var_os("BIBCODE_UPDATE_THREAD_STREAM_FIXTURE").is_some() {
+        if std::env::var_os("CODDY_STUDIO_UPDATE_THREAD_STREAM_FIXTURE").is_some() {
             std::fs::write(
                 &path,
                 serde_json::to_string_pretty(&fixture).unwrap() + "\n",
@@ -6923,7 +6926,7 @@ mod tests {
     /// The thread stream's wire contract: a client that applies these patches to
     /// the first snapshot must reach the server's final snapshot. The TypeScript
     /// side decodes and applies this fixture (`threadStreamParity.test.ts`).
-    /// Regenerate with `BIBCODE_UPDATE_THREAD_STREAM_FIXTURE=1`.
+    /// Regenerate with `CODDY_STUDIO_UPDATE_THREAD_STREAM_FIXTURE=1`.
     #[tokio::test]
     async fn thread_stream_lifecycle_fixture_matches_the_wire() {
         const AT: &str = "2026-07-10T10:00:00.000Z";
@@ -6980,7 +6983,7 @@ mod tests {
         );
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../packages/contracts/fixtures/thread-stream/lifecycle.json");
-        if std::env::var_os("BIBCODE_UPDATE_THREAD_STREAM_FIXTURE").is_some() {
+        if std::env::var_os("CODDY_STUDIO_UPDATE_THREAD_STREAM_FIXTURE").is_some() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(
                 &path,

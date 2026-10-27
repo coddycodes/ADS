@@ -3,9 +3,9 @@ use std::{
     process::Command,
 };
 
-const TEST_NAME: &str = "BIBCODE_TEST_REEXEC_NAME";
-const PHASE: &str = "BIBCODE_TEST_REEXEC_PHASE";
-const PROOF_DIRECTORY: &str = "BIBCODE_TEST_REEXEC_PROOF_DIRECTORY";
+const TEST_NAME: &str = "CODDY_STUDIO_TEST_REEXEC_NAME";
+const PHASE: &str = "CODDY_STUDIO_TEST_REEXEC_PHASE";
+const PROOF_DIRECTORY: &str = "CODDY_STUDIO_TEST_REEXEC_PROOF_DIRECTORY";
 
 /// Proof that the selected test entered its isolated child branch.
 /// Complete it only after that branch's assertions have finished.

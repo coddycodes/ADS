@@ -560,7 +560,7 @@ mod tests {
         }
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
-            .env("BIBCODE_TEST_ISOLATED_CASE", CASE)
+            .env("CODDY_STUDIO_TEST_ISOLATED_CASE", CASE)
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);

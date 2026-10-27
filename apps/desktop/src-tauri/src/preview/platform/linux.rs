@@ -16,7 +16,7 @@ pub struct LinuxWebviewOps;
 
 /// Name of the overlay layer that holds preview webviews above the window's
 /// content box.
-const PREVIEW_LAYER: &str = "bibcode-preview-layer";
+const PREVIEW_LAYER: &str = "coddy-studio-preview-layer";
 
 /// Places a preview webview at `x`/`y` (relative to the main webview) with the
 /// given size. Tauri packs Linux child webviews into the window's content box,
@@ -329,7 +329,7 @@ impl PlatformWebviewOps for LinuxWebviewOps {
 mod tests {
     /// Runs GTK on this test's thread against the session's display. Ignored by
     /// default: needs a display. Run on both backends:
-    /// `cargo test -p bibcode-desktop --lib preview_child_follows -- --ignored --test-threads=1`
+    /// `cargo test -p coddy-studio-desktop --lib preview_child_follows -- --ignored --test-threads=1`
     /// with `GDK_BACKEND=wayland` and `GDK_BACKEND=x11`.
     #[test]
     #[ignore = "needs a Wayland or X11 display"]

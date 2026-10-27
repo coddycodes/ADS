@@ -1,5 +1,5 @@
 import { AlertTriangleIcon } from "lucide-react";
-import type { GitManagerRefEntry } from "@bibcode/contracts";
+import type { GitManagerRefEntry } from "@coddy/contracts";
 import { memo, useCallback, useMemo } from "react";
 
 import { Button } from "~/components/ui/button";

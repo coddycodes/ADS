@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_task8_harness::{
+use coddy_studio_task8_harness::{
     diagnostics::{
         AttributedProcessSnapshot, DiagnosticsMonitor, ProcessAttributionTotals, ProcessIdentity,
         ProcessRow, ResourceSampler, SamplingError, UiCoverage, build_descendant_entries,
@@ -27,9 +27,9 @@ use tokio_util::sync::CancellationToken;
 #[tokio::test]
 async fn portable_pty_supports_input_output_resize_and_shutdown() {
     let (shell, args, command) = if cfg!(windows) {
-        ("cmd.exe", Vec::new(), "echo BIBCODE_PTY_READY\r\n")
+        ("cmd.exe", Vec::new(), "echo CODDY_STUDIO_PTY_READY\r\n")
     } else {
-        ("sh", Vec::new(), "echo BIBCODE_PTY_READY\n")
+        ("sh", Vec::new(), "echo CODDY_STUDIO_PTY_READY\n")
     };
     let input = PtySpawnInput {
         executable: shell.to_string(),
@@ -48,7 +48,7 @@ async fn portable_pty_supports_input_output_resize_and_shutdown() {
 
     let received = tokio::time::timeout(Duration::from_secs(10), async {
         let mut received = String::new();
-        while !received.contains("BIBCODE_PTY_READY") {
+        while !received.contains("CODDY_STUDIO_PTY_READY") {
             match output.recv().await {
                 Ok(chunk) => received.push_str(&chunk),
                 Err(error) => panic!(
@@ -67,7 +67,7 @@ async fn portable_pty_supports_input_output_resize_and_shutdown() {
             exit.borrow().clone()
         )
     });
-    assert!(received.contains("BIBCODE_PTY_READY"));
+    assert!(received.contains("CODDY_STUDIO_PTY_READY"));
     process.kill().expect("kill PTY process tree");
 }
 

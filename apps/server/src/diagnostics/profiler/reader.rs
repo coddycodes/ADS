@@ -873,7 +873,7 @@ mod tests {
         assert!(Reader::new(&dir).status()["version"].is_null());
         fs::write(
             dir.join("session.json"),
-            r#"{"state":"running","pid":1,"bootId":null,"exe":"bibcode","version":"0.9.1","startedAt":"2026-10-09T09:00:00Z","oomKillBaseline":null}"#,
+            r#"{"state":"running","pid":1,"bootId":null,"exe":"coddy-studio","version":"0.9.1","startedAt":"2026-10-09T09:00:00Z","oomKillBaseline":null}"#,
         )
         .unwrap();
 

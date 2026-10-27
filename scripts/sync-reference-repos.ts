@@ -17,7 +17,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { fromYaml } from "@bibcode/shared/schemaYaml";
+import { fromYaml } from "@coddy/shared/schemaYaml";
 
 import { referenceRepos, type ReferenceRepo } from "./lib/reference-repos.ts";
 
@@ -204,7 +204,7 @@ const decodeYamlSource = Schema.decodeEffect(fromYaml(Schema.Unknown));
 const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:/;
 const WINDOWS_RESERVED_BASENAME = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i;
 const WINDOWS_FORBIDDEN_CHARACTER = /[<>:"|?*]/;
-const REFERENCE_REPO_SYNC_LOCK_NAME = "bibcode-reference-repos-sync.lock";
+const REFERENCE_REPO_SYNC_LOCK_NAME = "coddy-studio-reference-repos-sync.lock";
 const ROLLBACK_TIMEOUT = "30 seconds";
 
 const literalGitPathspec = (value: string): string => `:(literal)${value}`;
@@ -549,7 +549,7 @@ const runSnapshotSyncWithLockHeld = Effect.fn("runSnapshotSyncWithLockHeld")(fun
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-reference-sync-" });
+  const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-reference-sync-" });
   const replacementIndex = path.join(tempDir, "replacement.index");
   const snapshots: Array<{ readonly plan: ReferenceRepoSyncPlan; readonly tree: string }> = [];
 

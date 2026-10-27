@@ -4,8 +4,8 @@ import {
   TERMINAL_COLS_MAX,
   TERMINAL_ROWS_MIN,
   TERMINAL_ROWS_MAX,
-} from "@bibcode/contracts";
-import { terminalInputKey } from "@bibcode/client-runtime/state/terminal";
+} from "@coddy/contracts";
+import { terminalInputKey } from "@coddy/client-runtime/state/terminal";
 import type { TerminalDimensions } from "./terminalSizePolicy";
 
 export function proposeTerminalDimensions(

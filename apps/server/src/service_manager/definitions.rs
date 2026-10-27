@@ -1,9 +1,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-pub(crate) const SYSTEMD_UNIT_NAME: &str = "bibcode.service";
-pub(crate) const LAUNCHD_LABEL: &str = "com.bibcode.server";
-pub(crate) const WINDOWS_TASK_NAME: &str = "BiBCode Server";
+pub(crate) const SYSTEMD_UNIT_NAME: &str = "coddy-studio.service";
+pub(crate) const LAUNCHD_LABEL: &str = "com.coddy.studio.server";
+pub(crate) const WINDOWS_TASK_NAME: &str = "Coddy Studio Server";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServiceSpec {
@@ -79,7 +79,7 @@ pub(crate) fn render_systemd_unit(spec: &ServiceSpec) -> String {
     }
     let mut unit = String::new();
     unit.push_str("[Unit]\n");
-    unit.push_str("Description=BiBCode server\n");
+    unit.push_str("Description=Coddy Studio server\n");
     unit.push_str("After=network-online.target\n");
     unit.push_str("Wants=network-online.target\n\n");
     unit.push_str("[Service]\n");
@@ -186,10 +186,10 @@ mod tests {
 
     fn spec() -> ServiceSpec {
         ServiceSpec {
-            executable: PathBuf::from("/usr/bin/bibcode"),
+            executable: PathBuf::from("/usr/bin/coddy-studio"),
             host: "100.105.196.60".to_owned(),
             port: 3773,
-            base_dir: Some(PathBuf::from("/home/me/.bibcode")),
+            base_dir: Some(PathBuf::from("/home/me/.coddy/studio")),
             static_dir: None,
             path_env: Some("/home/me/.local/bin:/usr/bin".into()),
         }
@@ -207,7 +207,7 @@ mod tests {
                 "--port",
                 "3773",
                 "--base-dir",
-                "/home/me/.bibcode",
+                "/home/me/.coddy/studio",
                 "--no-startup-pairing-offer",
             ]
             .into_iter()
@@ -216,7 +216,7 @@ mod tests {
         );
         let mut with_static = spec();
         with_static.base_dir = None;
-        with_static.static_dir = Some(PathBuf::from("/opt/bibcode/web"));
+        with_static.static_dir = Some(PathBuf::from("/opt/coddy-studio/web"));
         let arguments = with_static.serve_arguments();
         assert!(arguments.iter().any(|argument| argument == "--static-dir"));
         assert!(!arguments.iter().any(|argument| argument == "--base-dir"));
@@ -224,17 +224,17 @@ mod tests {
 
     #[test]
     fn renders_a_systemd_user_unit_with_quoted_exec_and_captured_path() {
-        assert_eq!(SYSTEMD_UNIT_NAME, "bibcode.service");
+        assert_eq!(SYSTEMD_UNIT_NAME, "coddy-studio.service");
         let unit = render_systemd_unit(&spec());
         assert_eq!(
             unit,
             "[Unit]\n\
-             Description=BiBCode server\n\
+             Description=Coddy Studio server\n\
              After=network-online.target\n\
              Wants=network-online.target\n\
              \n\
              [Service]\n\
-             ExecStart=\"/usr/bin/bibcode\" serve --host 100.105.196.60 --port 3773 --base-dir \"/home/me/.bibcode\" --no-startup-pairing-offer\n\
+             ExecStart=\"/usr/bin/coddy-studio\" serve --host 100.105.196.60 --port 3773 --base-dir \"/home/me/.coddy/studio\" --no-startup-pairing-offer\n\
              Environment=\"PATH=/home/me/.local/bin:/usr/bin\"\n\
              Restart=on-failure\n\
              RestartSec=2\n\
@@ -259,20 +259,20 @@ mod tests {
 
     #[test]
     fn renders_a_launch_agent_plist_with_escaped_values() {
-        assert_eq!(LAUNCHD_LABEL, "com.bibcode.server");
+        assert_eq!(LAUNCHD_LABEL, "com.coddy.studio.server");
         let mut spec = spec();
-        spec.executable = PathBuf::from("/Applications/Bib&Code/bibcode");
+        spec.executable = PathBuf::from("/Applications/Bib&Code/coddy-studio");
         let plist = render_launchd_plist(
             &spec,
-            Path::new("/Users/me/Library/Logs/bibcode-server.log"),
+            Path::new("/Users/me/Library/Logs/coddy-studio-server.log"),
         );
         assert!(plist.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"));
         assert!(
-            plist.contains("<key>Label</key>\n\t<string>com.bibcode.server</string>"),
+            plist.contains("<key>Label</key>\n\t<string>com.coddy.studio.server</string>"),
             "{plist}"
         );
         assert!(
-            plist.contains("<string>/Applications/Bib&amp;Code/bibcode</string>"),
+            plist.contains("<string>/Applications/Bib&amp;Code/coddy-studio</string>"),
             "{plist}"
         );
         assert!(
@@ -287,7 +287,7 @@ mod tests {
         assert!(plist.contains("<key>KeepAlive</key>\n\t<true/>"), "{plist}");
         assert!(
             plist.contains(
-                "<key>StandardOutPath</key>\n\t<string>/Users/me/Library/Logs/bibcode-server.log</string>"
+                "<key>StandardOutPath</key>\n\t<string>/Users/me/Library/Logs/coddy-studio-server.log</string>"
             ),
             "{plist}"
         );
@@ -295,13 +295,13 @@ mod tests {
 
     #[test]
     fn windows_task_command_quotes_the_executable_and_paths() {
-        assert_eq!(WINDOWS_TASK_NAME, "BiBCode Server");
+        assert_eq!(WINDOWS_TASK_NAME, "Coddy Studio Server");
         let mut spec = spec();
-        spec.executable = PathBuf::from(r"C:\Program Files\BiBCode\bibcode.exe");
-        spec.base_dir = Some(PathBuf::from(r"C:\Users\me\.bibcode"));
+        spec.executable = PathBuf::from(r"C:\Program Files\Coddy Studio\coddy-studio.exe");
+        spec.base_dir = Some(PathBuf::from(r"C:\Users\me\.coddy/studio"));
         assert_eq!(
             windows_task_command(&spec),
-            r#""C:\Program Files\BiBCode\bibcode.exe" serve --host 100.105.196.60 --port 3773 --base-dir "C:\Users\me\.bibcode" --no-startup-pairing-offer"#
+            r#""C:\Program Files\Coddy Studio\coddy-studio.exe" serve --host 100.105.196.60 --port 3773 --base-dir "C:\Users\me\.coddy/studio" --no-startup-pairing-offer"#
         );
     }
 }

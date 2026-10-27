@@ -4,8 +4,8 @@ import {
   EnvironmentHttpForbiddenError,
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
-} from "@bibcode/contracts";
-import { makeEnvironmentHttpApiClient } from "@bibcode/client-runtime/rpc";
+} from "@coddy/contracts";
+import { makeEnvironmentHttpApiClient } from "@coddy/client-runtime/rpc";
 import {
   RelayCloudEnvironmentHealthProofPayload,
   RelayEnvironmentHealthResponse,
@@ -15,7 +15,7 @@ import {
   RelayCloudMintCredentialProofPayload,
   type RelayEnvironmentConnectResponse,
   type RelayEnvironmentStatusResponse,
-} from "@bibcode/contracts/relay";
+} from "@coddy/contracts/relay";
 import {
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
@@ -24,8 +24,8 @@ import {
   RELAY_MINT_RESPONSE_TYP,
   signRelayJwt,
   verifyRelayJwt,
-} from "@bibcode/shared/relayJwt";
-import { stableStringify } from "@bibcode/shared/relaySigning";
+} from "@coddy/shared/relayJwt";
+import { stableStringify } from "@coddy/shared/relaySigning";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -154,7 +154,7 @@ export class EnvironmentConnector extends Context.Service<
       readonly environmentId: string;
     }) => Effect.Effect<RelayEnvironmentStatusResponse, EnvironmentConnectorError>;
   }
->()("bibcode-relay/environments/EnvironmentConnector") {}
+>()("coddy-studio-relay/environments/EnvironmentConnector") {}
 
 const decodeMintResponseProof = Schema.decodeUnknownEffect(
   RelayEnvironmentMintResponseProofPayload,
@@ -231,7 +231,7 @@ function verifyEnvironmentResponse(input: {
   return verifyWithEnvironmentKeys({
     token: input.response.proof,
     typ: RELAY_MINT_RESPONSE_TYP,
-    issuer: `bibcode-env:${input.environmentId}`,
+    issuer: `coddy-studio-env:${input.environmentId}`,
     audience: normalizeRelayIssuer(input.relayIssuer),
     nowEpochSeconds: input.nowEpochSeconds,
     environmentPublicKeys: input.environmentPublicKeys,
@@ -264,7 +264,7 @@ function verifyEnvironmentHealthResponse(input: {
   return verifyWithEnvironmentKeys({
     token: input.response.proof,
     typ: RELAY_HEALTH_RESPONSE_TYP,
-    issuer: `bibcode-env:${input.environmentId}`,
+    issuer: `coddy-studio-env:${input.environmentId}`,
     audience: normalizeRelayIssuer(input.relayIssuer),
     nowEpochSeconds: Math.floor(input.now.epochMilliseconds / 1_000),
     environmentPublicKeys: input.environmentPublicKeys,
@@ -433,7 +433,7 @@ const make = Effect.gen(function* () {
       );
       const payload = {
         iss: relayIssuer,
-        aud: `bibcode-env:${link.environmentId}`,
+        aud: `coddy-studio-env:${link.environmentId}`,
         sub: input.userId,
         jti: yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(
@@ -586,7 +586,7 @@ const make = Effect.gen(function* () {
       );
       const payload = {
         iss: relayIssuer,
-        aud: `bibcode-env:${link.environmentId}`,
+        aud: `coddy-studio-env:${link.environmentId}`,
         sub: input.userId,
         jti: yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(
@@ -622,7 +622,7 @@ const make = Effect.gen(function* () {
       );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
       const decoded = yield* environmentClient.connect
-        .bibcodeMintCredential({ payload: { proof } })
+        .coddyStudioMintCredential({ payload: { proof } })
         .pipe(
           withoutRedirects,
           Effect.mapError(

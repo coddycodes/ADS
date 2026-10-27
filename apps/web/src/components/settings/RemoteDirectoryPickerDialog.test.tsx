@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -220,7 +220,7 @@ describe("RemoteDirectoryPickerDialog", () => {
           { name: "D:\\", fullPath: "D:\\" },
           { name: "Worktrees", fullPath: "D:\\Worktrees" },
         ],
-        entries: [{ name: "bibcode", fullPath: "D:\\Worktrees\\bibcode" }],
+        entries: [{ name: "coddy", fullPath: "D:\\Worktrees\\coddy-studio" }],
       },
       error: null,
       isPending: false,
@@ -236,8 +236,8 @@ describe("RemoteDirectoryPickerDialog", () => {
       input: { partialPath: "~", mode: "directory" },
     });
     expect(harness.input?.value).toBe("D:\\Worktrees");
-    invokeClick(button("Open bibcode"));
-    expect(harness.setPath).toHaveBeenCalledWith("D:\\Worktrees\\bibcode");
+    invokeClick(button("Open coddy-studio"));
+    expect(harness.setPath).toHaveBeenCalledWith("D:\\Worktrees\\coddy-studio");
     invokeClick(button("Select folder"));
     expect(onSelect).toHaveBeenCalledWith("D:\\Worktrees");
   });

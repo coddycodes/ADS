@@ -1,4 +1,4 @@
-import type { EnvironmentId, GitManagerCommitEntry } from "@bibcode/contracts";
+import type { EnvironmentId, GitManagerCommitEntry } from "@coddy/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import { CheckIcon, CopyIcon, FileIcon } from "lucide-react";

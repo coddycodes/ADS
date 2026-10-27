@@ -63,7 +63,7 @@ export function buildRustCoverageCommand(
     readonly repoRoot?: string | undefined;
   } = {},
 ): RustCoverageCommand {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- Standalone coverage gate targets the actual host platform when no explicit platform override is supplied.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- Standalone coverage gate targets the actual host platform when no explicit platform override is supplied.
   const platform = options.platform ?? process.platform;
   const repoRoot = options.repoRoot ?? REPOSITORY_ROOT;
   const reportPath = NodePath.join(repoRoot, "target", COVERAGE_REPORT_FILENAME);

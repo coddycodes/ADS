@@ -5,7 +5,7 @@ import type {
   DesktopServerExposureMode,
   DesktopServerExposureState,
   EnvironmentId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import { toastManager } from "../components/ui/toast";

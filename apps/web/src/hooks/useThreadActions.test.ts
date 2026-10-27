@@ -20,13 +20,13 @@ import {
   ProviderInstanceId,
   type ScopedThreadRef,
   ThreadId,
-} from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
-import { createModelSelection } from "@bibcode/shared/model";
-import { scopeThreadRef, scopedThreadKey } from "@bibcode/client-runtime/environment";
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
+} from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
+import { createModelSelection } from "@coddy/shared/model";
+import { scopeThreadRef, scopedThreadKey } from "@coddy/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/models";
 import { AsyncResult } from "effect/reactivity";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 
 // ── hoisted harness state shared by every vi.mock factory ─────────────────────
@@ -92,7 +92,7 @@ vi.mock("../state/threads", () => ({
 
 vi.mock("../state/worktrees", () => ({
   worktreeEnvironment: {
-    removeFromBibCode: { key: "worktree.removeFromBibCode" },
+    removeFromCoddyStudio: { key: "worktree.removeFromCoddyStudio" },
   },
 }));
 
@@ -246,7 +246,7 @@ function commandKeys(): string[] {
 beforeEach(() => {
   h.commandCalls.length = 0;
   h.commandResults = {};
-  h.commandResults["worktree.removeFromBibCode"] = () =>
+  h.commandResults["worktree.removeFromCoddyStudio"] = () =>
     AsyncResult.success({
       threadRemoved: true,
       gitOutcome: "not-requested",
@@ -391,7 +391,7 @@ describe("deleteThread", () => {
   it("detaches a missing worktree by IDs without sending a path or using browser-owned Git", async () => {
     const shell = makeShell("t-missing", { worktreePath: "C:/wt/missing" });
     const ref = registerShell(shell);
-    h.commandResults["worktree.removeFromBibCode"] = () =>
+    h.commandResults["worktree.removeFromCoddyStudio"] = () =>
       AsyncResult.success({
         threadRemoved: true,
         gitOutcome: "not-requested",
@@ -402,9 +402,9 @@ describe("deleteThread", () => {
     const result = await actions.deleteThread(ref);
 
     expect(result._tag).toBe("Success");
-    expect(commandKeys()).toContain("worktree.removeFromBibCode");
+    expect(commandKeys()).toContain("worktree.removeFromCoddyStudio");
     expect(commandKeys()).not.toContain("thread.delete");
-    const detach = h.commandCalls.find((call) => call.key === "worktree.removeFromBibCode");
+    const detach = h.commandCalls.find((call) => call.key === "worktree.removeFromCoddyStudio");
     expect(detach?.input).toMatchObject({
       environmentId: ENV,
       input: { projectId: PROJECT, threadId: shell.id },
@@ -424,7 +424,7 @@ describe("deleteThread", () => {
 
     expect(result._tag).toBe("Success");
     expect(commandKeys()).toEqual(["terminal.close", "thread.delete"]);
-    expect(commandKeys()).not.toContain("worktree.removeFromBibCode");
+    expect(commandKeys()).not.toContain("worktree.removeFromCoddyStudio");
   });
 
   it("dispatches a direct delete for a thread missing from the store", async () => {
@@ -578,7 +578,7 @@ describe("deleteThread", () => {
     const result = await actions.deleteThread(workspaceRef);
 
     expect(result._tag).toBe("Success");
-    expect(commandKeys()).toEqual(["worktree.removeFromBibCode"]);
+    expect(commandKeys()).toEqual(["worktree.removeFromCoddyStudio"]);
     const panelRef = scopeThreadRef(ENV, panel.id);
     expect(useCenterPanelStore.getState().removeThread).toHaveBeenNthCalledWith(1, workspaceRef);
     expect(useCenterPanelStore.getState().removeThread).toHaveBeenNthCalledWith(2, panelRef);
@@ -639,7 +639,7 @@ describe("deleteThread", () => {
   it("returns typed detach failures without clearing local workspace state", async () => {
     const shell = makeShell("t-del", { worktreePath: "C:/wt/x" });
     const ref = registerShell(shell);
-    h.commandResults["worktree.removeFromBibCode"] = () => failure("detach failed");
+    h.commandResults["worktree.removeFromCoddyStudio"] = () => failure("detach failed");
     const actions = renderActions();
 
     const result = await actions.deleteThread(ref);
@@ -651,7 +651,7 @@ describe("deleteThread", () => {
   it("reports typed partial cleanup after removing the row", async () => {
     const shell = makeShell("t-del", { worktreePath: "C:/wt/x" });
     const ref = registerShell(shell);
-    h.commandResults["worktree.removeFromBibCode"] = () =>
+    h.commandResults["worktree.removeFromCoddyStudio"] = () =>
       AsyncResult.success({
         threadRemoved: true,
         gitOutcome: "failed",
@@ -666,7 +666,7 @@ describe("deleteThread", () => {
     expect(h.toastAdd).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "warning",
-        title: "Removed from BiBCode; Git cleanup remains",
+        title: "Removed from Coddy Studio; Git cleanup remains",
         description: "Run git worktree prune manually.",
       }),
     );

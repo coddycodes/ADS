@@ -3,8 +3,8 @@ import type {
   ServerProviderAgent,
   ServerProviderSkill,
   ServerProviderSlashCommand,
-} from "@bibcode/contracts";
-import type { ComposerTriggerProfile } from "@bibcode/shared/composerTrigger";
+} from "@coddy/contracts";
+import type { ComposerTriggerProfile } from "@coddy/shared/composerTrigger";
 
 export interface ComposerCapabilityProfile {
   readonly signature: string;

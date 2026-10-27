@@ -1,5 +1,5 @@
-import type { ProjectId, ResolvedKeybindingsConfig, ScopedThreadRef } from "@bibcode/contracts";
-import { resolveTerminalSessionLabel } from "@bibcode/shared/terminalLabels";
+import type { ProjectId, ResolvedKeybindingsConfig, ScopedThreadRef } from "@coddy/contracts";
+import { resolveTerminalSessionLabel } from "@coddy/shared/terminalLabels";
 import { useMemo } from "react";
 
 import type { TerminalContextSelection } from "~/lib/terminalContext";

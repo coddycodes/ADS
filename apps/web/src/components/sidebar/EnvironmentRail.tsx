@@ -3,8 +3,8 @@ import { MonitorIcon, PlusIcon, Settings2Icon } from "lucide-react";
 import * as React from "react";
 import { useCallback, useEffect, useMemo } from "react";
 
-import type { EnvironmentId } from "@bibcode/contracts";
-import { isRemoteUpdateAvailable } from "@bibcode/client-runtime/state/remoteUpdates";
+import type { EnvironmentId } from "@coddy/contracts";
+import { isRemoteUpdateAvailable } from "@coddy/client-runtime/state/remoteUpdates";
 
 import {
   resolveEnvironmentCompatVerdict,

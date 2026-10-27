@@ -1,5 +1,5 @@
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
-import type { ScopedProjectRef } from "@bibcode/contracts";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/models";
+import type { ScopedProjectRef } from "@coddy/contracts";
 import { BotIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 

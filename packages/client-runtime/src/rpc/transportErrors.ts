@@ -1,4 +1,4 @@
-import { RpcResponseTooLargeError } from "@bibcode/contracts";
+import { RpcResponseTooLargeError } from "@coddy/contracts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 /**
@@ -7,6 +7,6 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
  * (`requiredForClient` is false); the Rust server produces the failure.
  */
 export class RpcTransportErrors extends RpcMiddleware.Service<RpcTransportErrors>()(
-  "@bibcode/client-runtime/rpc/RpcTransportErrors",
+  "@coddy/client-runtime/rpc/RpcTransportErrors",
   { error: RpcResponseTooLargeError },
 ) {}

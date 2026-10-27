@@ -1328,7 +1328,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-sink-",
+            prefix: "coddy-studio-trace-sink-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
@@ -1358,7 +1358,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-prepared-record-",
+            prefix: "coddy-studio-trace-prepared-record-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           let toStringCalls = 0;
@@ -1406,7 +1406,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-concurrent-close-",
+            prefix: "coddy-studio-trace-concurrent-close-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           const sink = yield* makeTraceSink({
@@ -1435,7 +1435,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-interrupted-close-",
+            prefix: "coddy-studio-trace-interrupted-close-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
@@ -1470,7 +1470,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-terminal-rollback-",
+            prefix: "coddy-studio-trace-terminal-rollback-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           const diagnostics: Array<TraceSinkDiagnostic> = [];
@@ -1550,7 +1550,7 @@ describe("observability", () => {
             const fileSystem = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-              prefix: "bibcode-trace-terminal-close-",
+              prefix: "coddy-studio-trace-terminal-close-",
             });
             const tracePath = path.join(tempDir, "shared.trace.ndjson");
             const diagnostics: Array<TraceSinkDiagnostic> = [];
@@ -1620,7 +1620,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-batch-",
+            prefix: "coddy-studio-trace-batch-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           const sink = yield* makeTraceSink({
@@ -1645,7 +1645,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-retry-",
+            prefix: "coddy-studio-trace-retry-",
           });
           const parentPath = path.join(tempDir, "trace-parent");
           const tracePath = path.join(parentPath, "shared.trace.ndjson");
@@ -1680,7 +1680,7 @@ describe("observability", () => {
             const fileSystem = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-              prefix: "bibcode-trace-bounded-retry-",
+              prefix: "coddy-studio-trace-bounded-retry-",
             });
             const parentPath = path.join(tempDir, "trace-parent");
             const tracePath = path.join(parentPath, "shared.trace.ndjson");
@@ -1764,7 +1764,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-byte-bound-",
+            prefix: "coddy-studio-trace-byte-bound-",
           });
           const parentPath = path.join(tempDir, "trace-parent");
           const tracePath = path.join(parentPath, "shared.trace.ndjson");
@@ -1828,7 +1828,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-oversized-record-",
+            prefix: "coddy-studio-trace-oversized-record-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
           const diagnostics: Array<TraceSinkDiagnostic> = [];
@@ -1885,7 +1885,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-persistent-failure-",
+            prefix: "coddy-studio-trace-persistent-failure-",
           });
           const parentPath = path.join(tempDir, "trace-parent");
           const tracePath = path.join(parentPath, "shared.trace.ndjson");
@@ -1940,7 +1940,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-sink-",
+            prefix: "coddy-studio-trace-sink-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
@@ -1983,7 +1983,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-trace-sink-",
+            prefix: "coddy-studio-trace-sink-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
@@ -2026,7 +2026,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-local-tracer-",
+            prefix: "coddy-studio-local-tracer-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
@@ -2088,7 +2088,7 @@ describe("observability", () => {
             const fileSystem = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-              prefix: "bibcode-local-logger-",
+              prefix: "coddy-studio-local-logger-",
             });
             const tracePath = path.join(tempDir, "shared.trace.ndjson");
             const secret = "logger-private-value";
@@ -2152,7 +2152,7 @@ describe("observability", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "bibcode-local-tracer-",
+            prefix: "coddy-studio-local-tracer-",
           });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
 

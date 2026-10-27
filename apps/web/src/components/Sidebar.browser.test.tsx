@@ -24,10 +24,10 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { ProjectId, WorktreeKey, WorktreeRepositoryKey } from "@bibcode/contracts";
-import { scopeProjectRef } from "@bibcode/client-runtime/environment";
+import { ProjectId, WorktreeKey, WorktreeRepositoryKey } from "@coddy/contracts";
+import { scopeProjectRef } from "@coddy/client-runtime/environment";
 import { derivePhysicalProjectKey } from "../logicalProject";
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/shell";
 import Sidebar, { SidebarThreadRow } from "./Sidebar";
 import { showContextMenuFallback } from "../contextMenuFallback";
 

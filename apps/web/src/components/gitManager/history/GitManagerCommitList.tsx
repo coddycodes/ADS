@@ -1,4 +1,4 @@
-import type { GitManagerCommitEntry } from "@bibcode/contracts";
+import type { GitManagerCommitEntry } from "@coddy/contracts";
 import { LegendList, type LegendListRef, type OnViewableItemsChanged } from "@legendapp/list/react";
 import {
   memo,

@@ -330,7 +330,7 @@ fn lock_dir(dir: &Path) -> io::Result<File> {
             Err(TryLockError::WouldBlock) => {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,
-                    "another BiBCode process is writing to this profiler directory",
+                    "another Coddy Studio process is writing to this profiler directory",
                 ));
             }
             Err(TryLockError::Error(error)) => return Err(error),
@@ -526,7 +526,7 @@ async fn supervise(
     }
 }
 
-/// Finds the dumps of this run that BiBCode survived (a Windows invalid-parameter handler, or
+/// Finds the dumps of this run that Coddy Studio survived (a Windows invalid-parameter handler, or
 /// a crash the OS did not escalate) and raises a `crash.native` finding for each new one.
 struct DumpScan {
     dir: PathBuf,
@@ -612,7 +612,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// Writes `session.start` each time recording starts, first among the detectors: which
-/// BiBCode recorded the events that follow under this `sid` (#98).
+/// Coddy Studio recorded the events that follow under this `sid` (#98).
 pub struct SessionHeader {
     host: &'static str,
 }

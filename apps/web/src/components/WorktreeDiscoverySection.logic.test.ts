@@ -3,7 +3,7 @@ import {
   ProjectId,
   WorktreeKey,
   type VcsWorktreeDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -197,7 +197,7 @@ describe("WorktreeDiscoverySection presentation logic", () => {
     expect(formatWorktreeAddAllSummary({ successCount: 3, failureCount: 0 })).toEqual({
       type: "success",
       title: "Added 3 discovered worktrees",
-      description: "All discovered worktrees were added to BiBCode.",
+      description: "All discovered worktrees were added to Coddy Studio.",
     });
     expect(formatWorktreeAddAllSummary({ successCount: 2, failureCount: 1 })).toEqual({
       type: "warning",

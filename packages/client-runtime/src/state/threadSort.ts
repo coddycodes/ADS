@@ -1,5 +1,5 @@
-import type { ProjectId } from "@bibcode/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@bibcode/contracts/settings";
+import type { ProjectId } from "@coddy/contracts";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@coddy/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 

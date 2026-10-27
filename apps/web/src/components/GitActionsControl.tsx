@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type ScopedThreadRef } from "@bibcode/contracts";
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { type ScopedThreadRef } from "@coddy/contracts";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
-import { mergeWorkingTreeFilesByPath } from "@bibcode/shared/git";
+} from "@coddy/client-runtime/state/runtime";
+import { mergeWorkingTreeFilesByPath } from "@coddy/shared/git";
 import type {
   GitActionProgressEvent,
   GitRunStackedActionResult,
@@ -16,7 +16,7 @@ import type {
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryVisibility,
   VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";

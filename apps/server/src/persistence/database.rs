@@ -516,7 +516,7 @@ impl Database {
         let (ready_sender, ready_receiver) = oneshot::channel();
         let (worker_closed_sender, worker_closed) = watch::channel(false);
         thread::Builder::new()
-            .name("bibcode-sqlite".to_owned())
+            .name("coddy-studio-sqlite".to_owned())
             .spawn(move || {
                 let connection = open_connection(path.as_deref(), expected_identity, read_only);
                 match connection {

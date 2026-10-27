@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bibcode_server::{
+use coddy_studio_server::{
     activity::{
         ACTIVITY_DETAIL_MAX_LENGTH, ACTIVITY_ID_MAX_LENGTH, ACTIVITY_LABEL_MAX_LENGTH,
         ACTIVITY_PAGE_MAX_LENGTH, ACTIVITY_SUMMARY_MAX_LENGTH, ActivityActorSummary,
@@ -3325,7 +3325,7 @@ fn actor_summary(
     started_at: &str,
     updated_at: &str,
     terminal_at: Option<&str>,
-) -> Result<ActivityActorSummary, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityActorSummary, coddy_studio_server::activity::ActivityModelError> {
     ActivityActorSummary::try_new(
         id,
         parent_actor_id,
@@ -3347,7 +3347,7 @@ fn work_item_summary(
     started_at: &str,
     updated_at: &str,
     terminal_at: Option<&str>,
-) -> Result<ActivityWorkItemSummary, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityWorkItemSummary, coddy_studio_server::activity::ActivityModelError> {
     ActivityWorkItemSummary::try_new(
         id,
         owner_actor_id,
@@ -3368,7 +3368,7 @@ fn entry(
     owner_kind: ActivityRecordKind,
     owner_id: &str,
     created_at: &str,
-) -> Result<ActivityEntry, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityEntry, coddy_studio_server::activity::ActivityModelError> {
     ActivityEntry::try_new(
         id,
         owner_kind,

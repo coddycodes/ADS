@@ -1,4 +1,4 @@
-import { type ApprovalRequestId, type UserInputQuestion } from "@bibcode/contracts";
+import { type ApprovalRequestId, type UserInputQuestion } from "@coddy/contracts";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {

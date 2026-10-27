@@ -1,4 +1,4 @@
-import type { ScopedProjectRef } from "@bibcode/contracts";
+import type { ScopedProjectRef } from "@coddy/contracts";
 import { act, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";

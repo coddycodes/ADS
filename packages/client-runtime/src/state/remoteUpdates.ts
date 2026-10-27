@@ -1,4 +1,4 @@
-import { type EnvironmentId, type RemoteUpdateSnapshot, WS_METHODS } from "@bibcode/contracts";
+import { type EnvironmentId, type RemoteUpdateSnapshot, WS_METHODS } from "@coddy/contracts";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

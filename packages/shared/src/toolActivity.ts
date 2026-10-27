@@ -1,4 +1,4 @@
-import type { ToolLifecycleItemType } from "@bibcode/contracts";
+import type { ToolLifecycleItemType } from "@coddy/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)

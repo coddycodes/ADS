@@ -1,7 +1,7 @@
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
 
-use bibcode_server::provider_usage;
+use coddy_studio_server::provider_usage;
 use serde_json::json;
 
 use provider_usage::{
@@ -33,7 +33,7 @@ const ISOLATED_PROVIDER_INTEGRATION_DEADLINE: std::time::Duration =
 fn run_isolated_case(case: &str, test_name: &str) -> Output {
     let mut child = Command::new(std::env::current_exe().expect("current test binary"))
         .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
-        .env("BIBCODE_TEST_ISOLATED_CASE", case)
+        .env("CODDY_STUDIO_TEST_ISOLATED_CASE", case)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -85,7 +85,7 @@ fn run_isolated_case(case: &str, test_name: &str) -> Output {
 
 fn is_isolated_case(case: &str, test_name: &str) -> bool {
     let arguments = std::env::args().collect::<Vec<_>>();
-    std::env::var("BIBCODE_TEST_ISOLATED_CASE").as_deref() == Ok(case)
+    std::env::var("CODDY_STUDIO_TEST_ISOLATED_CASE").as_deref() == Ok(case)
         && arguments
             .windows(2)
             .any(|values| values == ["--exact", test_name])
@@ -762,7 +762,7 @@ async fn production_fetchers_handle_local_credentials_and_codex_rpc_responses() 
         );
         assert!(
             String::from_utf8_lossy(&output.stdout)
-                .contains("BIBCODE_TEST_ISOLATED_CASE_DONE=provider-usage-env"),
+                .contains("CODDY_STUDIO_TEST_ISOLATED_CASE_DONE=provider-usage-env"),
             "isolated child did not confirm the exact provider-usage environment case"
         );
         return;
@@ -773,7 +773,7 @@ async fn production_fetchers_handle_local_credentials_and_codex_rpc_responses() 
     let codex_home = temporary.path().join("codex");
     fs::create_dir_all(&codex_home).expect("codex home");
     set_provider_usage_environment("CLAUDE_CONFIG_DIR", &claude_home);
-    set_provider_usage_environment("BIBCODE_CLAUDE_KEYCHAIN_ACCESS", "disabled");
+    set_provider_usage_environment("CODDY_STUDIO_CLAUDE_KEYCHAIN_ACCESS", "disabled");
     set_provider_usage_environment("CODEX_HOME", &codex_home);
 
     let fetchers = production_fetchers();
@@ -941,5 +941,5 @@ async fn production_fetchers_handle_local_credentials_and_codex_rpc_responses() 
             .unix_timestamp(),
         1_900_000_200
     );
-    println!("BIBCODE_TEST_ISOLATED_CASE_DONE=provider-usage-env");
+    println!("CODDY_STUDIO_TEST_ISOLATED_CASE_DONE=provider-usage-env");
 }

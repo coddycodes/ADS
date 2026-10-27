@@ -6,7 +6,9 @@ mod hermetic_providers;
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
 
-use bibcode_server::{git, production::host_paths::process_compatible_path, source_control, vcs};
+use coddy_studio_server::{
+    git, production::host_paths::process_compatible_path, source_control, vcs,
+};
 
 use std::{
     fs,
@@ -157,10 +159,10 @@ fn git(cwd: &Path, args: &[&str]) -> String {
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "BiBCode Test")
-        .env("GIT_AUTHOR_EMAIL", "bibcode@example.invalid")
-        .env("GIT_COMMITTER_NAME", "BiBCode Test")
-        .env("GIT_COMMITTER_EMAIL", "bibcode@example.invalid")
+        .env("GIT_AUTHOR_NAME", "Coddy Studio Test")
+        .env("GIT_AUTHOR_EMAIL", "coddy-studio@example.invalid")
+        .env("GIT_COMMITTER_NAME", "Coddy Studio Test")
+        .env("GIT_COMMITTER_EMAIL", "coddy-studio@example.invalid")
         .output()
         .expect("git must be installed for real-repository tests");
     assert!(
@@ -193,8 +195,11 @@ fn init_repo() -> TempDir {
 fn initialize_repo_at(path: &Path) {
     fs::create_dir_all(path).expect("repository directory");
     git(path, &["init", "-b", "main"]);
-    git(path, &["config", "user.name", "BiBCode Test"]);
-    git(path, &["config", "user.email", "bibcode@example.invalid"]);
+    git(path, &["config", "user.name", "Coddy Studio Test"]);
+    git(
+        path,
+        &["config", "user.email", "coddy-studio@example.invalid"],
+    );
 }
 
 fn commit_file(repo: &Path, path: &str, contents: &str, message: &str) {
@@ -764,7 +769,7 @@ async fn unavailable_configured_workspace_fails_without_project_adjacent_fallbac
         !repo
             .parent()
             .expect("temporary repository parent")
-            .join(".bibcode-worktrees")
+            .join(".coddy-studio-worktrees")
             .exists()
     );
 }
@@ -820,7 +825,7 @@ async fn configured_workspace_child_creation_failures_use_the_workspace_error() 
         !repo
             .parent()
             .expect("temporary repository parent")
-            .join(".bibcode-worktrees")
+            .join(".coddy-studio-worktrees")
             .exists()
     );
     assert!(git(&repo, &["branch", "--list", "feature/blocked"]).is_empty());
@@ -836,7 +841,7 @@ async fn occupied_suffix_branches_and_default_paths_are_skipped() {
         .path()
         .parent()
         .expect("temporary repository parent")
-        .join(".bibcode-worktrees")
+        .join(".coddy-studio-worktrees")
         .join(repo_name);
     fs::create_dir_all(default_root.join("main-3")).expect("colliding default path");
 
@@ -983,7 +988,7 @@ async fn occupied_branch_fallback_does_not_claim_a_preexisting_explicit_path() {
             &cancellation(),
         )
         .await
-        .expect_err("an explicit path must be absent before BiBCode can own it");
+        .expect_err("an explicit path must be absent before Coddy Studio can own it");
 
     assert!(preexisting_path.is_dir());
     assert!(
@@ -1063,7 +1068,7 @@ async fn occupied_branch_relative_path_uses_one_repository_relative_target() {
     let repo = init_repo();
     commit_file(repo.path(), "README.md", "hello\n", "initial");
     let leaf = format!(
-        "bibcode-relative-occupied-{}",
+        "coddy-studio-relative-occupied-{}",
         repo.path()
             .file_name()
             .expect("temporary repository name")
@@ -1119,7 +1124,7 @@ async fn occupied_branch_relative_path_preserves_a_preexisting_repository_relati
     let repo = init_repo();
     commit_file(repo.path(), "README.md", "hello\n", "initial");
     let leaf = format!(
-        "bibcode-relative-preexisting-{}",
+        "coddy-studio-relative-preexisting-{}",
         repo.path()
             .file_name()
             .expect("temporary repository name")
@@ -1176,12 +1181,12 @@ async fn direct_existing_and_new_branch_relative_paths_return_the_repository_rel
 
     for (leaf, ref_name, new_ref_name) in [
         (
-            format!("bibcode-relative-free-{repo_name}"),
+            format!("coddy-studio-relative-free-{repo_name}"),
             "feature/free-relative",
             None,
         ),
         (
-            format!("bibcode-relative-new-{repo_name}"),
+            format!("coddy-studio-relative-new-{repo_name}"),
             "main",
             Some("feature/new-relative"),
         ),
@@ -1370,7 +1375,7 @@ async fn stale_registered_path_replaced_without_a_git_link_is_not_precleaned() {
     );
     fs::write(
         worktree_path.join(".git"),
-        "gitdir: C:/missing-bibcode-worktree-admin\n",
+        "gitdir: C:/missing-coddy-studio-worktree-admin\n",
     )
     .expect("malformed linked-worktree marker");
     GitRepository::default()
@@ -1549,14 +1554,14 @@ async fn branch_commit_context_and_history_workflow_uses_real_git_state() {
 
 #[test]
 fn structured_runner_child_fixture() {
-    if std::env::var_os("BIBCODE_PROCESS_FIXTURE").is_none() {
+    if std::env::var_os("CODDY_STUDIO_PROCESS_FIXTURE").is_none() {
         return;
     }
-    if std::env::var_os("BIBCODE_PROCESS_FIXTURE_ERROR").is_some() {
+    if std::env::var_os("CODDY_STUDIO_PROCESS_FIXTURE_ERROR").is_some() {
         eprintln!("fatal: bad config line 3 in .gitmodules");
         panic!("requested fixture failure");
     }
-    let bytes = std::env::var("BIBCODE_PROCESS_FIXTURE_BYTES")
+    let bytes = std::env::var("CODDY_STUDIO_PROCESS_FIXTURE_BYTES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
@@ -1577,7 +1582,7 @@ fn fixture_request() -> ProcessRequest {
             "--nocapture".into(),
         ],
         cwd: std::env::current_dir().expect("current directory"),
-        env: vec![("BIBCODE_PROCESS_FIXTURE".into(), "1".into())],
+        env: vec![("CODDY_STUDIO_PROCESS_FIXTURE".into(), "1".into())],
         stdin: None,
         timeout: Duration::from_secs(10),
         max_output_bytes: 1024,
@@ -1593,7 +1598,7 @@ async fn process_runner_is_bounded_and_cancellable() {
     let mut bounded = fixture_request();
     bounded
         .env
-        .push(("BIBCODE_PROCESS_FIXTURE_BYTES".into(), "4096".into()));
+        .push(("CODDY_STUDIO_PROCESS_FIXTURE_BYTES".into(), "4096".into()));
     let output = runner
         .run(bounded, &cancellation())
         .await
@@ -1616,7 +1621,7 @@ async fn process_runner_is_bounded_and_cancellable() {
     let mut failed = fixture_request();
     failed
         .env
-        .push(("BIBCODE_PROCESS_FIXTURE_ERROR".into(), "1".into()));
+        .push(("CODDY_STUDIO_PROCESS_FIXTURE_ERROR".into(), "1".into()));
     let error = runner
         .run(failed, &cancellation())
         .await
@@ -1908,10 +1913,10 @@ async fn subscribed_remote_poller_fetches_real_upstream_changes() {
     let publisher = root.path().join("publisher");
     fs::create_dir(&publisher).expect("publisher directory");
     git(&publisher, &["init", "-b", "main"]);
-    git(&publisher, &["config", "user.name", "BiBCode Test"]);
+    git(&publisher, &["config", "user.name", "Coddy Studio Test"]);
     git(
         &publisher,
-        &["config", "user.email", "bibcode@example.invalid"],
+        &["config", "user.email", "coddy-studio@example.invalid"],
     );
     commit_file(&publisher, "tracked.txt", "base\n", "initial");
     git(

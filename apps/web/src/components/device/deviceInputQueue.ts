@@ -1,4 +1,4 @@
-import type { DeviceInputEvent, DeviceKey } from "@bibcode/contracts";
+import type { DeviceInputEvent, DeviceKey } from "@coddy/contracts";
 
 /** The most events one `device.input` call accepts. */
 export const MAX_INPUT_BATCH = 64;

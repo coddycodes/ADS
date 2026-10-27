@@ -13,7 +13,7 @@ function zipResponse(
   return {
     status: 200,
     contentType: "application/zip",
-    contentDisposition: 'attachment; filename="bibcode-diagnostics-20260715T123456Z.zip"',
+    contentDisposition: 'attachment; filename="coddy-studio-diagnostics-20260715T123456Z.zip"',
     bytes: new Uint8Array([0x50, 0x4b, 1, 2]),
     ...overrides,
   };
@@ -74,7 +74,7 @@ describe("downloadDiagnosticLogs", () => {
     ]);
     expect(filename).toEqual({
       status: "downloaded",
-      filename: "bibcode-diagnostics-20260715T123456Z.zip",
+      filename: "coddy-studio-diagnostics-20260715T123456Z.zip",
     });
     expect(h.createObjectURL).toHaveBeenCalledTimes(1);
     const blob = h.createObjectURL.mock.calls[0]?.[0];
@@ -82,7 +82,7 @@ describe("downloadDiagnosticLogs", () => {
     expect(blob).toMatchObject({ size: 4, type: "application/zip" });
     expect(h.anchor).toMatchObject({
       href: "blob:diagnostics",
-      download: "bibcode-diagnostics-20260715T123456Z.zip",
+      download: "coddy-studio-diagnostics-20260715T123456Z.zip",
     });
     expect(h.appendAnchor).toHaveBeenCalledWith(h.anchor);
     expect(h.anchor.click).toHaveBeenCalledTimes(1);
@@ -113,9 +113,9 @@ describe("downloadDiagnosticLogs", () => {
 
     expect(filename).toEqual({
       status: "downloaded",
-      filename: "bibcode-diagnostics-20260715T123456Z.zip",
+      filename: "coddy-studio-diagnostics-20260715T123456Z.zip",
     });
-    expect(h.anchor.download).toBe("bibcode-diagnostics-20260715T123456Z.zip");
+    expect(h.anchor.download).toBe("coddy-studio-diagnostics-20260715T123456Z.zip");
   });
 
   it("uses the native archive saver without triggering a WebView download", async () => {
@@ -125,12 +125,12 @@ describe("downloadDiagnosticLogs", () => {
     const result = await downloadDiagnosticLogs("warning", {}, h.dependencies);
 
     expect(saveArchive).toHaveBeenCalledWith(
-      "bibcode-diagnostics-20260715T123456Z.zip",
+      "coddy-studio-diagnostics-20260715T123456Z.zip",
       new Uint8Array([0x50, 0x4b, 1, 2]),
     );
     expect(result).toEqual({
       status: "saved",
-      filename: "bibcode-diagnostics-20260715T123456Z.zip",
+      filename: "coddy-studio-diagnostics-20260715T123456Z.zip",
       path: "C:\\Users\\test\\Downloads\\diagnostics.zip",
     });
     expect(h.createObjectURL).not.toHaveBeenCalled();
@@ -142,7 +142,7 @@ describe("downloadDiagnosticLogs", () => {
 
     await expect(downloadDiagnosticLogs("warning", {}, h.dependencies)).resolves.toEqual({
       status: "cancelled",
-      filename: "bibcode-diagnostics-20260715T123456Z.zip",
+      filename: "coddy-studio-diagnostics-20260715T123456Z.zip",
     });
     expect(h.createObjectURL).not.toHaveBeenCalled();
   });

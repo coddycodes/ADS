@@ -23,7 +23,7 @@ pub const MAINTENANCE_UPDATE_PREPARE_PATH: &str = "/api/maintenance/update/prepa
 pub const MAINTENANCE_UPDATE_COMMIT_PATH: &str = "/api/maintenance/update/commit";
 pub const MAINTENANCE_UPDATE_CANCEL_PATH: &str = "/api/maintenance/update/cancel";
 pub const MAINTENANCE_UPDATE_STATUS_PATH: &str = "/api/maintenance/update/status";
-pub const DESKTOP_MAINTENANCE_TOKEN_HEADER: &str = "x-bibcode-desktop-bootstrap-token";
+pub const DESKTOP_MAINTENANCE_TOKEN_HEADER: &str = "x-coddy-studio-desktop-bootstrap-token";
 
 const SHUTDOWN_AFTER_RESPONSE_DELAY: Duration = Duration::from_millis(25);
 const MAX_ADMISSION_BLOCKERS: usize = 16;

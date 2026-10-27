@@ -2,8 +2,8 @@ import {
   createAttachmentAdmissionOwner,
   type AttachmentSource,
   type StartThreadTurnInput,
-} from "@bibcode/client-runtime/operations";
-import type { StagedUploadChatAttachment } from "@bibcode/contracts";
+} from "@coddy/client-runtime/operations";
+import type { StagedUploadChatAttachment } from "@coddy/contracts";
 import type { ComposerThreadDraftState } from "../composerDraftStore";
 
 export interface StagedAttachmentAttempt {

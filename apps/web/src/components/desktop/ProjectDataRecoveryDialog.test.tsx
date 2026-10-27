@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { DesktopProjectDataEnvironmentStatus } from "@bibcode/contracts";
+import type { DesktopProjectDataEnvironmentStatus } from "@coddy/contracts";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -29,8 +29,8 @@ const status: DesktopProjectDataEnvironmentStatus = {
   label: "Local",
   runningDistro: null,
   status: "recovery-required",
-  requestedRoot: "/Users/user/.bibcode",
-  effectiveRoot: "/Volumes/Data/.bibcode",
+  requestedRoot: "/Users/user/.coddy/studio",
+  effectiveRoot: "/Volumes/Data/.coddy/studio",
   isFilesystemAlias: true,
   storageInstanceId: "b102f72a-c63b-4801-8f14-fba7a16856b8",
   issue: "The database is missing.",
@@ -90,8 +90,8 @@ describe("ProjectDataRecoveryDialog", () => {
     });
 
     expect(container.textContent).toContain("Local");
-    expect(container.textContent).toContain("/Users/user/.bibcode");
-    expect(container.textContent).toContain("/Volumes/Data/.bibcode");
+    expect(container.textContent).toContain("/Users/user/.coddy/studio");
+    expect(container.textContent).toContain("/Volumes/Data/.coddy/studio");
     expect(container.textContent).toContain("filesystem alias");
     expect(button("Restore selected backup").disabled).toBe(true);
 

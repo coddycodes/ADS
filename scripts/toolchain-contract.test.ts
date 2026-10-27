@@ -33,7 +33,7 @@ describe("repository toolchain contract", () => {
       ["packages/client-runtime/package.json", "node ../../scripts/run-local-vp.mjs test run"],
       ["packages/contracts/package.json", "node ../../scripts/run-local-vp.mjs test run"],
       ["packages/shared/package.json", "node ../../scripts/run-local-vp.mjs test run"],
-      ["oxlint-plugin-bibcode/package.json", "node ../scripts/run-local-vp.mjs test run"],
+      ["oxlint-plugin-coddy-studio/package.json", "node ../scripts/run-local-vp.mjs test run"],
       ["scripts/package.json", "node run-local-vp.mjs test run"],
     ] as const) {
       const scripts = readJson(manifest).scripts as Record<string, string>;
@@ -41,11 +41,11 @@ describe("repository toolchain contract", () => {
     }
   });
 
-  it("uses the BiBCode workspace package scope", () => {
-    expect(readJson("package.json").name).toBe("@bibcode/monorepo");
-    expect(readJson("apps/web/package.json").name).toBe("@bibcode/web");
-    expect(readJson("packages/contracts/package.json").name).toBe("@bibcode/contracts");
-    expect(readJson("packages/shared/package.json").name).toBe("@bibcode/shared");
+  it("uses the Coddy Studio workspace package scope", () => {
+    expect(readJson("package.json").name).toBe("@coddy/studio-monorepo");
+    expect(readJson("apps/web/package.json").name).toBe("@coddy/web");
+    expect(readJson("packages/contracts/package.json").name).toBe("@coddy/contracts");
+    expect(readJson("packages/shared/package.json").name).toBe("@coddy/shared");
   });
 
   it("pins Node, pnpm, Node types, and the paired Vite+ packages", () => {
@@ -100,7 +100,7 @@ describe("repository toolchain contract", () => {
       "apps/desktop/package.json",
       "apps/web/package.json",
       "infra/relay/package.json",
-      "oxlint-plugin-bibcode/package.json",
+      "oxlint-plugin-coddy-studio/package.json",
       "packages/client-runtime/package.json",
       "packages/contracts/package.json",
       "packages/shared/package.json",

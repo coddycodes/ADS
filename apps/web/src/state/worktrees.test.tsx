@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId } from "@coddy/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({
@@ -11,7 +11,7 @@ vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useEffect: (effect: () => void | (() => void)) => harness.effects.push(effect),
 }));
-vi.mock("@bibcode/client-runtime/state/worktrees", () => ({
+vi.mock("@coddy/client-runtime/state/worktrees", () => ({
   createWorktreeEnvironmentAtoms: vi.fn(() => harness.worktreeAtoms),
 }));
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: { runtime: true } }));

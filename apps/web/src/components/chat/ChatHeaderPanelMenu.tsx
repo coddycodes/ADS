@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerProvider, ServerSettings, ThreadId } from "@bibcode/contracts";
+import type { EnvironmentId, ServerProvider, ServerSettings, ThreadId } from "@coddy/contracts";
 import { HistoryIcon, PlusIcon, TerminalSquare } from "lucide-react";
 import { memo, useMemo, type ReactElement } from "react";
 

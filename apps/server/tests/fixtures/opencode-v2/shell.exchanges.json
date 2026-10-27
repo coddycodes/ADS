@@ -5,7 +5,7 @@
       "method": "POST",
       "path": "/api/session",
       "body": {
-        "title": "BiBCode capture",
+        "title": "Coddy Studio capture",
         "location": {
           "directory": "/work/project"
         },
@@ -52,7 +52,7 @@
             "created": 1792090043401,
             "updated": 1792090043401
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -100,7 +100,7 @@
             "created": 1792090043401,
             "updated": 1792090043401
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -123,13 +123,13 @@
       "method": "POST",
       "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/prompt",
       "body": {
-        "id": "msg_bibcodecapture1792090043404",
+        "id": "msg_coddystudiocapture1792090043404",
         "text": "RUN_SHELL please"
       },
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090043404",
+          "id": "msg_coddystudiocapture1792090043404",
           "sessionID": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
           "time": {
             "created": 1792090043406
@@ -153,7 +153,7 @@
             "id": "per_140e3f43c001qGvNvGQi2Rd435",
             "sessionID": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
             "action": "shell",
-            "resources": ["echo bibcode-v2"],
+            "resources": ["echo coddy-studio-v2"],
             "save": ["echo *"],
             "source": {
               "type": "tool",
@@ -244,13 +244,13 @@
                 "state": {
                   "status": "completed",
                   "input": {
-                    "command": "echo bibcode-v2",
+                    "command": "echo coddy-studio-v2",
                     "description": "Echo a marker"
                   },
                   "content": [
                     {
                       "type": "text",
-                      "text": "bibcode-v2\n"
+                      "text": "coddy-studio-v2\n"
                     }
                   ],
                   "metadata": {
@@ -280,7 +280,7 @@
             }
           },
           {
-            "id": "msg_bibcodecapture1792090043404",
+            "id": "msg_coddystudiocapture1792090043404",
             "time": {
               "created": 1792090043414
             },
@@ -296,12 +296,12 @@
     },
     {
       "method": "GET",
-      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/message/msg_bibcodecapture1792090043404",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/message/msg_coddystudiocapture1792090043404",
       "body": null,
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090043404",
+          "id": "msg_coddystudiocapture1792090043404",
           "time": {
             "created": 1792090043414
           },

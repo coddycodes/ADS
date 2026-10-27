@@ -2,8 +2,8 @@ import type {
   AuthAccessSnapshot,
   AuthAccessStreamEvent,
   AuthAccessStreamSnapshotEvent,
-} from "@bibcode/contracts";
-import { WS_METHODS } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { WS_METHODS } from "@coddy/contracts";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
 

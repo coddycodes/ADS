@@ -109,15 +109,15 @@ describe("cross-platform CI contract", () => {
     const releaseGuide = NodeFS.readFileSync(RELEASE_GUIDE_PATH, "utf8");
 
     expect(serverPackage.scripts.test).toBe(
-      "node ../../scripts/run-msvc.mjs cargo test -p bibcode-server -j 2",
+      "node ../../scripts/run-msvc.mjs cargo test -p coddy-studio-server -j 2",
     );
     expect(desktopPackage.scripts.test).toBe(
-      "node ../../scripts/run-msvc.mjs cargo test -p bibcode-desktop -j 2",
+      "node ../../scripts/run-msvc.mjs cargo test -p coddy-studio-desktop -j 2",
     );
     expect(rustWorkspaceTestStep?.run).toBe("cargo test --workspace -j 2");
     expect(ciWorkflow).not.toContain("--test-threads=1");
-    expect(releaseGuide).toContain("node scripts/run-msvc.mjs cargo test -p bibcode-desktop -j 2");
-    expect(releaseGuide).not.toContain("cargo test -p bibcode-desktop -j 2 -- --test-threads=1");
+    expect(releaseGuide).toContain("node scripts/run-msvc.mjs cargo test -p coddy-studio-desktop -j 2");
+    expect(releaseGuide).not.toContain("cargo test -p coddy-studio-desktop -j 2 -- --test-threads=1");
   });
 
   it("keeps portable validation on Ubuntu 24.04", () => {
@@ -128,7 +128,7 @@ describe("cross-platform CI contract", () => {
     }
   });
 
-  it("runs the ignored SSH environment integration after building bibcode", () => {
+  it("runs the ignored SSH environment integration after building coddy-studio", () => {
     const { workflow } = readWorkflow(CI_WORKFLOW_PATH);
     const steps = requireJob(workflow, "test").steps ?? [];
     const names = steps.map((step) => step.name);
@@ -138,8 +138,8 @@ describe("cross-platform CI contract", () => {
       names.indexOf("Rust workspace tests"),
     );
     expect(sshStep?.run?.trim().split("\n")).toEqual([
-      "cargo test -p bibcode-server --test cli_smoke --no-run -j 2",
-      "cargo test -p bibcode-desktop --test ssh_environment -j 2 -- --ignored",
+      "cargo test -p coddy-studio-server --test cli_smoke --no-run -j 2",
+      "cargo test -p coddy-studio-desktop --test ssh_environment -j 2 -- --ignored",
     ]);
   });
 
@@ -254,8 +254,8 @@ describe("cross-platform CI contract", () => {
     expect(commands).toMatch(/node --version/);
     expect(commands).toMatch(/vp --version/);
     expect(commands).toMatch(/rustc --version/);
-    expect(commands).toMatch(/vp run --filter @bibcode\/web build/);
-    expect(commands).toMatch(/vp run --filter @bibcode\/desktop test/);
+    expect(commands).toMatch(/vp run --filter @coddy-studio\/web build/);
+    expect(commands).toMatch(/vp run --filter @coddy-studio\/desktop test/);
     expect(commands).toMatch(/node scripts\/build-desktop-artifact\.ts/);
     expect(commands).not.toMatch(/gh release|softprops\/action-gh-release/);
   });
@@ -273,7 +273,7 @@ describe("cross-platform CI contract", () => {
     );
   });
 
-  it("compiles every bibcode-server test target on the Windows native rows", () => {
+  it("compiles every coddy-studio-server test target on the Windows native rows", () => {
     // Clippy with --all-targets runs on Linux only, so Unix-only test helpers
     // and imports can leave the Windows server test binaries uncompilable
     // under -D warnings without this gate.
@@ -285,7 +285,7 @@ describe("cross-platform CI contract", () => {
 
     expect(windowsCompileStep?.if).toBe("matrix.platform == 'win'");
     expect(windowsCompileStep?.run).toBe(
-      "node scripts/run-msvc.mjs cargo check -p bibcode-server --all-targets",
+      "node scripts/run-msvc.mjs cargo check -p coddy-studio-server --all-targets",
     );
   });
 
@@ -562,7 +562,7 @@ describe("cross-platform release contract", () => {
     expect(draftIndex).toBeGreaterThan(verifyIndex);
     expect(verify?.if).toBe("needs.preflight.outputs.is_update_candidate == 'true'");
     expect(verify?.run).toContain(
-      "cargo run --locked -p bibcode-updater-verifier -- apps/desktop/src-tauri/tauri.release.conf.json release-assets/latest.json release-assets",
+      "cargo run --locked -p coddy-studio-updater-verifier -- apps/desktop/src-tauri/tauri.release.conf.json release-assets/latest.json release-assets",
     );
   });
 
@@ -665,8 +665,8 @@ describe("packaged desktop UI smoke contract", () => {
     expect(commands).toMatch(/xvfb-run/);
     expect(commands).toMatch(/hdiutil attach/);
     expect(commands).toMatch(/hdiutil detach/);
-    expect(commands).toContain("-name 'BiBCode.app'");
-    expect(commands).toContain('"BiBCode.exe", "bibcode-desktop.exe"');
+    expect(commands).toContain("-name 'Coddy Studio.app'");
+    expect(commands).toContain('"Coddy Studio.exe", "coddy-studio-desktop.exe"');
     expect(commands).not.toMatch(/bundle\/macos.*\.app/);
     expect(commands).toMatch(/always\(\)/);
     expect(commands).toMatch(/actions\/upload-artifact/);
@@ -678,8 +678,8 @@ describe("packaged desktop UI smoke contract", () => {
     const runStep = smoke.steps?.find((step) => step.name === "Run packaged desktop UI smoke");
 
     expect(JSON.stringify(smoke.env ?? {})).not.toContain("runner.temp");
-    expect(runStep?.env?.BIBCODE_E2E_ARTIFACT_DIR).toBe(
-      "${{ runner.temp }}/bibcode-desktop-ui-artifacts",
+    expect(runStep?.env?.CODDY_STUDIO_E2E_ARTIFACT_DIR).toBe(
+      "${{ runner.temp }}/coddy-studio-desktop-ui-artifacts",
     );
   });
 
@@ -691,7 +691,7 @@ describe("packaged desktop UI smoke contract", () => {
     expect(resolveStep?.run).toContain(
       'find "$GITHUB_WORKSPACE/target/${{ matrix.rustTarget }}/release/bundle/appimage"',
     );
-    expect(resolveStep?.run).toContain('echo "BIBCODE_E2E_APP_PATH=$app_path"');
+    expect(resolveStep?.run).toContain('echo "CODDY_STUDIO_E2E_APP_PATH=$app_path"');
   });
 
   it("extracts the completed Linux AppImage and rejects a bundled Wayland client", () => {
@@ -709,7 +709,7 @@ describe("packaged desktop UI smoke contract", () => {
     expect(runIndex).toBeGreaterThan(verifyIndex);
     expect(verify?.if).toBe("matrix.platform == 'linux'");
     expect(verify?.shell).toBe("bash");
-    expect(verify?.run).toContain('"$BIBCODE_E2E_APP_PATH" --appimage-extract');
+    expect(verify?.run).toContain('"$CODDY_STUDIO_E2E_APP_PATH" --appimage-extract');
     expect(verify?.run).toContain("-name 'libwayland-client.so*'");
     expect(verify?.run).toContain("trap cleanup EXIT");
     expect(verify?.run).toContain("exit 1");
@@ -881,8 +881,8 @@ describe("seeded packaged desktop upgrade contract", () => {
     expect(commands).toContain("GITHUB_STEP_SUMMARY");
     expect(commands).toContain("--wsl");
     expect(commands).toContain("scripts/seeded-desktop-upgrade-smoke.ts");
-    expect(commands).toContain("cargo build -p bibcode-server --bin bibcode --release");
-    expect(commands).toContain("BIBCODE_WSL_SERVER_BINARY");
+    expect(commands).toContain("cargo build -p coddy-studio-server --bin coddy-studio --release");
+    expect(commands).toContain("CODDY_STUDIO_WSL_SERVER_BINARY");
     expect(commands).toContain('--current-tag "v2147483647.0.0"');
   });
 });
@@ -941,7 +941,7 @@ describe("release symbols and crash smoke contract", () => {
     expect(crash.run).toContain('RUSTFLAGS="-C link-arg=-Wl,--build-id=sha1"');
     expect(crash.run).toContain("CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed");
     expect(crash.run).toContain(
-      "node scripts/run-msvc.mjs cargo test -p bibcode-server --test crash_smoke --release",
+      "node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test crash_smoke --release",
     );
     expect(symbolicate.env?.CRASH_SMOKE_OUT).toBe(crash.env?.CRASH_SMOKE_OUT);
     expect(symbolicate.run).toContain("node scripts/dump-symbols.ts");
@@ -949,9 +949,9 @@ describe("release symbols and crash smoke contract", () => {
     expect(symbolicate.run).toContain("--pdb target/release/crash_smoke.pdb");
     expect(symbolicate.run).toContain("minidump-stackwalk --json");
     expect(symbolicate.run).toContain("grep -q crash_here_in_named_function");
-    // BiBCode's own symbolication, from the release build the crash step made, names it too.
+    // Coddy Studio's own symbolication, from the release build the crash step made, names it too.
     expect(symbolicate.run).toContain(
-      '"$bibcode" profiler symbolicate "$(basename "${dumps[0]}" .dmp)"',
+      '"$coddy-studio" profiler symbolicate "$(basename "${dumps[0]}" .dmp)"',
     );
     expect(symbolicate.run).toContain('--symbols "$out/symbols" --json --base-dir "$out"');
     expect(symbolicate.run).toContain(
@@ -976,7 +976,7 @@ describe("release symbols and crash smoke contract", () => {
     );
     expect(stepNamed(build, "Build desktop artifact").run).toContain("--symbols");
     expect(stepNamed(build, "Collect release assets").run).toContain(
-      '"release/bibcode-desktop-symbols-*.zip"',
+      '"release/coddy-studio-desktop-symbols-*.zip"',
     );
   });
 
@@ -1001,14 +1001,14 @@ describe("release symbols and crash smoke contract", () => {
       stepIndex(server, "Build standalone server artifacts"),
     );
     expect(dump.run).toContain(
-      '--zip "server-release/bibcode-server-symbols-${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}.zip"',
+      '--zip "server-release/coddy-studio-server-symbols-${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}.zip"',
     );
-    expect(dump.run).toContain('strip --strip-all -o "$stripped" "$release_dir/bibcode"');
+    expect(dump.run).toContain('strip --strip-all -o "$stripped" "$release_dir/coddy-studio"');
     // Plain strip: rustc's level for macOS executables (`-x` is for dynamic libraries).
-    expect(dump.run).toContain('mac) strip -o "$stripped" "$release_dir/bibcode"');
+    expect(dump.run).toContain('mac) strip -o "$stripped" "$release_dir/coddy-studio"');
     expect(dump.run).not.toContain("strip -x");
-    expect(dump.run).toContain('mv "$stripped" "$release_dir/bibcode"');
-    expect(dump.run).toContain('codesign --verify --verbose=2 "$release_dir/bibcode"');
+    expect(dump.run).toContain('mv "$stripped" "$release_dir/coddy-studio"');
+    expect(dump.run).toContain('codesign --verify --verbose=2 "$release_dir/coddy-studio"');
     expect(stepNamed(server, "Upload server artifacts").with?.path).toContain(
       "server-release/*.zip",
     );

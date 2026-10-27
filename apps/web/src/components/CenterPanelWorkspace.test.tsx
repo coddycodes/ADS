@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { ThreadId } from "@bibcode/contracts";
+import { ThreadId } from "@coddy/contracts";
 import type {
   CollisionDetection,
   DragEndEvent,

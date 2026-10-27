@@ -4,7 +4,7 @@ import {
   type GitManagerCommitPage,
   type GitManagerGetCommitsInput,
   type GitManagerSignalEvent,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { afterEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

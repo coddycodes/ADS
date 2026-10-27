@@ -1,5 +1,5 @@
 {
-  "name": "bibcode-relay",
+  "name": "coddy-studio-relay",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,9 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@bibcode/client-runtime": "workspace:*",
-    "@bibcode/contracts": "workspace:*",
-    "@bibcode/shared": "workspace:*",
+    "@coddy/client-runtime": "workspace:*",
+    "@coddy/contracts": "workspace:*",
+    "@coddy/shared": "workspace:*",
     "@clerk/backend": "catalog:",
     "@effect/sql-pg": "catalog:",
     "alchemy": "2.0.0-beta.81",

@@ -49,16 +49,16 @@ export class ReleaseAssetAssemblyError extends Error {
 
 export function expectedServerAssetNames(version: string): ReadonlyArray<string> {
   return [
-    `bibcode-server-v${version}-darwin-aarch64.tar.gz`,
-    `bibcode-server-v${version}-darwin-x86_64.tar.gz`,
-    `bibcode-server-v${version}-linux-aarch64.tar.gz`,
-    `bibcode-server-v${version}-linux-x86_64.tar.gz`,
-    `bibcode-server-v${version}-windows-aarch64.zip`,
-    `bibcode-server-v${version}-windows-x86_64.zip`,
-    `bibcode-server_${version}_amd64.deb`,
-    `bibcode-server_${version}_arm64.deb`,
-    `bibcode-server-${version}-1.aarch64.rpm`,
-    `bibcode-server-${version}-1.x86_64.rpm`,
+    `coddy-studio-server-v${version}-darwin-aarch64.tar.gz`,
+    `coddy-studio-server-v${version}-darwin-x86_64.tar.gz`,
+    `coddy-studio-server-v${version}-linux-aarch64.tar.gz`,
+    `coddy-studio-server-v${version}-linux-x86_64.tar.gz`,
+    `coddy-studio-server-v${version}-windows-aarch64.zip`,
+    `coddy-studio-server-v${version}-windows-x86_64.zip`,
+    `coddy-studio-server_${version}_amd64.deb`,
+    `coddy-studio-server_${version}_arm64.deb`,
+    `coddy-studio-server-${version}-1.aarch64.rpm`,
+    `coddy-studio-server-${version}-1.x86_64.rpm`,
   ];
 }
 
@@ -98,22 +98,22 @@ function expectedDesktopAssets(entries: ReadonlyArray<string>, version: string):
   return new Set([
     requireOne(
       entries,
-      new RegExp(`^BiBCode_${escaped}_(?:aarch64|arm64)\\.dmg$`),
+      new RegExp(`^CoddyStudio_${escaped}_(?:aarch64|arm64)\\.dmg$`),
       "macOS ARM64 DMG",
     ),
-    requireOne(entries, new RegExp(`^BiBCode_${escaped}_(?:x64|x86_64)\\.dmg$`), "macOS x64 DMG"),
+    requireOne(entries, new RegExp(`^CoddyStudio_${escaped}_(?:x64|x86_64)\\.dmg$`), "macOS x64 DMG"),
     requireOne(
       entries,
-      new RegExp(`^BiBCode_${escaped}_(?:aarch64|arm64)\\.AppImage$`),
+      new RegExp(`^CoddyStudio_${escaped}_(?:aarch64|arm64)\\.AppImage$`),
       "Linux ARM64 AppImage",
     ),
     requireOne(
       entries,
-      new RegExp(`^BiBCode_${escaped}_(?:amd64|x64|x86_64)\\.AppImage$`),
+      new RegExp(`^CoddyStudio_${escaped}_(?:amd64|x64|x86_64)\\.AppImage$`),
       "Linux x64 AppImage",
     ),
-    requireOne(entries, new RegExp(`^BiBCode_${escaped}_arm64-setup\\.exe$`), "Windows ARM64 NSIS"),
-    requireOne(entries, new RegExp(`^BiBCode_${escaped}_x64-setup\\.exe$`), "Windows x64 NSIS"),
+    requireOne(entries, new RegExp(`^CoddyStudio_${escaped}_arm64-setup\\.exe$`), "Windows ARM64 NSIS"),
+    requireOne(entries, new RegExp(`^CoddyStudio_${escaped}_x64-setup\\.exe$`), "Windows x64 NSIS"),
   ]);
 }
 
@@ -216,7 +216,7 @@ export async function assembleReleaseAssets(
   for (const asset of [...serverAssets].toSorted()) {
     checksumLines.push(`${await sha256(NodePath.join(assetsDir, asset))}  ${asset}`);
   }
-  const checksumsPath = NodePath.join(assetsDir, "bibcode-server-SHA256SUMS");
+  const checksumsPath = NodePath.join(assetsDir, "coddy-studio-server-SHA256SUMS");
   const temporaryChecksums = `${checksumsPath}.${process.pid}.tmp`;
   await NodeFS.promises.writeFile(temporaryChecksums, `${checksumLines.join("\n")}\n`, {
     flag: "wx",
@@ -229,7 +229,7 @@ export async function assembleReleaseAssets(
     publicKey: input.serverSigningPublicKey,
   });
   if (signing !== undefined) {
-    for (const asset of [...serverAssets, "bibcode-server-SHA256SUMS"]) {
+    for (const asset of [...serverAssets, "coddy-studio-server-SHA256SUMS"]) {
       runMinisign(signing, NodePath.join(assetsDir, asset));
     }
   } else if (input.stepSummaryPath !== undefined) {

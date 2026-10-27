@@ -53,7 +53,7 @@ const REMOVAL_ADMISSION_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const REMOVAL_PLAN_READS: usize = 2;
 /// A plan this slow logs its steps; the profiler's `rpc.slow` warns from the same floor.
 const REMOVAL_PLAN_SLOW: Duration = Duration::from_secs(1);
-/// The profiler's name for `worktree.removeFromBibCode`, beside the `worktree.remove` modes.
+/// The profiler's name for `worktree.removeFromCoddyStudio`, beside the `worktree.remove` modes.
 const DETACH_ONLY: &str = "detach-only";
 
 pub type WorktreeRemovalQuiesceFuture =
@@ -865,7 +865,7 @@ fn branch_reconciliation_command_id(
     branch: Option<&str>,
     head: Option<&str>,
 ) -> String {
-    let mut identity = b"bibcode.worktree.branch-reconcile.v1\0".to_vec();
+    let mut identity = b"coddy-studio.worktree.branch-reconcile.v1\0".to_vec();
     identity.extend_from_slice(branch.unwrap_or("<detached>").as_bytes());
     identity.push(0);
     identity.extend_from_slice(head.unwrap_or("<unknown>").as_bytes());
@@ -945,10 +945,10 @@ pub fn register_worktree_catalog_rpc(
 
     let detach_services = services.clone();
     registry.register_unary(
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         move |request, cancellation| {
             let services = detach_services.clone();
-            async move { remove_from_bibcode(&services, request, cancellation).await }
+            async move { remove_from_coddy_studio(&services, request, cancellation).await }
         },
     );
 
@@ -1682,7 +1682,7 @@ async fn retarget_worktree_thread(
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct WorktreeRemoveFromBibCodeInput {
+struct WorktreeRemoveFromCoddyStudioInput {
     command_id: String,
     project_id: String,
     thread_id: String,
@@ -1856,13 +1856,13 @@ async fn get_removal_plan(
     )))
 }
 
-async fn remove_from_bibcode(
+async fn remove_from_coddy_studio(
     services: &WorktreeCatalogRpcServices,
     request: RpcRequest,
     cancellation: CancellationToken,
 ) -> RpcResult {
     let started = Instant::now();
-    let input = decode::<WorktreeRemoveFromBibCodeInput>(request)?;
+    let input = decode::<WorktreeRemoveFromCoddyStudioInput>(request)?;
     let trace = Arc::new(RemovalTrace::default());
     // The token moves into the operation; a client interrupt cancels this clone too.
     let interrupted = cancellation.clone();
@@ -1888,7 +1888,7 @@ async fn remove_from_bibcode(
             .run(async move {
                 // Recorded here, so a caller that stops waiting does not lose the outcome.
                 trace.handed_off.store(true, Ordering::Relaxed);
-                let result = remove_from_bibcode_owned(
+                let result = remove_from_coddy_studio_owned(
                     &services,
                     input,
                     payload_digest,
@@ -1910,9 +1910,9 @@ async fn remove_from_bibcode(
     result
 }
 
-async fn remove_from_bibcode_owned(
+async fn remove_from_coddy_studio_owned(
     services: &WorktreeCatalogRpcServices,
-    input: WorktreeRemoveFromBibCodeInput,
+    input: WorktreeRemoveFromCoddyStudioInput,
     payload_digest: String,
     command_claim: CommandAdmissionClaim,
     cancellation: CancellationToken,
@@ -3003,7 +3003,7 @@ trait RemovalAdmissionInput {
     fn project_id(&self) -> &str;
 }
 
-impl RemovalAdmissionInput for WorktreeRemoveFromBibCodeInput {
+impl RemovalAdmissionInput for WorktreeRemoveFromCoddyStudioInput {
     fn command_id(&self) -> &str {
         &self.command_id
     }
@@ -3059,7 +3059,7 @@ fn removal_plan_token(
         fields.push(entry.path);
         fields.push(entry.prune_reason);
     }
-    let mut input = b"bibcode.worktree.removal-plan.v1".to_vec();
+    let mut input = b"coddy-studio.worktree.removal-plan.v1".to_vec();
     input.extend_from_slice(&(fields.len() as u64).to_be_bytes());
     for field in fields {
         input.extend_from_slice(&(field.len() as u64).to_be_bytes());
@@ -3889,7 +3889,7 @@ mod mutation_invalidation_tests {
     use super::{
         WorktreeCatalogRpcServices, WorktreeRemovalQuiesceFuture, WorktreeRemovalQuiesceLease,
         WorktreeRemovalQuiesceRequest, WorktreeRemovalQuiescer, create_managed_worktree,
-        get_removal_plan, remove_from_bibcode, remove_worktree,
+        get_removal_plan, remove_from_coddy_studio, remove_worktree,
     };
     use crate::{
         git::GitRepository,
@@ -4681,7 +4681,7 @@ mod mutation_invalidation_tests {
                 .upsert_provider_session_runtime(row)
                 .await
                 .unwrap();
-            let result = remove_from_bibcode(&f.removal.handler.services, request("worktree.removeFromBibCode", json!({"commandId":"detach", "projectId":"project-1", "threadId":"removed-thread"})), CancellationToken::new()).await.unwrap();
+            let result = remove_from_coddy_studio(&f.removal.handler.services, request("worktree.removeFromCoddyStudio", json!({"commandId":"detach", "projectId":"project-1", "threadId":"removed-thread"})), CancellationToken::new()).await.unwrap();
             assert_eq!(result["threadRemoved"], true);
             assert!(f.removal.linked.exists());
             assert_eq!(f.driver.shutdowns.load(Ordering::SeqCst), 1);
@@ -4956,7 +4956,7 @@ mod mutation_invalidation_tests {
         let fixture = RemovalFixture::new().await;
         fixture.set_live_sessions(&["removed-thread"]);
         fixture.set_session("removed-thread", "running").await;
-        let result = remove_from_bibcode(&fixture.handler.services, request("worktree.removeFromBibCode", json!({
+        let result = remove_from_coddy_studio(&fixture.handler.services, request("worktree.removeFromCoddyStudio", json!({
             "commandId":"detach-command", "projectId":"project-1", "threadId":"removed-thread"
         })), CancellationToken::new()).await.expect("detach running session");
         assert_eq!(result["gitOutcome"], "not-requested");
@@ -5089,10 +5089,10 @@ mod mutation_invalidation_tests {
 
             let detached = tokio::time::timeout(
                 Duration::from_secs(10),
-                remove_from_bibcode(
+                remove_from_coddy_studio(
                     &fixture.handler.services,
                     request(
-                        "worktree.removeFromBibCode",
+                        "worktree.removeFromCoddyStudio",
                         json!({
                             "commandId":"detach-command",
                             "projectId":"project-1",
@@ -5330,10 +5330,10 @@ mod mutation_invalidation_tests {
             .expect("catalog includes removal owner");
         let services = fixture.services.clone();
         let handler = tokio::spawn(async move {
-            remove_from_bibcode(
+            remove_from_coddy_studio(
                 &services,
                 request(
-                    "worktree.removeFromBibCode",
+                    "worktree.removeFromCoddyStudio",
                     json!({
                         "commandId":"remove-command",
                         "projectId":"project-1",

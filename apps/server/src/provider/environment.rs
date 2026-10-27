@@ -24,7 +24,7 @@ pub(crate) fn claude_config_directory(environment: &[(OsString, OsString)]) -> O
         .or_else(|| home_directory(environment).map(|home| home.join(".claude")))
 }
 
-/// The home Codex uses under `environment` when BiBCode sets no `CODEX_HOME` for it:
+/// The home Codex uses under `environment` when Coddy Studio sets no `CODEX_HOME` for it:
 /// `CODEX_HOME`, else `.codex` in the home directory.
 pub(crate) fn codex_home_directory(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
     effective_environment_value(environment, "CODEX_HOME")
@@ -113,12 +113,12 @@ mod tests {
         // Names observed under `~/.claude/projects` for these working directories.
         for (cwd, name) in [
             (
-                "/work/workspaces/bibcode/BibCode/main-3",
-                "-work-workspaces-bibcode-BibCode-main-3",
+                "/work/workspaces/coddy-studio/CoddyStudio/main-3",
+                "-work-workspaces-coddy-studio-CoddyStudio-main-3",
             ),
             (
-                "/work/github/BibCode/.claude/worktrees/agent-a6485f3e336f43353",
-                "-work-github-BibCode--claude-worktrees-agent-a6485f3e336f43353",
+                "/work/github/CoddyStudio/.claude/worktrees/agent-a6485f3e336f43353",
+                "-work-github-CoddyStudio--claude-worktrees-agent-a6485f3e336f43353",
             ),
             (r"C:\Users\me\my_repo", "C--Users-me-my-repo"),
             // One `-` per UTF-16 unit, as Claude's JavaScript replaces them.
@@ -142,7 +142,7 @@ mod tests {
             OsString::from("CLAUDE_CONFIG_DIR"),
             config.path().as_os_str().to_owned(),
         )];
-        // Without a projects directory BiBCode cannot tell, so it keeps resuming.
+        // Without a projects directory Coddy Studio cannot tell, so it keeps resuming.
         assert_eq!(
             claude_session_transcript_exists(&environment, &cwd, "session"),
             None
@@ -217,7 +217,7 @@ mod tests {
                     // overrides instead of restoring the polluted parent values.
                     let mut command = tokio::process::Command::new("/usr/bin/env");
                     command.arg("-0").kill_on_drop(true);
-                    command.env_remove("BIBCODE_TEST_FUTURE_PLUGIN_PATH");
+                    command.env_remove("CODDY_STUDIO_TEST_FUTURE_PLUGIN_PATH");
                     command.env("PYTHONHOME", "/host/explicit-python");
                     super::sanitize_provider_subprocess_environment(&mut command);
                     let output = tokio::time::timeout(Duration::from_secs(10), command.output())
@@ -226,7 +226,7 @@ mod tests {
                         .expect("provider override probe spawned");
                     assert!(output.status.success());
                     let mut overridden = expected.clone();
-                    overridden.insert("BIBCODE_TEST_FUTURE_PLUGIN_PATH", None);
+                    overridden.insert("CODDY_STUDIO_TEST_FUTURE_PLUGIN_PATH", None);
                     overridden.insert("PYTHONHOME", Some("/host/explicit-python".into()));
                     assert_child_environment(&output.stdout, &overridden);
                 });

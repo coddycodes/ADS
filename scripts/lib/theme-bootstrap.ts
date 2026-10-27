@@ -35,7 +35,7 @@ export function themeBootstrapVersionPlugin() {
     versionThemeBootstrap(html, NodeFS.readFileSync(bootstrapPath, "utf8"));
 
   return {
-    name: "bibcode-theme-bootstrap-version",
+    name: "coddy-studio-theme-bootstrap-version",
     transformIndexHtml: {
       order: "pre",
       handler: transformIndexHtml,
@@ -47,7 +47,7 @@ export function themeBootstrapPlugins() {
   return [
     themeBootstrapVersionPlugin(),
     {
-      name: "bibcode-no-inline-scripts",
+      name: "coddy-studio-no-inline-scripts",
       apply: "build",
       transformIndexHtml: {
         order: "post",

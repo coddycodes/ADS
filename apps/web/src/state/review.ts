@@ -1,4 +1,4 @@
-import { createReviewEnvironmentAtoms } from "@bibcode/client-runtime/state/review";
+import { createReviewEnvironmentAtoms } from "@coddy/client-runtime/state/review";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

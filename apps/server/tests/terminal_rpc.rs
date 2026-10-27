@@ -1,4 +1,4 @@
-use bibcode_server::terminal::TerminalLaunchCommand;
+use coddy_studio_server::terminal::TerminalLaunchCommand;
 use serde_json::Value;
 
 #[test]

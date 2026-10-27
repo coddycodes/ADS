@@ -5,14 +5,14 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
-import type { EnvironmentShellState } from "@bibcode/client-runtime/state/shell";
+} from "@coddy/client-runtime/environment";
+import type { EnvironmentShellState } from "@coddy/client-runtime/state/shell";
 import {
   EnvironmentId,
   ProjectId,
   ThreadId,
   type OrchestrationShellSnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

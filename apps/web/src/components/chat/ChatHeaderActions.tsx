@@ -6,8 +6,8 @@ import {
   type ServerProvider,
   type ServerSettings,
   type ThreadId,
-} from "@bibcode/contracts";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+} from "@coddy/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import { MoreHorizontal } from "lucide-react";
 import { memo, useMemo } from "react";
 import GitActionsControl from "../GitActionsControl";

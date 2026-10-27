@@ -1,4 +1,4 @@
-import type { SourceControlProviderInfo, SourceControlProviderKind } from "@bibcode/contracts";
+import type { SourceControlProviderInfo, SourceControlProviderKind } from "@coddy/contracts";
 
 export interface ChangeRequestPresentation {
   readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";

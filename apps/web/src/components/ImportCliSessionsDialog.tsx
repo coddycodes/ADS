@@ -1,7 +1,7 @@
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import type {
   AgentSessionCandidate,
   AgentSessionImportResult,
@@ -9,7 +9,7 @@ import type {
   EnvironmentId,
   ProjectId,
   ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { projectEnvironment } from "../state/projects";

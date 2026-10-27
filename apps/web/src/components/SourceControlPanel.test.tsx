@@ -1,10 +1,10 @@
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   EnvironmentId,
   type GitActionProgressEvent,
   ThreadId,
   type VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import type { Dispatch, ReactElement, SetStateAction } from "react";
@@ -913,7 +913,7 @@ describe("SourceControlPanel", () => {
   });
 
   it("uses the shared workspace guard instead of starting Git work", () => {
-    const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+    const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
     const markup = render(buildProps({ workspaceUnavailable: reason }));
 
     expect(testState.statusAtoms[0]).toBeNull();

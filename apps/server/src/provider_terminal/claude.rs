@@ -76,7 +76,7 @@ const CLAUDE_HOOK_QUEUE_CAPACITY: usize = 128;
 const CLAUDE_HOOK_REQUEST_CAPACITY: usize = 32;
 const CLAUDE_HOOK_BODY_TIMEOUT: Duration = Duration::from_secs(2);
 const CLAUDE_HOOK_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
-const CLAUDE_HOOK_CORRELATION_HEADER: &str = "X-BiBCode-Launch-Correlation";
+const CLAUDE_HOOK_CORRELATION_HEADER: &str = "X-Coddy Studio-Launch-Correlation";
 const CLAUDE_HOOK_PATH_LIMIT: usize = 4 * 1024;
 const CLAUDE_HOOK_TEXT_LIMIT: usize = 16 * 1024;
 const CLAUDE_HOOK_OBJECT_LIMIT: usize = 64 * 1024;
@@ -2584,7 +2584,8 @@ mod tests {
     }
 
     fn attestation_fixture_executable() -> Option<PathBuf> {
-        let executable = PathBuf::from(std::env::var_os("BIBCODE_CLAUDE_ATTESTATION_FIXTURE")?);
+        let executable =
+            PathBuf::from(std::env::var_os("CODDY_STUDIO_CLAUDE_ATTESTATION_FIXTURE")?);
         if !executable.is_file() {
             return None;
         }
@@ -2602,7 +2603,7 @@ mod tests {
         if TestSandbox::is_isolated_case(CASE, TEST) {
             assert!(attestation_fixture_executable().is_none());
             println!(
-                "BIBCODE_ATTESTATION_FIXTURE_CHILD_PID={}",
+                "CODDY_STUDIO_ATTESTATION_FIXTURE_CHILD_PID={}",
                 std::process::id()
             );
             return;
@@ -2618,7 +2619,7 @@ mod tests {
                 ("HOME", sandbox.root().as_os_str()),
                 ("USERPROFILE", sandbox.root().as_os_str()),
             ],
-            &["BIBCODE_CLAUDE_ATTESTATION_FIXTURE"],
+            &["CODDY_STUDIO_CLAUDE_ATTESTATION_FIXTURE"],
         );
         assert!(
             output.status.success(),
@@ -2627,14 +2628,14 @@ mod tests {
         );
         assert_eq!(
             String::from_utf8_lossy(&output.stdout)
-                .matches("BIBCODE_ATTESTATION_FIXTURE_CHILD_PID=")
+                .matches("CODDY_STUDIO_ATTESTATION_FIXTURE_CHILD_PID=")
                 .count(),
             1,
             "exactly one owned child must complete and be reaped"
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
         let child_pid = stdout
-            .split("BIBCODE_ATTESTATION_FIXTURE_CHILD_PID=")
+            .split("CODDY_STUDIO_ATTESTATION_FIXTURE_CHILD_PID=")
             .nth(1)
             .and_then(|value| value.split_whitespace().next())
             .expect("completed child PID marker");

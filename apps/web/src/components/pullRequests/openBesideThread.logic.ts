@@ -1,6 +1,6 @@
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
-import type { ScopedThreadRef } from "@bibcode/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/models";
+import type { ScopedThreadRef } from "@coddy/contracts";
 
 export interface BesideThreadCandidate {
   readonly ref: ScopedThreadRef;

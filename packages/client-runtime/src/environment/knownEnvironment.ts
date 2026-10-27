@@ -1,4 +1,4 @@
-import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@bibcode/contracts";
+import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@coddy/contracts";
 
 export interface KnownEnvironmentConnectionTarget {
   readonly httpBaseUrl: string;

@@ -56,12 +56,12 @@ describe("Rust coverage runner", () => {
     expect(
       buildRustCoverageCommand({
         platform: "win32",
-        repoRoot: "X:/bibcode",
+        repoRoot: "X:/coddy-studio",
       }),
     ).toEqual({
       command: process.execPath,
       args: [
-        NodePath.join("X:/bibcode", "scripts", "run-msvc.mjs"),
+        NodePath.join("X:/coddy-studio", "scripts", "run-msvc.mjs"),
         "cargo",
         "llvm-cov",
         "--workspace",
@@ -75,9 +75,9 @@ describe("Rust coverage runner", () => {
         "1",
         "--json",
         "--output-path",
-        NodePath.join("X:/bibcode", "target", "llvm-cov-report.json"),
+        NodePath.join("X:/coddy-studio", "target", "llvm-cov-report.json"),
       ],
-      cwd: "X:/bibcode",
+      cwd: "X:/coddy-studio",
     });
   });
 

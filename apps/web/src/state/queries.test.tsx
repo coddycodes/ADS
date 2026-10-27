@@ -3,7 +3,7 @@
 import type {
   CheckpointDiffTarget,
   ComposerPathSearchTarget,
-} from "@bibcode/client-runtime/state/threads";
+} from "@coddy/client-runtime/state/threads";
 import * as Option from "effect/Option";
 import type { Dispatch, SetStateAction } from "react";
 import { createElement } from "react";

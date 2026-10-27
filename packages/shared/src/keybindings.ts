@@ -6,7 +6,7 @@ import {
   MAX_WHEN_EXPRESSION_DEPTH,
   type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import shippedKeybindings from "./keybindings.defaults.json" with { type: "json" };
 
 type WhenToken =

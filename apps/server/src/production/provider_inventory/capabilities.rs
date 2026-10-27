@@ -227,7 +227,7 @@ async fn read_codex_capabilities(
     })
 }
 
-/// `protocol` is known for a server BiBCode started; a configured Server URL is identified first.
+/// `protocol` is known for a server Coddy Studio started; a configured Server URL is identified first.
 async fn opencode_capabilities(
     endpoint: &str,
     password: Option<&str>,
@@ -307,10 +307,10 @@ while IFS= read -r request; do
       test -f "$CODEX_HOME/skills/personal/SKILL.md" || exit 9
       case "$request" in *"$PWD"*) ;; *) exit 10 ;; esac
       printf '{"id":2,"result":%s}\n' "$(cat codex-catalog.json)" ;;
-    *'"subtype":"initialize"'*) printf '{"type":"control_response","response":{"subtype":"success","request_id":"bibcode-inventory","response":%s}}\n' "$(cat claude-commands.json)" ;;
+    *'"subtype":"initialize"'*) printf '{"type":"control_response","response":{"subtype":"success","request_id":"coddy-studio-inventory","response":%s}}\n' "$(cat claude-commands.json)" ;;
     *'"subtype":"reload_skills"'*)
       test -f "$CLAUDE_CONFIG_DIR/skills/personal/SKILL.md" || exit 11
-      printf '{"type":"control_response","response":{"subtype":"success","request_id":"bibcode-skills","response":%s}}\n' "$(cat claude-catalog.json)" ;;
+      printf '{"type":"control_response","response":{"subtype":"success","request_id":"coddy-studio-skills","response":%s}}\n' "$(cat claude-catalog.json)" ;;
     *'"method":"initialized"'*) ;;
     *) exit 12 ;;
   esac
@@ -472,7 +472,7 @@ done
     #[cfg(unix)]
     #[tokio::test]
     async fn local_opencode_skill_catalog_uses_the_configured_home_and_workspace() {
-        const FIXTURE_PORT: &str = "BIBCODE_TEST_SKILLS_HTTP_PORT";
+        const FIXTURE_PORT: &str = "CODDY_STUDIO_TEST_SKILLS_HTTP_PORT";
         if let Ok(port) = std::env::var(FIXTURE_PORT) {
             use axum::{Json, Router, extract::Query, http::HeaderMap, routing::get};
             use base64::Engine as _;
@@ -508,13 +508,13 @@ done
         std::fs::write(skill.join("SKILL.md"), "# Personal").unwrap();
         let binary = sandbox.executable_script("opencode", r#"
 for argument in "$@"; do
-  case "$argument" in --port=*) export BIBCODE_TEST_SKILLS_HTTP_PORT="${argument#--port=}" ;; esac
+  case "$argument" in --port=*) export CODDY_STUDIO_TEST_SKILLS_HTTP_PORT="${argument#--port=}" ;; esac
 done
-exec "$BIBCODE_TEST_EXECUTABLE" --exact production::provider_inventory::capabilities::tests::local_opencode_skill_catalog_uses_the_configured_home_and_workspace --nocapture
+exec "$CODDY_STUDIO_TEST_EXECUTABLE" --exact production::provider_inventory::capabilities::tests::local_opencode_skill_catalog_uses_the_configured_home_and_workspace --nocapture
 "#, "");
         let settings = json!({"providerInstances":{"local":{"driver":"opencode","config":{"binaryPath":binary},"environment":[
             {"name":"HOME","value":sandbox.path("home")},
-            {"name":"BIBCODE_TEST_EXECUTABLE","value":std::env::current_exe().unwrap()}
+            {"name":"CODDY_STUDIO_TEST_EXECUTABLE","value":std::env::current_exe().unwrap()}
         ]}}});
         for project in ["empty", "first & #", "second"] {
             let cwd = sandbox.path(project);
@@ -543,10 +543,10 @@ exec "$BIBCODE_TEST_EXECUTABLE" --exact production::provider_inventory::capabili
             let pid_file = sandbox.path("pid");
             let binary = sandbox.executable_script(
                 "slow-provider",
-                "printf '%s' \"$$\" > \"$BIBCODE_TEST_PID\"\nexec sleep 60",
+                "printf '%s' \"$$\" > \"$CODDY_STUDIO_TEST_PID\"\nexec sleep 60",
                 "",
             );
-            let settings = json!({"providerInstances":{"probe":{"driver":driver,"config":{"binaryPath":binary},"environment":[{"name":"HOME","value":sandbox.root()},{"name":"BIBCODE_TEST_PID","value":pid_file}]}}});
+            let settings = json!({"providerInstances":{"probe":{"driver":driver,"config":{"binaryPath":binary},"environment":[{"name":"HOME","value":sandbox.root()},{"name":"CODDY_STUDIO_TEST_PID","value":pid_file}]}}});
             let cancellation = CancellationToken::new();
             let task = tokio::spawn({
                 let cancellation = cancellation.clone();

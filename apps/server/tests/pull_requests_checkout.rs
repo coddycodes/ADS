@@ -3,7 +3,7 @@
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
 
-use bibcode_server::{
+use coddy_studio_server::{
     RequestId, RpcRequest,
     git::{GitRepository, StatusBroadcaster},
     orchestration::{EngineOptions, OrchestrationEngine},

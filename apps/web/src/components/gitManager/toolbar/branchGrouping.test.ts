@@ -1,4 +1,4 @@
-import type { GitManagerRefEntry } from "@bibcode/contracts";
+import type { GitManagerRefEntry } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { groupBranches } from "./branchGrouping";

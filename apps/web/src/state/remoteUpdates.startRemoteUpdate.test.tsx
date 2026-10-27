@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
 import { RegistryContext } from "@effect/atom-react";
-import { EnvironmentId } from "@bibcode/contracts";
-import type { RemoteUpdateRunState } from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+import { EnvironmentId } from "@coddy/contracts";
+import type { RemoteUpdateRunState } from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -131,7 +131,7 @@ describe("startRemoteUpdate", () => {
       type: "error",
       title: "Update failed",
       description:
-        "Ai-server hasn't come back after the update. Check BiBCode on Ai-server; it may be on a different port.",
+        "Ai-server hasn't come back after the update. Check Coddy Studio on Ai-server; it may be on a different port.",
       data: { actionLayout: "stacked-end", actionVariant: "outline" },
       actionProps: { children: "Retry", onClick: expect.any(Function) },
     });

@@ -1,4 +1,4 @@
-import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@bibcode/contracts";
+import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@coddy/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;

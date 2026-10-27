@@ -3,13 +3,13 @@ import type {
   EnvironmentId,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { ChevronRight, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
@@ -87,7 +87,7 @@ interface FilePreviewPanelProps {
   workspaceUnavailable?: string | null;
 }
 
-const FILE_EXPLORER_STORAGE_KEY = "bibcode.fileExplorerOpen";
+const FILE_EXPLORER_STORAGE_KEY = "coddy-studio.fileExplorerOpen";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const UNAVAILABLE_SESSION_SNAPSHOT: FileEditingSessionSnapshot = {

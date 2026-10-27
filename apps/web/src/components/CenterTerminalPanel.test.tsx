@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -10,7 +10,7 @@ vi.mock("~/state/entities", () => ({
   useThread: () => ({
     environmentId: EnvironmentId.make("environment-1"),
     projectId: ProjectId.make("project-1"),
-    worktreePath: "/repo/.bibcode/worktrees/feature",
+    worktreePath: "/repo/.coddy/studio/worktrees/feature",
   }),
   useProject: () => ({ workspaceRoot: "/repo" }),
 }));
@@ -24,17 +24,17 @@ vi.mock("~/state/terminalSessions", () => ({
       target: { terminalId: "term-1" },
       state: {
         summary: {
-          cwd: "/repo/.bibcode/worktrees/stale",
-          worktreePath: "/repo/.bibcode/worktrees/stale",
+          cwd: "/repo/.coddy/studio/worktrees/stale",
+          worktreePath: "/repo/.coddy/studio/worktrees/stale",
           label: "stale process",
         },
       },
     },
   ],
 }));
-vi.mock("@bibcode/shared/projectScripts", () => ({
+vi.mock("@coddy/shared/projectScripts", () => ({
   projectScriptCwd: ({ worktreePath }: { worktreePath: string | null }) => worktreePath ?? "/repo",
-  projectScriptRuntimeEnv: () => ({ BIBCODE_PROJECT_ROOT: "/repo" }),
+  projectScriptRuntimeEnv: () => ({ CODDY_STUDIO_PROJECT_ROOT: "/repo" }),
 }));
 vi.mock("./ThreadTerminalPanel", () => ({
   default: (props: Record<string, unknown>) => {
@@ -72,9 +72,9 @@ describe("CenterTerminalPanel", () => {
         projectId={ProjectId.make("project-1")}
         surface={surface}
         launchContext={{
-          cwd: "/repo/.bibcode/worktrees/feature",
-          worktreePath: "/repo/.bibcode/worktrees/feature",
-          runtimeEnv: { BIBCODE_PROJECT_ROOT: "/repo" },
+          cwd: "/repo/.coddy/studio/worktrees/feature",
+          worktreePath: "/repo/.coddy/studio/worktrees/feature",
+          runtimeEnv: { CODDY_STUDIO_PROJECT_ROOT: "/repo" },
         }}
         keybindings={{} as never}
         focusRequestId={7}
@@ -87,8 +87,8 @@ describe("CenterTerminalPanel", () => {
     expect(h.panelProps).toMatchObject({
       owner: "center-panel",
       projectId: ProjectId.make("project-1"),
-      cwd: "/repo/.bibcode/worktrees/feature",
-      worktreePath: "/repo/.bibcode/worktrees/feature",
+      cwd: "/repo/.coddy/studio/worktrees/feature",
+      worktreePath: "/repo/.coddy/studio/worktrees/feature",
       terminalIds: ["term-1"],
       activeTerminalId: "term-1",
       terminalGroups: [{ id: "terminal:term-1", terminalIds: ["term-1"] }],

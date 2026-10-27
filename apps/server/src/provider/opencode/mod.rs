@@ -32,7 +32,7 @@ pub(crate) enum OpenCodeServerApi {
     V1,
     /// `GET /api/info` answered with a 2.x version: OpenCode 2.
     V2 { version: String },
-    /// `GET /api/info` answered with a version BiBCode cannot drive.
+    /// `GET /api/info` answered with a version Coddy Studio cannot drive.
     Unsupported { version: String },
     /// Neither answered yet (still starting, unreachable, or wrong credentials).
     Unavailable,
@@ -82,7 +82,7 @@ pub(crate) async fn probe_server_api(
     }
 }
 
-/// The provider error for an OpenCode server BiBCode cannot drive. `managed` is true when BiBCode
+/// The provider error for an OpenCode server Coddy Studio cannot drive. `managed` is true when Coddy Studio
 /// started the server from Binary path, and false for a configured Server URL.
 pub(crate) fn unsupported_server_message(version: &str, managed: bool) -> String {
     if managed {
@@ -112,7 +112,7 @@ fn major_version(version_output: &str) -> Option<u64> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OpenCodeCliSupport {
     Supported(OpenCodeProtocol),
-    /// A major version BiBCode cannot drive, with the provider status message.
+    /// A major version Coddy Studio cannot drive, with the provider status message.
     Unsupported(&'static str),
 }
 
@@ -127,7 +127,7 @@ pub(crate) fn cli_support(version_output: &str) -> OpenCodeCliSupport {
 }
 
 /// Resolves the native OpenCode executable behind the standard Windows npm
-/// shim when BiBCode must own the launched process tree. OpenCode's native
+/// shim when Coddy Studio must own the launched process tree. OpenCode's native
 /// launcher can detach from `opencode.cmd`, so supervising only the batch shim
 /// does not provide a reliable shutdown boundary. OpenCode 1 installs as
 /// `opencode-ai`; OpenCode 2 as `@opencode/cli`, whose shims are `opencode.cmd`

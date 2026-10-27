@@ -31,7 +31,7 @@ pub const MIN_MANUAL_REFRESH_MS: i64 = 30_000;
 pub const STALE_THRESHOLD_MS: i64 = 30 * 60_000;
 const USAGE_TIMEOUT: Duration = Duration::from_secs(10);
 const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
-const CLAUDE_KEYCHAIN_ACCESS_ENV: &str = "BIBCODE_CLAUDE_KEYCHAIN_ACCESS";
+const CLAUDE_KEYCHAIN_ACCESS_ENV: &str = "CODDY_STUDIO_CLAUDE_KEYCHAIN_ACCESS";
 #[cfg(target_os = "macos")]
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 #[cfg(target_os = "macos")]
@@ -518,7 +518,7 @@ async fn fetch_claude_usage() -> Result<ProviderUsageSnapshot, ProviderUsageFetc
         .map(|directory| directory.join(".credentials.json"));
     let store_selection = select_claude_credential_stores(
         credentials_path.is_some(),
-        crate::environment_identity::bibcode_env_var(CLAUDE_KEYCHAIN_ACCESS_ENV).as_deref(),
+        crate::environment_identity::coddy_studio_env_var(CLAUDE_KEYCHAIN_ACCESS_ENV).as_deref(),
     );
     #[cfg(target_os = "macos")]
     let mut stores = Vec::new();
@@ -866,7 +866,7 @@ async fn fetch_codex_usage_via_app_server(
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "clientInfo": {"name": "bibcode", "title": "BiBCode", "version": env!("CARGO_PKG_VERSION")},
+                    "clientInfo": {"name": "coddy-studio", "title": "Coddy Studio", "version": env!("CARGO_PKG_VERSION")},
                     "capabilities": {"experimentalApi": true}
                 }
             }),
@@ -1254,7 +1254,8 @@ mod tests {
         let sandbox = TestSandbox::new("guard-claude-credentials");
         let raw = r#"{"claudeAiOauth":{"accessToken":"fixture-token"}}"#;
         if TestSandbox::is_isolated_case(CASE, TEST) {
-            let outside = PathBuf::from(std::env::var_os("BIBCODE_GUARD_CREDENTIAL_FILE").unwrap());
+            let outside =
+                PathBuf::from(std::env::var_os("CODDY_STUDIO_GUARD_CREDENTIAL_FILE").unwrap());
             assert!(
                 ClaudeCredentialStore::File(outside)
                     .load()
@@ -1284,8 +1285,8 @@ mod tests {
                 ("TMPDIR", allowed_root.as_os_str()),
                 ("TMP", allowed_root.as_os_str()),
                 ("TEMP", allowed_root.as_os_str()),
-                ("BIBCODE_GUARD_CREDENTIAL_FILE", outside.as_os_str()),
-                ("BIBCODE_HERMETIC_GUARD", OsStr::new("report")),
+                ("CODDY_STUDIO_GUARD_CREDENTIAL_FILE", outside.as_os_str()),
+                ("CODDY_STUDIO_HERMETIC_GUARD", OsStr::new("report")),
             ],
         );
         assert!(
@@ -1335,7 +1336,7 @@ mod tests {
             let output_path = sandbox.path("environment");
             let executable = sandbox.executable_script(
                 "codex-app-server",
-                r#"/usr/bin/env -0 > "$BIBCODE_TEST_PROVIDER_ENVIRONMENT_FILE"
+                r#"/usr/bin/env -0 > "$CODDY_STUDIO_TEST_PROVIDER_ENVIRONMENT_FILE"
 while IFS= read -r request; do
     case "$request" in
         *'"method":"initialize"'*)
@@ -1355,7 +1356,7 @@ done"#,
             reexec::run(TEST_NAME, PHASE, None, |command| {
                 command
                     .env("CODEX_BIN", &executable)
-                    .env("BIBCODE_TEST_PROVIDER_ENVIRONMENT_FILE", &output_path);
+                    .env("CODDY_STUDIO_TEST_PROVIDER_ENVIRONMENT_FILE", &output_path);
             });
             assert_child_environment(
                 &std::fs::read(output_path).expect("Codex usage child environment"),

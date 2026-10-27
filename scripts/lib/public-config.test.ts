@@ -18,47 +18,47 @@ describe("loadRepoEnv", () => {
   it("does not project cloud configuration for an unconfigured clone", () => {
     const env = loadRepoEnv({ baseEnv: {}, repoRoot: makeTemporaryDirectory() });
 
-    expect(env.BIBCODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
-    expect(env.BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
+    expect(env.CODDY_STUDIO_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    expect(env.CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
     expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
-    expect(env.BIBCODE_CLERK_JWT_TEMPLATE).toBeUndefined();
+    expect(env.CODDY_STUDIO_CLERK_JWT_TEMPLATE).toBeUndefined();
     expect(env.VITE_CLERK_JWT_TEMPLATE).toBeUndefined();
-    expect(env.BIBCODE_RELAY_URL).toBeUndefined();
-    expect(env.VITE_BIBCODE_RELAY_URL).toBeUndefined();
+    expect(env.CODDY_STUDIO_RELAY_URL).toBeUndefined();
+    expect(env.VITE_CODDY_STUDIO_RELAY_URL).toBeUndefined();
   });
 
   it("applies process, root local, and root precedence in that order", () => {
     const repoRoot = makeTemporaryDirectory();
     NodeFS.writeFileSync(
       NodePath.join(repoRoot, ".env"),
-      "BIBCODE_CLERK_PUBLISHABLE_KEY=pk_root\nBIBCODE_CLERK_JWT_TEMPLATE=template_root\nBIBCODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nBIBCODE_RELAY_URL=https://root.example.test\n",
+      "CODDY_STUDIO_CLERK_PUBLISHABLE_KEY=pk_root\nCODDY_STUDIO_CLERK_JWT_TEMPLATE=template_root\nCODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nCODDY_STUDIO_RELAY_URL=https://root.example.test\n",
     );
     NodeFS.writeFileSync(
       NodePath.join(repoRoot, ".env.local"),
-      "BIBCODE_CLERK_PUBLISHABLE_KEY=pk_local\nBIBCODE_CLERK_JWT_TEMPLATE=template_local\nBIBCODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_local\nBIBCODE_RELAY_URL=https://local.example.test\n",
+      "CODDY_STUDIO_CLERK_PUBLISHABLE_KEY=pk_local\nCODDY_STUDIO_CLERK_JWT_TEMPLATE=template_local\nCODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID=oauth_local\nCODDY_STUDIO_RELAY_URL=https://local.example.test\n",
     );
 
-    expect(loadRepoEnv({ baseEnv: {}, repoRoot }).BIBCODE_RELAY_URL).toBe(
+    expect(loadRepoEnv({ baseEnv: {}, repoRoot }).CODDY_STUDIO_RELAY_URL).toBe(
       "https://local.example.test",
     );
     expect(
       loadRepoEnv({
         baseEnv: {
-          BIBCODE_CLERK_PUBLISHABLE_KEY: "pk_ci",
-          BIBCODE_CLERK_JWT_TEMPLATE: "template_ci",
-          BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
-          BIBCODE_RELAY_URL: "https://ci.example.test",
+          CODDY_STUDIO_CLERK_PUBLISHABLE_KEY: "pk_ci",
+          CODDY_STUDIO_CLERK_JWT_TEMPLATE: "template_ci",
+          CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
+          CODDY_STUDIO_RELAY_URL: "https://ci.example.test",
         },
         repoRoot,
       }),
     ).toMatchObject({
-      BIBCODE_CLERK_PUBLISHABLE_KEY: "pk_ci",
-      BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
+      CODDY_STUDIO_CLERK_PUBLISHABLE_KEY: "pk_ci",
+      CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
       VITE_CLERK_PUBLISHABLE_KEY: "pk_ci",
-      BIBCODE_CLERK_JWT_TEMPLATE: "template_ci",
+      CODDY_STUDIO_CLERK_JWT_TEMPLATE: "template_ci",
       VITE_CLERK_JWT_TEMPLATE: "template_ci",
-      BIBCODE_RELAY_URL: "https://ci.example.test",
-      VITE_BIBCODE_RELAY_URL: "https://ci.example.test",
+      CODDY_STUDIO_RELAY_URL: "https://ci.example.test",
+      VITE_CODDY_STUDIO_RELAY_URL: "https://ci.example.test",
     });
   });
 
@@ -67,8 +67,8 @@ describe("loadRepoEnv", () => {
       resolvePublicConfig({
         VITE_CLERK_PUBLISHABLE_KEY: "pk_legacy",
         VITE_CLERK_JWT_TEMPLATE: "template_legacy",
-        BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_canonical",
-        VITE_BIBCODE_RELAY_URL: "https://legacy.example.test",
+        CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_canonical",
+        VITE_CODDY_STUDIO_RELAY_URL: "https://legacy.example.test",
       }),
     ).toEqual({
       clerkPublishableKey: "pk_legacy",
@@ -83,14 +83,14 @@ describe("loadRepoEnv", () => {
       loadRepoEnv({
         baseEnv: {
           UNRELATED: "kept",
-          BIBCODE_CLERK_PUBLISHABLE_KEY: "   ",
+          CODDY_STUDIO_CLERK_PUBLISHABLE_KEY: "   ",
           VITE_CLERK_PUBLISHABLE_KEY: " pk_trimmed ",
         },
         repoRoot: makeTemporaryDirectory(),
       }),
     ).toMatchObject({
       UNRELATED: "kept",
-      BIBCODE_CLERK_PUBLISHABLE_KEY: "pk_trimmed",
+      CODDY_STUDIO_CLERK_PUBLISHABLE_KEY: "pk_trimmed",
       VITE_CLERK_PUBLISHABLE_KEY: "pk_trimmed",
     });
   });
@@ -104,7 +104,7 @@ describe("loadRepoEnv", () => {
 });
 
 function makeTemporaryDirectory() {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-public-config-"));
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-public-config-"));
   temporaryDirectories.push(directory);
   return directory;
 }

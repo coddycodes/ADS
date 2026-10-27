@@ -1193,17 +1193,17 @@ impl NativeServerControl {
                         (Some(after_version), Some(expected_version)) => format!(
                             "Update command completed, but {executable_display} still reports {after_version}; expected {expected_version}."
                         ),
-                        _ => "Update command completed, but BiBCode still detects an outdated provider version."
+                        _ => "Update command completed, but Coddy Studio still detects an outdated provider version."
                             .to_owned(),
                     },
-                    _ => "Update command completed, but BiBCode could not verify the provider version."
+                    _ => "Update command completed, but Coddy Studio could not verify the provider version."
                         .to_owned(),
                 };
                 (status, message)
             }
             None => (
                 "unchanged",
-                "Update command completed, but BiBCode could not verify the provider version."
+                "Update command completed, but Coddy Studio could not verify the provider version."
                     .to_owned(),
             ),
         };
@@ -1909,7 +1909,7 @@ impl ProductionServerControl for NativeServerControl {
                         .file_name()
                         .and_then(|name| name.to_str())
                         .filter(|name| !name.is_empty())
-                        .unwrap_or("BiBCode");
+                        .unwrap_or("Coddy Studio");
                     let activity_protocol_registered =
                         control.activity_protocol_registered.load(Ordering::Acquire);
                     let environment =
@@ -2207,6 +2207,7 @@ fn validate_legacy_provider_settings(providers: &Value) -> Result<(), String> {
     for (driver, string_fields) in [
         ("codex", &["binaryPath", "homePath", "shadowHomePath"][..]),
         ("claudeAgent", &["binaryPath", "homePath", "launchArgs"][..]),
+        ("coddy", &["binaryPath", "serverUrl", "dataDir"][..]),
         ("cursor", &["binaryPath", "apiEndpoint"][..]),
         ("grok", &["binaryPath"][..]),
         (
@@ -3203,14 +3204,14 @@ mod tests {
         let pid_file = sandbox.path("pid");
         let binary = sandbox.executable_script(
             "slow-provider",
-            "printf '%s' \"$$\" > \"$BIBCODE_TEST_PID\"\nexec sleep 60",
+            "printf '%s' \"$$\" > \"$CODDY_STUDIO_TEST_PID\"\nexec sleep 60",
             "",
         );
         let mut settings = control.settings.read().await.clone();
         settings["providerInstances"]["codex"]["config"]["binaryPath"] = json!(binary);
         settings["providerInstances"]["codex"]["environment"] = json!([
             {"name":"HOME","value":sandbox.root()},
-            {"name":"BIBCODE_TEST_PID","value":pid_file}
+            {"name":"CODDY_STUDIO_TEST_PID","value":pid_file}
         ]);
         tokio::fs::write(
             &control.settings_path,
@@ -4439,7 +4440,7 @@ mod tests {
                             "enabled": true,
                             "config": { "binaryPath": executable },
                             "environment": [
-                                { "name": "BIBCODE_RESERVATION_RACE", "value": "changed" }
+                                { "name": "CODDY_STUDIO_RESERVATION_RACE", "value": "changed" }
                             ]
                         }
                     }

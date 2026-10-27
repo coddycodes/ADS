@@ -16,10 +16,10 @@ pub const MENU_ACTION_CHECK_FOR_UPDATES: &str = "check-for-updates";
 pub const MENU_ACTION_CLOSE_SHORTCUT: &str = "close-shortcut";
 
 pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
-const MENU_ID_OPEN_SETTINGS: &str = "bibcode:open-settings";
-const MENU_ID_CHECK_FOR_UPDATES: &str = "bibcode:check-for-updates";
-const MENU_ID_CLOSE_SHORTCUT: &str = "bibcode:close-shortcut";
-const MENU_ID_CLOSE_WINDOW: &str = "bibcode:close-window";
+const MENU_ID_OPEN_SETTINGS: &str = "coddy-studio:open-settings";
+const MENU_ID_CHECK_FOR_UPDATES: &str = "coddy-studio:check-for-updates";
+const MENU_ID_CLOSE_SHORTCUT: &str = "coddy-studio:close-shortcut";
+const MENU_ID_CLOSE_WINDOW: &str = "coddy-studio:close-window";
 const MIN_RESTORED_WINDOW_HEIGHT: u32 = 480;
 const MIN_RESTORED_WINDOW_WIDTH: u32 = 640;
 const MAX_RESTORED_WINDOW_HEIGHT: u32 = 10_000;
@@ -455,7 +455,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("isolated desktop data root");
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier =
-            format!("com.bibcode.window-tests-{}", std::process::id());
+            format!("com.coddy.studio.window-tests-{}", std::process::id());
         let app = mock_builder()
             .manage(IsolatedTestDataRoot::new(temp.path().join("data-root")))
             .build(context)

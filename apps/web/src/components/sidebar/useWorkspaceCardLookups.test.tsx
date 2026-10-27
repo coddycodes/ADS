@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { scopeThreadRef, scopedThreadKey } from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@coddy/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { act, memo } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";

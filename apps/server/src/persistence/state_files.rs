@@ -44,7 +44,7 @@ pub struct StatePaths {
     pub environment_id: PathBuf,
     pub server_runtime_state: PathBuf,
     pub secrets_dir: PathBuf,
-    /// Holds the `bibcode-open-url` shims that agents and terminals find on `PATH`. Created by
+    /// Holds the `coddy-studio-open-url` shims that agents and terminals find on `PATH`. Created by
     /// `open_url::write_shims`, not by startup: the hook is optional and must not stop the server.
     pub open_url_shim_dir: PathBuf,
 }
@@ -64,7 +64,7 @@ impl StatePaths {
             base_dir: config.base_dir.clone(),
             state_kind,
             backups_dir: config.base_dir.join("backups"),
-            operation_lock: config.base_dir.join(".bibcode-storage.lock"),
+            operation_lock: config.base_dir.join(".coddy-studio-storage.lock"),
             database: state_dir.join("state.sqlite"),
             keybindings: state_dir.join("keybindings.json"),
             settings: state_dir.join("settings.json"),
@@ -109,8 +109,8 @@ impl StatePaths {
     #[must_use]
     pub fn recovery_journal(&self) -> PathBuf {
         self.base_dir.join(match self.state_kind {
-            StateKind::Userdata => ".bibcode-recovery-userdata.json",
-            StateKind::Dev => ".bibcode-recovery-dev.json",
+            StateKind::Userdata => ".coddy-studio-recovery-userdata.json",
+            StateKind::Dev => ".coddy-studio-recovery-dev.json",
         })
     }
 
@@ -122,7 +122,7 @@ impl StatePaths {
 
     #[must_use]
     pub fn runtime_lock(&self) -> PathBuf {
-        self.base_dir.join(".bibcode-runtime.lock")
+        self.base_dir.join(".coddy-studio-runtime.lock")
     }
 
     pub async fn ensure_directories_without_database_side_effects(&self) -> Result<()> {
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(production.backups_dir, base.join("backups"));
         assert_eq!(
             production.operation_lock,
-            base.join(".bibcode-storage.lock")
+            base.join(".coddy-studio-storage.lock")
         );
         assert_eq!(production.database, base.join("userdata/state.sqlite"));
         assert_eq!(

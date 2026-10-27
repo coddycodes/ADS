@@ -1,6 +1,6 @@
 # Observability
 
-BiBCode's production backend is the native Rust server. Axum request handling,
+Coddy Studio's production backend is the native Rust server. Axum request handling,
 Tokio tasks, provider supervision, terminals, Git, persistence, and desktop
 integration emit diagnostics through Rust's `tracing` facade. There is no
 production Node.js logger or TypeScript server observability layer.
@@ -8,13 +8,13 @@ production Node.js logger or TypeScript server observability layer.
 ## Runtime Boundaries
 
 - The Tauri host and in-process server share one native desktop process.
-- A headless `bibcode serve` process runs the same Rust server library without Tauri.
+- A headless `coddy-studio serve` process runs the same Rust server library without Tauri.
 - Provider CLIs, terminals, SSH forwards, and `cloudflared` are supervised child
   processes and appear in process diagnostics.
 - Browser and WebView clients do not export traces to a remote collector.
-- The hosted BiBCode Connect relay has no remote request trace exporter.
+- The hosted Coddy Connect relay has no remote request trace exporter.
 
-Native diagnostics remain local to each BiBCode installation.
+Native diagnostics remain local to each Coddy Studio installation.
 
 ## Logs
 
@@ -48,7 +48,7 @@ entry is removed only after its last lease and last snapshot drop. A panicking
 or failed opener likewise rolls its pending reservation back and wakes
 same-target waiters. These guarantees prevent one runtime or in-flight event
 from retargeting or tearing down another runtime's logging without accumulating
-completed entries. `BIBCODE_LOG` controls the filter and falls back to the
+completed entries. `CODDY_STUDIO_LOG` controls the filter and falls back to the
 standard `RUST_LOG` behavior, then `info`.
 
 Each interactive `updater.install` request writes one `info` line,
@@ -56,7 +56,7 @@ Each interactive `updater.install` request writes one `info` line,
 requester's label, OS, address (`unknown` when absent), 8-character session
 prefix, and server and target versions. An `error` snapshot adds a `warn` line,
 `remote update install request failed`, with the same fields and the error.
-Both use the `bibcode_server::remote_update` target and contain no credentials
+Both use the `coddy_studio_server::remote_update` target and contain no credentials
 or full session IDs. Manual install refusals emit neither line.
 
 The desktop notice uses the same requester metadata once per install and
@@ -66,18 +66,18 @@ requester info line for its single install request and retains bounded,
 redacted evidence; it never retains bootstrap or pairing credentials.
 
 In headless mode, run the native server from a terminal, or install the
-per-user service (`bibcode service install`) whose stdout and stderr go to the
-service manager's log (the journal on Linux, `~/Library/Logs/bibcode-server.log`
+per-user service (`coddy-studio service install`) whose stdout and stderr go to the
+service manager's log (the journal on Linux, `~/Library/Logs/coddy-studio-server.log`
 on macOS):
 
 ```bash
-bibcode serve
+coddy-studio serve
 ```
 
 From a source checkout:
 
 ```bash
-cargo run -p bibcode-server -- serve
+cargo run -p coddy-studio-server -- serve
 ```
 
 On Linux, starting the desktop in its own user unit makes systemd record how
@@ -85,7 +85,7 @@ every run ended, which the Profiler then attaches to an unexplained
 `crash.unclean-exit` (a forced kill reads `code=killed, status=9/KILL`):
 
 ```bash
-systemd-run --user --unit=bibcode-desktop ~/Applications/bibcode.appimage
+systemd-run --user --unit=coddy-studio-desktop ~/Applications/coddy-studio.appimage
 ```
 
 Desktop diagnostics come from the shared in-process Rust runtime and the same
@@ -206,13 +206,13 @@ Resource diagnostics are host-scoped. Each snapshot describes the selected
 environment on one machine; it is not a whole-machine total and never combines
 processes from different machines. The reported groups are:
 
-- **Combined**: the complete monitored total for that host, equal to BiBCode Core
+- **Combined**: the complete monitored total for that host, equal to Coddy Studio Core
   plus External Tooling for CPU, RSS, and process count.
-- **BiBCode Core**: the native BiBCode server or combined Tauri host/server root,
+- **Coddy Studio Core**: the native Coddy Studio server or combined Tauri host/server root,
   plus UI processes that a desktop adapter can associate reliably with that
-  BiBCode instance.
+  Coddy Studio instance.
 - **External Tooling**: provider CLIs, terminals, helpers, and other processes
-  launched or supervised by BiBCode.
+  launched or supervised by Coddy Studio.
 
 For a remote selected environment, Combined, Core, and External describe only
 the remote host. A desktop client may also show the always-present local
@@ -228,10 +228,10 @@ included in Core:
 - `partial`: some UI processes were sampled and a bounded failure explains the
   incomplete coverage;
 - `unavailable`: the adapter could not associate any UI process reliably; and
-- `notApplicable`: the runtime is headless and has no co-located BiBCode UI.
+- `notApplicable`: the runtime is headless and has no co-located Coddy Studio UI.
 
 On Windows, the desktop observer associates WebView2 roots only when they are
-current BiBCode descendants carrying WebView2's embedded-browser marker and the
+current Coddy Studio descendants carrying WebView2's embedded-browser marker and the
 running desktop executable name. Their helper descendants inherit Core UI
 ownership.
 
@@ -285,7 +285,7 @@ sample with its original time until the restarted task replaces it. Profiler
 `rpc.timing` for these methods therefore no longer includes sampling. A sample
 that takes 500 ms or more writes `slow process diagnostics sample` to
 `server.log` at `warn`, with the process enumeration, UI observer, and
-attribution durations; set `BIBCODE_LOG=info,bibcode_server::diagnostics=debug`
+attribution durations; set `CODDY_STUDIO_LOG=info,coddy_studio_server::diagnostics=debug`
 to log them for every sample.
 
 A process's memory figure (`rssBytes` on the wire, and every Resource Manager
@@ -373,7 +373,7 @@ For observability changes, run focused Rust tests followed by the repository
 gates:
 
 ```bash
-cargo test -p bibcode-server
+cargo test -p coddy-studio-server
 cargo clippy --workspace --all-targets -- -D warnings
 vp check
 vp run typecheck

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { TerminalInputError, ThreadId, WS_METHODS, type ServerConfig } from "@bibcode/contracts";
+import { TerminalInputError, ThreadId, WS_METHODS, type ServerConfig } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";

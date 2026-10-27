@@ -2,12 +2,12 @@ import {
   createOneShotBypass,
   createPullRequestsEnvironmentAtoms,
   createStoredContextFirst,
-} from "@bibcode/client-runtime/state/pull-requests";
+} from "@coddy/client-runtime/state/pull-requests";
 import {
   EnvironmentId,
   PullRequestsOperationError,
   type PullRequestsContext,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/reactivity";

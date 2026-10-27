@@ -2,7 +2,7 @@ import type {
   GitRunStackedActionResult,
   GitStackedAction,
   VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
@@ -729,7 +729,7 @@ describe("resolveLiveThreadBranchUpdate", () => {
     expect(
       resolveLiveThreadBranchUpdate({
         threadBranch: "feature/keep",
-        gitStatus: status({ refName: "bibcode/bda76797" }),
+        gitStatus: status({ refName: "coddy-studio/bda76797" }),
       }),
     ).toBeNull();
   });
@@ -737,7 +737,7 @@ describe("resolveLiveThreadBranchUpdate", () => {
   it("reconciles a temporary worktree ref to a semantic branch", () => {
     expect(
       resolveLiveThreadBranchUpdate({
-        threadBranch: "bibcode/a9628676",
+        threadBranch: "coddy-studio/a9628676",
         gitStatus: status({ refName: "feature/real" }),
       }),
     ).toEqual({ branch: "feature/real" });

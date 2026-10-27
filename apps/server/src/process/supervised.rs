@@ -1045,7 +1045,7 @@ mod tests {
         cancellation.cancel();
         let error = run_supervised(
             SupervisedRunRequest {
-                command: Command::new("bibcode-command-that-must-not-exist"),
+                command: Command::new("coddy-studio-command-that-must-not-exist"),
                 stdin: None,
                 timeout: Duration::from_secs(5),
                 cleanup_timeout: PROCESS_CLEANUP_WAIT_TIMEOUT,
@@ -1655,7 +1655,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn only_a_signal_bibcode_did_not_send_reports_a_command_crash() {
+    async fn only_a_signal_coddy_studio_did_not_send_reports_a_command_crash() {
         let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
         let cancellation = CancellationToken::new();
         let killed = run_supervised(

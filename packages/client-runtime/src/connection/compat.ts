@@ -2,7 +2,7 @@ import {
   MIN_COMPATIBLE_REMOTE_PROTOCOL,
   REMOTE_PROTOCOL_VERSION,
   type ExecutionEnvironmentDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 /**
  * Compatibility verdict for one environment, computed from the remote protocol

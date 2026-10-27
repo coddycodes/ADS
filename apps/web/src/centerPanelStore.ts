@@ -1,11 +1,11 @@
 /** Host-thread-scoped, persisted center-panel surface and group layout state. */
-import { parseScopedThreadKey, scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { parseScopedThreadKey, scopedThreadKey } from "@coddy/client-runtime/environment";
 import {
   TERMINAL_LAUNCH_LABEL_MAX_LENGTH,
   type ScopedThreadRef,
   type TerminalLaunchCommand,
   type ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -126,7 +126,7 @@ interface CenterPanelStoreState {
 }
 
 const HOST_SURFACE: CenterSurface = { id: HOST_SURFACE_ID, kind: "chat-host" };
-const CENTER_PANEL_STORAGE_KEY = "bibcode:center-panel-state:v1";
+const CENTER_PANEL_STORAGE_KEY = "coddy-studio:center-panel-state:v1";
 const CENTER_PANEL_STORAGE_VERSION = 3;
 
 const EMPTY_THREAD_STATE: ThreadCenterPanelState = {

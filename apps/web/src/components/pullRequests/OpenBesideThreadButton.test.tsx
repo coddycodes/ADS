@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/models";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 

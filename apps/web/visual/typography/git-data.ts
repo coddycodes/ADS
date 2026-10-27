@@ -18,7 +18,7 @@ import {
   type PullRequestsCreateDefaults,
   type VcsListRefsResult,
   type VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 export const environmentId = EnvironmentId.make("issue27-owned-git-fixture");
 export const projectRef: ScopedProjectRef = {

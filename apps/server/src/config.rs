@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn server_config_defaults_to_manual_remote_update_support() {
-        let config = ServerConfig::new("/tmp/bibcode-test");
+        let config = ServerConfig::new("/tmp/coddy-studio-test");
         assert_eq!(
             config.remote_update_support,
             crate::remote_update::RemoteUpdateSupport {
@@ -260,11 +260,11 @@ mod tests {
     #[test]
     fn listener_bind_retry_is_opt_in() {
         assert_eq!(
-            ServerConfig::new("/tmp/bibcode-test").listener_bind_retry,
+            ServerConfig::new("/tmp/coddy-studio-test").listener_bind_retry,
             None
         );
         assert_eq!(
-            ServerConfig::new("/tmp/bibcode-test")
+            ServerConfig::new("/tmp/coddy-studio-test")
                 .with_listener_bind_retry(Duration::from_secs(3))
                 .listener_bind_retry,
             Some(Duration::from_secs(3))
@@ -273,13 +273,13 @@ mod tests {
 
     #[test]
     fn startup_pairing_offer_defaults_on_and_global_disable_flag_turns_it_off() {
-        let default = Cli::try_parse_from(["bibcode", "serve"])
+        let default = Cli::try_parse_from(["coddy-studio", "serve"])
             .expect("parse default serve CLI")
             .into_server_config()
             .expect("build default server config");
         assert!(default.startup_pairing_offer);
 
-        let disabled = Cli::try_parse_from(["bibcode", "serve", "--no-startup-pairing-offer"])
+        let disabled = Cli::try_parse_from(["coddy-studio", "serve", "--no-startup-pairing-offer"])
             .expect("parse disabled startup offer CLI")
             .into_server_config()
             .expect("build disabled startup offer config");
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn headless_server_declares_its_hostname_as_the_environment_label() {
-        let config = Cli::try_parse_from(["bibcode", "serve"])
+        let config = Cli::try_parse_from(["coddy-studio", "serve"])
             .expect("parse serve CLI")
             .into_server_config()
             .expect("build serve config");
@@ -304,9 +304,9 @@ mod tests {
     #[test]
     fn browser_launching_commands_keep_the_local_environment_label() {
         for args in [
-            vec!["bibcode"],
-            vec!["bibcode", "start"],
-            vec!["bibcode", "start", "--no-browser"],
+            vec!["coddy-studio"],
+            vec!["coddy-studio", "start"],
+            vec!["coddy-studio", "start", "--no-browser"],
         ] {
             let config = Cli::try_parse_from(args)
                 .expect("parse browser CLI")
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn desktop_mode_and_embedded_servers_keep_the_local_environment_label() {
-        let desktop = Cli::try_parse_from(["bibcode", "--mode", "desktop", "serve"])
+        let desktop = Cli::try_parse_from(["coddy-studio", "--mode", "desktop", "serve"])
             .expect("parse desktop serve CLI")
             .into_server_config()
             .expect("build desktop serve config");
@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(desktop.mode, ServerMode::Desktop);
         assert_eq!(desktop.environment_label, "Local");
         assert_eq!(
-            ServerConfig::new("/tmp/bibcode-test").environment_label,
+            ServerConfig::new("/tmp/coddy-studio-test").environment_label,
             "Local"
         );
     }
@@ -353,7 +353,7 @@ mod tests {
             "mode": "desktop",
             "noBrowser": true,
             "port": 3773,
-            "bibcodeHome": null,
+            "coddyStudioHome": null,
             "host": "0.0.0.0",
             "desktopBootstrapToken": "token",
             "tailscaleServeEnabled": false,
@@ -371,28 +371,34 @@ mod tests {
 
     #[test]
     fn cli_base_dir_preserves_the_raw_cli_data_root_request() {
-        let config = Cli::try_parse_from(["bibcode", "serve", "--base-dir", "/var/lib/bibcode"])
-            .expect("parse CLI")
-            .into_server_config()
-            .expect("build server config");
+        let config = Cli::try_parse_from([
+            "coddy-studio",
+            "serve",
+            "--base-dir",
+            "/var/lib/coddy-studio",
+        ])
+        .expect("parse CLI")
+        .into_server_config()
+        .expect("build server config");
 
         assert_eq!(config.data_root_request.source, DataRootSource::Cli);
         assert_eq!(
             config.data_root_request.requested,
-            Some(PathBuf::from("/var/lib/bibcode"))
+            Some(PathBuf::from("/var/lib/coddy-studio"))
         );
     }
 
     #[test]
     fn cli_discovers_packaged_web_from_the_injected_executable() {
         let distribution = tempfile::tempdir().expect("distribution root");
-        let executable = distribution.path().join("bibcode");
+        let executable = distribution.path().join("coddy-studio");
         let web = distribution.path().join("web");
         std::fs::create_dir(&web).expect("web directory");
         std::fs::write(&executable, b"binary").expect("binary fixture");
-        std::fs::write(web.join("index.html"), b"<main>BiBCode</main>").expect("web entry point");
+        std::fs::write(web.join("index.html"), b"<main>Coddy Studio</main>")
+            .expect("web entry point");
 
-        let action = Cli::try_parse_from(["bibcode", "serve"])
+        let action = Cli::try_parse_from(["coddy-studio", "serve"])
             .expect("parse CLI")
             .into_action_with_executable(&executable)
             .expect("build server action");
@@ -412,13 +418,16 @@ mod tests {
     fn environment_base_dir_preserves_the_raw_environment_data_root_request() {
         let request = select_data_root_request(
             None,
-            Some(std::ffi::OsString::from("/var/lib/bibcode")),
+            Some(std::ffi::OsString::from("/var/lib/coddy-studio")),
             None,
             PathBuf::from("/home/alice"),
         );
 
         assert_eq!(request.source, DataRootSource::Environment);
-        assert_eq!(request.requested, Some(PathBuf::from("/var/lib/bibcode")));
+        assert_eq!(
+            request.requested,
+            Some(PathBuf::from("/var/lib/coddy-studio"))
+        );
     }
 
     #[test]
@@ -427,7 +436,7 @@ mod tests {
         let base_dir = temp.path().to_string_lossy().into_owned();
 
         let action = pairing_cli_without_dev_env(&[
-            "bibcode",
+            "coddy-studio",
             "pairing",
             "issue",
             "--base-dir",
@@ -453,7 +462,7 @@ mod tests {
         assert!(json);
 
         let error = Cli::try_parse_from([
-            "bibcode",
+            "coddy-studio",
             "pairing",
             "issue",
             "--base-dir",
@@ -467,9 +476,9 @@ mod tests {
 
     #[test]
     fn service_install_builds_a_spec_from_the_global_server_flags_only() {
-        let executable = PathBuf::from("/usr/bin/bibcode");
+        let executable = PathBuf::from("/usr/bin/coddy-studio");
         let action = Cli::try_parse_from([
-            "bibcode",
+            "coddy-studio",
             "service",
             "install",
             "--host",
@@ -477,7 +486,7 @@ mod tests {
             "--port",
             "4000",
             "--base-dir",
-            "/srv/bibcode",
+            "/srv/coddy-studio",
             "--bootstrap-fd",
             "7",
             "--json",
@@ -491,7 +500,7 @@ mod tests {
         assert_eq!(spec.executable, executable);
         assert_eq!(spec.host, "100.105.196.60");
         assert_eq!(spec.port, 4000);
-        assert_eq!(spec.base_dir, Some(PathBuf::from("/srv/bibcode")));
+        assert_eq!(spec.base_dir, Some(PathBuf::from("/srv/coddy-studio")));
         assert_eq!(spec.static_dir, None);
         assert_eq!(spec.path_env, std::env::var_os("PATH"));
         assert!(json);
@@ -502,7 +511,7 @@ mod tests {
                 .any(|argument| argument == "--bootstrap-fd")
         );
 
-        let action = Cli::try_parse_from(["bibcode", "service", "status"])
+        let action = Cli::try_parse_from(["coddy-studio", "service", "status"])
             .expect("parse service status")
             .into_action_with_executable(&executable)
             .expect("build status action");
@@ -511,7 +520,7 @@ mod tests {
             CliAction::Service(ServiceCommand::Status { json: false })
         ));
 
-        let error = Cli::try_parse_from(["bibcode", "service", "uninstall"])
+        let error = Cli::try_parse_from(["coddy-studio", "service", "uninstall"])
             .expect("parse service uninstall")
             .into_server_config()
             .expect_err("service commands are not server commands");
@@ -523,15 +532,21 @@ mod tests {
         // Control: a relative explicit data root cannot be resolved.
         let unusable_root = "relative-root";
         assert!(matches!(
-            Cli::try_parse_from(["bibcode", "--base-dir", unusable_root, "storage", "inspect"])
-                .expect("parse storage inspect")
-                .into_action(),
+            Cli::try_parse_from([
+                "coddy-studio",
+                "--base-dir",
+                unusable_root,
+                "storage",
+                "inspect"
+            ])
+            .expect("parse storage inspect")
+            .into_action(),
             Err(ConfigError::DataRoot(
                 DataRootError::RelativeExplicit { .. }
             ))
         ));
         let action = Cli::try_parse_from([
-            "bibcode",
+            "coddy-studio",
             "--base-dir",
             unusable_root,
             "open-url",
@@ -552,7 +567,7 @@ mod tests {
         let base_dir = temp.path().to_string_lossy().into_owned();
 
         let action = pairing_cli_without_dev_env(&[
-            "bibcode",
+            "coddy-studio",
             "pairing",
             "offer",
             "--base-dir",
@@ -587,7 +602,7 @@ mod tests {
 
         assert!(
             Cli::try_parse_from([
-                "bibcode",
+                "coddy-studio",
                 "pairing",
                 "offer",
                 "--base-dir",
@@ -598,7 +613,7 @@ mod tests {
         );
         assert!(
             Cli::try_parse_from([
-                "bibcode",
+                "coddy-studio",
                 "pairing",
                 "offer",
                 "--endpoint",
@@ -617,7 +632,13 @@ mod tests {
             for (dev_url, state) in [(None, "userdata"), (Some("http://localhost:5733"), "dev")] {
                 let temp = tempfile::tempdir().expect("temporary pairing root");
                 let base_dir = temp.path().to_string_lossy().into_owned();
-                let mut args = vec!["bibcode", "pairing", subcommand, "--base-dir", &base_dir];
+                let mut args = vec![
+                    "coddy-studio",
+                    "pairing",
+                    subcommand,
+                    "--base-dir",
+                    &base_dir,
+                ];
                 if subcommand == "offer" {
                     args.extend(["--endpoint", "http://100.105.196.60:3773"]);
                 }
@@ -656,7 +677,7 @@ mod tests {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "bibcode", version, about = "Run the BiBCode server.")]
+#[command(name = "coddy-studio", version, about = "Run the Coddy Studio server.")]
 pub struct Cli {
     #[command(subcommand)]
     command: Option<CliCommand>,
@@ -667,9 +688,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
-    #[command(about = "Run the BiBCode server without opening a browser.")]
+    #[command(about = "Run the Coddy Studio server without opening a browser.")]
     Serve,
-    #[command(about = "Run the BiBCode server.")]
+    #[command(about = "Run the Coddy Studio server.")]
     Start,
     #[command(about = "Inspect or explicitly recover offline project data.")]
     Storage(StorageArgs),
@@ -680,12 +701,12 @@ enum CliCommand {
     )]
     Profiler(ProfilerArgs),
     #[command(
-        about = "Install, remove, or inspect the per-user background service that keeps `bibcode serve` running."
+        about = "Install, remove, or inspect the per-user background service that keeps `coddy-studio serve` running."
     )]
     Service(ServiceArgs),
     #[command(
         name = "open-url",
-        about = "Ask the BiBCode client showing this agent or terminal's thread to open an http(s) URL.",
+        about = "Ask the Coddy Studio client showing this agent or terminal's thread to open an http(s) URL.",
         hide = true
     )]
     OpenUrl { url: String },
@@ -699,7 +720,7 @@ struct StorageArgs {
 
 #[derive(Debug, Subcommand)]
 enum StorageSubcommand {
-    #[command(about = "Inspect an offline BiBCode project-data store.")]
+    #[command(about = "Inspect an offline Coddy Studio project-data store.")]
     Inspect {
         #[arg(long)]
         json: bool,
@@ -754,7 +775,7 @@ enum PairingSubcommand {
         json: bool,
     },
     #[command(
-        about = "Create a five-minute encrypted pairing offer (bibcode://pair?code=…) for another BiBCode client."
+        about = "Create a five-minute encrypted pairing offer (coddy-studio://pair?code=…) for another Coddy Studio client."
     )]
     Offer {
         /// The http(s) address the other device will connect to.
@@ -781,7 +802,7 @@ struct ServiceArgs {
 #[derive(Debug, Subcommand)]
 enum ServiceSubcommand {
     #[command(
-        about = "Install and start a per-user service running `bibcode serve` with the given --host, --port, --base-dir, and --static-dir."
+        about = "Install and start a per-user service running `coddy-studio serve` with the given --host, --port, --base-dir, and --static-dir."
     )]
     Install {
         #[arg(long)]
@@ -868,13 +889,13 @@ pub enum StorageCommand {
 
 #[derive(Clone, Debug, Default, Args)]
 struct ServerArgs {
-    #[arg(long, value_enum, env = "BIBCODE_MODE", global = true)]
+    #[arg(long, value_enum, env = "CODDY_STUDIO_MODE", global = true)]
     mode: Option<ServerMode>,
 
-    #[arg(long, env = "BIBCODE_HOST", global = true)]
+    #[arg(long, env = "CODDY_STUDIO_HOST", global = true)]
     host: Option<String>,
 
-    #[arg(long, env = "BIBCODE_PORT", global = true)]
+    #[arg(long, env = "CODDY_STUDIO_PORT", global = true)]
     port: Option<u16>,
 
     #[arg(long, global = true)]
@@ -886,14 +907,14 @@ struct ServerArgs {
     #[arg(long, env = "VITE_DEV_SERVER_URL", global = true)]
     dev_url: Option<Url>,
 
-    #[arg(long, env = "BIBCODE_NO_BROWSER", global = true)]
+    #[arg(long, env = "CODDY_STUDIO_NO_BROWSER", global = true)]
     no_browser: bool,
 
     /// Do not mint the five-minute pairing offer printed as `pairingCode` at startup.
-    #[arg(long, env = "BIBCODE_NO_STARTUP_PAIRING_OFFER", global = true)]
+    #[arg(long, env = "CODDY_STUDIO_NO_STARTUP_PAIRING_OFFER", global = true)]
     no_startup_pairing_offer: bool,
 
-    #[arg(long, env = "BIBCODE_BOOTSTRAP_FD", global = true)]
+    #[arg(long, env = "CODDY_STUDIO_BOOTSTRAP_FD", global = true)]
     bootstrap_fd: Option<i32>,
 }
 
@@ -933,7 +954,8 @@ struct DesktopBootstrap {
     mode: ServerModeWire,
     no_browser: bool,
     port: u16,
-    bibcode_home: Option<PathBuf>,
+    #[serde(alias = "bibcodeHome")]
+    coddy_studio_home: Option<PathBuf>,
     host: String,
     desktop_bootstrap_token: String,
     #[serde(default)]
@@ -985,7 +1007,7 @@ impl Cli {
                 let home_dir = dirs::home_dir().ok_or(DataRootError::HomeDirectoryUnavailable)?;
                 let request = select_data_root_request(
                     args.base_dir,
-                    bibcode_env_var("BIBCODE_HOME"),
+                    coddy_studio_env_var("CODDY_STUDIO_HOME"),
                     None,
                     home_dir,
                 );
@@ -1006,7 +1028,7 @@ impl Cli {
                 let home_dir = dirs::home_dir().ok_or(DataRootError::HomeDirectoryUnavailable)?;
                 let request = select_data_root_request(
                     args.base_dir,
-                    bibcode_env_var("BIBCODE_HOME"),
+                    coddy_studio_env_var("CODDY_STUDIO_HOME"),
                     None,
                     home_dir,
                 );
@@ -1082,10 +1104,10 @@ impl Cli {
         let home_dir = dirs::home_dir().ok_or(DataRootError::HomeDirectoryUnavailable)?;
         let data_root_request = select_data_root_request(
             args.base_dir,
-            bibcode_env_var("BIBCODE_HOME"),
+            studio_data_root_env(),
             bootstrap
                 .as_ref()
-                .and_then(|value| value.bibcode_home.clone()),
+                .and_then(|value| value.coddy_studio_home.clone()),
             home_dir,
         );
         let host = args
@@ -1101,7 +1123,7 @@ impl Cli {
             data_root_request
                 .requested
                 .clone()
-                .unwrap_or_else(|| data_root_request.home_dir.join(".bibcode")),
+                .unwrap_or_else(|| data_root_request.home_dir.join(".coddy/studio")),
         )
         .with_bind(host, port);
         config.data_root_request = data_root_request;
@@ -1147,20 +1169,35 @@ impl Cli {
     }
 }
 
-fn bibcode_env_var(name: &str) -> Option<std::ffi::OsString> {
+fn coddy_studio_env_var(name: &str) -> Option<std::ffi::OsString> {
     std::env::var_os(name)
+}
+
+/// The environment-provided data-root override. A Studio-specific name wins over
+/// the legacy prefix, and `CODDY_HOME` selects its `studio` child so the rest of
+/// the Coddy home keeps its own owners.
+fn studio_data_root_env() -> Option<std::ffi::OsString> {
+    for name in ["CODDY_STUDIO_HOME", "BIBCODE_HOME"] {
+        if let Some(value) = coddy_studio_env_var(name) {
+            return Some(value);
+        }
+    }
+    coddy_studio_env_var("CODDY_HOME").map(|home| {
+        let mut path = PathBuf::from(home);
+        path.push("studio");
+        path.into_os_string()
+    })
 }
 
 /// The state directory a server started with `base_dir` and `dev_url` uses, resolved as every
 /// command that reads a data root does. With neither, it is the desktop's: its in-process
-/// server takes `BIBCODE_HOME` or `~/.bibcode` and never a dev URL.
+/// server takes `CODDY_STUDIO_HOME` or `~/.coddy/studio` and never a dev URL.
 pub(crate) fn profiler_state_dir(
     base_dir: Option<PathBuf>,
     dev_url: Option<Url>,
 ) -> Result<PathBuf, ConfigError> {
     let home_dir = dirs::home_dir().ok_or(DataRootError::HomeDirectoryUnavailable)?;
-    let request =
-        select_data_root_request(base_dir, bibcode_env_var("BIBCODE_HOME"), None, home_dir);
+    let request = select_data_root_request(base_dir, studio_data_root_env(), None, home_dir);
     let root = crate::data_root::resolve_data_root(request)?;
     let mut config = ServerConfig::new(&root.effective);
     config.dev_url = dev_url;

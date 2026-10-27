@@ -10,7 +10,7 @@
  * driving the returned `run`/`resetError` directly. `VcsActionUnavailableError`,
  * `AsyncResult`, `Cause`, and `Option` are kept real.
  */
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { describe, expect, it, vi, beforeEach } from "vite-plus/test";
@@ -127,7 +127,7 @@ import {
   useVcsStageAction,
   useVcsUnstageAction,
 } from "./sourceControlActions";
-import { VcsActionUnavailableError } from "@bibcode/client-runtime/state/vcs";
+import { VcsActionUnavailableError } from "@coddy/client-runtime/state/vcs";
 
 const environmentId = EnvironmentId.make("environment-1");
 const fullScope = { environmentId, cwd: "/repo" } as const;

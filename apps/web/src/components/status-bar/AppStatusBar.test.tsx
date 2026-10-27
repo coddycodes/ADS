@@ -1,5 +1,5 @@
-import type { ServerProcessDiagnosticsResult, ServerProviderUsageResult } from "@bibcode/contracts";
-import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@bibcode/contracts";
+import type { ServerProcessDiagnosticsResult, ServerProviderUsageResult } from "@coddy/contracts";
+import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -118,12 +118,12 @@ const diagnostics: ServerProcessDiagnosticsResult = {
       cpuPercent: 3.2,
       rssBytes: 700_000_000,
       elapsed: "00:00:01",
-      command: "bibcode server",
+      command: "coddy-studio server",
       depth: 0,
       childPids: [],
       scope: "core",
       kind: "server",
-      label: "BiBCode Server",
+      label: "Coddy Studio Server",
       confidence: "exact",
     },
     {
@@ -185,11 +185,11 @@ describe("AppStatusBarView", () => {
     expect(markup).toContain('title="Combined monitored resources');
     expect(markup).toContain("4.2% CPU");
     expect(markup).toContain("2 processes");
-    expect(markup).toContain("BiBCode Core");
+    expect(markup).toContain("Coddy Studio Core");
     expect(markup).toContain("External Tooling");
     expect(markup).toContain("Highest consumers");
-    expect(markup).toContain("BiBCode Server");
-    expect(markup).toContain("bibcode server");
+    expect(markup).toContain("Coddy Studio Server");
+    expect(markup).toContain("coddy-studio server");
     expect(markup).toContain("Core");
     expect(markup).toContain("Codex");
     expect(markup).toContain("codex app-server");
@@ -199,7 +199,7 @@ describe("AppStatusBarView", () => {
     expect(markup).toContain("UI coverage partial");
     expect(markup).toContain("grid-cols-2");
 
-    expect(markup.indexOf("BiBCode Core")).toBeLessThan(markup.indexOf("Highest consumers"));
+    expect(markup.indexOf("Coddy Studio Core")).toBeLessThan(markup.indexOf("Highest consumers"));
     expect(markup.indexOf("Highest consumers")).toBeLessThan(markup.indexOf("This device"));
   });
 

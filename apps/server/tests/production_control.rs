@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     ACTIVE_RPC_METHODS, MethodMode, RpcRegistry, ServerConfig, ServerRuntime,
     persistence::StorageInstanceId,
     production::{
@@ -37,7 +37,7 @@ fn auth_descriptor() -> Value {
         "policy": "loopback-browser",
         "bootstrapMethods": ["one-time-token"],
         "sessionMethods": ["browser-session-cookie", "bearer-access-token"],
-        "sessionCookieName": "bibcode_session",
+        "sessionCookieName": "coddy_studio_session",
     })
 }
 
@@ -243,7 +243,7 @@ async fn write_claude_fixture(directory: &TempDir, version: &str) -> PathBuf {
 async fn write_discovering_claude_fixture(directory: &TempDir) -> PathBuf {
     let script = r#"import fs from "node:fs";
 import readline from "node:readline";
-const version = process.env.BIBCODE_CLAUDE_FIXTURE_VERSION;
+const version = process.env.CODDY_STUDIO_CLAUDE_FIXTURE_VERSION;
 const reloadMarker = new URL("./claude-fixture-reloaded", import.meta.url);
 const reloaded = fs.existsSync(reloadMarker);
 if (process.argv[2] === "--version") {
@@ -349,7 +349,9 @@ async fn call(control: &NativeServerControl, method: &'static str, payload: Valu
         .unwrap_or_else(|error| panic!("{method} failed: {error}"))
 }
 
-async fn next_event(stream: &mut bibcode_server::production::server_terminal::JsonStream) -> Value {
+async fn next_event(
+    stream: &mut coddy_studio_server::production::server_terminal::JsonStream,
+) -> Value {
     timeout(Duration::from_secs(2), stream.recv())
         .await
         .expect("stream event timeout")
@@ -361,7 +363,7 @@ async fn next_event(stream: &mut bibcode_server::production::server_terminal::Js
 }
 
 async fn next_event_of_type(
-    stream: &mut bibcode_server::production::server_terminal::JsonStream,
+    stream: &mut coddy_studio_server::production::server_terminal::JsonStream,
     expected_type: &str,
 ) -> Value {
     timeout(Duration::from_secs(2), async {
@@ -403,7 +405,7 @@ async fn config_and_settings_match_the_typescript_contract_without_faking_provid
             "driver": "claudeAgent",
             "enabled": true,
             "environment": [{
-                "name": "BIBCODE_CLAUDE_FIXTURE_VERSION",
+                "name": "CODDY_STUDIO_CLAUDE_FIXTURE_VERSION",
                 "value": "2.1.220",
                 "sensitive": false,
             }],
@@ -898,7 +900,7 @@ async fn claude_inventory_uses_authoritative_discovered_model_catalog() {
             "driver": "claudeAgent",
             "enabled": true,
             "environment": [{
-                "name": "BIBCODE_CLAUDE_FIXTURE_VERSION",
+                "name": "CODDY_STUDIO_CLAUDE_FIXTURE_VERSION",
                 "value": "2.1.220",
                 "sensitive": false
             }],
@@ -972,7 +974,7 @@ async fn claude_inventory_keeps_discovered_models_when_skill_reload_is_invalid()
             "driver": "claudeAgent",
             "enabled": true,
             "environment": [{
-                "name": "BIBCODE_CLAUDE_FIXTURE_VERSION",
+                "name": "CODDY_STUDIO_CLAUDE_FIXTURE_VERSION",
                 "value": "2.1.220",
                 "sensitive": false
             }],

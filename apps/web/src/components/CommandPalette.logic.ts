@@ -1,5 +1,5 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@bibcode/contracts";
-import type { SidebarThreadSortOrder } from "@bibcode/contracts/settings";
+import { type KeybindingCommand, type FilesystemBrowseEntry } from "@coddy/contracts";
+import type { SidebarThreadSortOrder } from "@coddy/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";

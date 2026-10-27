@@ -1,16 +1,19 @@
 use std::path::Path;
 
-use bibcode_server::remote_update::RemoteUpdateInstallKind;
-use bibcode_server::{StaticDirError, StaticDirSource, resolve_static_dir};
+use coddy_studio_server::remote_update::RemoteUpdateInstallKind;
+use coddy_studio_server::{StaticDirError, StaticDirSource, resolve_static_dir};
 
 #[test]
 fn packaged_web_is_resolved_beside_the_executable() {
     let root = tempfile::tempdir().expect("distribution root");
-    let executable = root.path().join("bibcode");
+    let executable = root.path().join("coddy-studio");
     std::fs::write(&executable, b"binary").expect("binary fixture");
     std::fs::create_dir(root.path().join("web")).expect("web directory");
-    std::fs::write(root.path().join("web/index.html"), b"<main>BiBCode</main>")
-        .expect("web entry point");
+    std::fs::write(
+        root.path().join("web/index.html"),
+        b"<main>Coddy Studio</main>",
+    )
+    .expect("web entry point");
 
     let resolved = resolve_static_dir(None, &executable)
         .expect("resolve packaged web")
@@ -24,8 +27,8 @@ fn packaged_web_is_resolved_beside_the_executable() {
 #[test]
 fn installed_web_is_resolved_from_the_executable_prefix() {
     let root = tempfile::tempdir().expect("installation prefix");
-    let executable = root.path().join("bin/bibcode");
-    let web = root.path().join("share/bibcode/web");
+    let executable = root.path().join("bin/coddy-studio");
+    let web = root.path().join("share/coddy-studio/web");
     std::fs::create_dir_all(executable.parent().expect("bin parent")).expect("bin directory");
     std::fs::create_dir_all(&web).expect("installed web directory");
     std::fs::write(&executable, b"binary").expect("binary fixture");
@@ -47,7 +50,7 @@ fn installed_web_is_resolved_from_the_executable_prefix() {
 #[test]
 fn invalid_explicit_web_does_not_fall_back_to_packaged_assets() {
     let root = tempfile::tempdir().expect("distribution root");
-    let executable = root.path().join("bibcode");
+    let executable = root.path().join("coddy-studio");
     std::fs::write(&executable, b"binary").expect("binary fixture");
     std::fs::create_dir(root.path().join("web")).expect("web directory");
     std::fs::write(root.path().join("web/index.html"), b"packaged").expect("packaged entry point");
@@ -62,7 +65,7 @@ fn invalid_explicit_web_does_not_fall_back_to_packaged_assets() {
 #[test]
 fn explicit_web_wins_over_packaged_assets() {
     let root = tempfile::tempdir().expect("distribution root");
-    let executable = root.path().join("bibcode");
+    let executable = root.path().join("coddy-studio");
     let explicit = root.path().join("explicit");
     for directory in [root.path().join("web"), explicit.clone()] {
         std::fs::create_dir(&directory).expect("static directory");

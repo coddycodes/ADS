@@ -1,12 +1,12 @@
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
-} from "@bibcode/contracts/relay";
-import { decodeRelayJwt } from "@bibcode/shared/relayJwt";
+} from "@coddy/contracts/relay";
+import { decodeRelayJwt } from "@coddy/shared/relayJwt";
 import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
-} from "@bibcode/contracts/relay";
+} from "@coddy/contracts/relay";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -45,7 +45,7 @@ export class RelayEnvironmentDiscovery extends Context.Service<
     readonly state: SubscriptionRef.SubscriptionRef<RelayEnvironmentDiscoveryState>;
     readonly refresh: Effect.Effect<void>;
   }
->()("@bibcode/client-runtime/relay/discovery/RelayEnvironmentDiscovery") {}
+>()("@coddy/client-runtime/relay/discovery/RelayEnvironmentDiscovery") {}
 
 export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryState = {
   environments: new Map(),

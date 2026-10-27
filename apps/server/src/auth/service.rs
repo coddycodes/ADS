@@ -476,9 +476,9 @@ impl AuthService {
             (false, _, _) => vec!["one-time-token"],
         };
         let session_cookie_name = if config.mode == ServerMode::Desktop {
-            format!("bibcode_session_{}", config.port)
+            format!("coddy_studio_session_{}", config.port)
         } else {
-            "bibcode_session".to_owned()
+            "coddy_studio_session".to_owned()
         };
         let desktop_bootstrap =
             config
@@ -490,7 +490,7 @@ impl AuthService {
                 });
         let (access_events, _) = broadcast::channel(ACCESS_EVENT_CAPACITY);
         // Only a dev UI served from another origin uses the cookie cross-origin. The desktop
-        // app (`bibcode://app`) never sends it: its requests carry a bearer token with
+        // app (`coddy-studio://app`) never sends it: its requests carry a bearer token with
         // `credentials: "omit"`, and its WebSockets authenticate with a ticket.
         let trusted_cookie_origins = config
             .dev_url
@@ -1164,7 +1164,7 @@ impl AuthService {
         reserved_pairing(
             self.issue_pairing_for_subject(
                 owned_scopes(STANDARD_SCOPES),
-                Some("BiBCode Connect connect".to_owned()),
+                Some("Coddy Connect connect".to_owned()),
                 "cloud-connect",
                 CLOUD_PAIRING_TTL_MS,
                 AuthGrantMetadata {
@@ -2708,7 +2708,7 @@ fn generate_pairing_credential() -> Result<String, AuthError> {
 
 /// Issues a one-time administrative pairing link directly against a data
 /// root's repositories, without a full [`AuthService`]. Used by the native CLI
-/// (`bibcode pairing issue`) beside a running server: credential consumption
+/// (`coddy-studio pairing issue`) beside a running server: credential consumption
 /// reads `auth_pairing_links` from the database, so the running server honors
 /// links inserted here. Mirrors `issue_startup_pairing` (administrative
 /// scopes, `administrative-bootstrap` subject, five-minute TTL).
@@ -2753,7 +2753,7 @@ pub(crate) async fn issue_administrative_pairing_link(
 }
 
 /// Issues a one-time share pairing grant directly against a data root's
-/// repositories, without a full [`AuthService`]. Used by `bibcode pairing offer`
+/// repositories, without a full [`AuthService`]. Used by `coddy-studio pairing offer`
 /// beside a running server: consumption reads `auth_pairing_links` from the
 /// database, so the running server honors grants inserted here. Mirrors
 /// `issue_share_pairing` (standard scopes, `one-time-token` subject, reach and
@@ -2959,7 +2959,7 @@ mod tests {
 
     fn desktop_client() -> ClientMetadata {
         ClientMetadata {
-            label: Some("BiBCode Tauri Desktop".to_owned()),
+            label: Some("Coddy Studio Tauri Desktop".to_owned()),
             device_type: "desktop".to_owned(),
             os: Some("macOS".to_owned()),
             ..ClientMetadata::default()
@@ -3025,7 +3025,7 @@ mod tests {
         assert!(clients[0].current);
         assert_eq!(
             clients[0].client.label.as_deref(),
-            Some("BiBCode Tauri Desktop")
+            Some("Coddy Studio Tauri Desktop")
         );
 
         let removed = events.recv().await.expect("superseded session removal");

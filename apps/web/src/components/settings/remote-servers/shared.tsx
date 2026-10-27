@@ -13,8 +13,8 @@ import {
   type AdvertisedEndpoint,
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
-} from "@bibcode/contracts";
-import { RemotePairingTokenMissingError, resolveRemotePairingTarget } from "@bibcode/shared/remote";
+} from "@coddy/contracts";
+import { RemotePairingTokenMissingError, resolveRemotePairingTarget } from "@coddy/shared/remote";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 

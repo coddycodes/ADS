@@ -1,4 +1,4 @@
-export const CONNECTION_DATABASE_NAME = "bibcode:connection-runtime";
+export const CONNECTION_DATABASE_NAME = "coddy-studio:connection-runtime";
 export const CONNECTION_DATABASE_VERSION = 2;
 
 export type ConnectionDatabaseHealthStatus = "ready" | "incompatible" | "blocked" | "unavailable";
@@ -45,7 +45,7 @@ export function monitorConnectionDatabaseOpenRequest(request: IDBOpenDBRequest):
     if (errorName(error) === "VersionError") {
       publishOpenHealth({
         status: "incompatible",
-        message: "This browser cannot open connection data written by a newer BiBCode version.",
+        message: "This browser cannot open connection data written by a newer Coddy Studio version.",
       });
       return;
     }
@@ -58,7 +58,7 @@ export function monitorConnectionDatabaseOpenRequest(request: IDBOpenDBRequest):
       publishOpenHealth({
         status: "incompatible",
         message:
-          "This BiBCode build uses an older browser engine than the one that last wrote its connection data, so the connection database cannot be opened.",
+          "This Coddy Studio build uses an older browser engine than the one that last wrote its connection data, so the connection database cannot be opened.",
       });
       return;
     }
@@ -107,7 +107,7 @@ export function deleteIncompatibleConnectionDatabase(): Promise<"deleted"> {
       publish({
         status: "blocked",
         message:
-          "The browser queued connection database deletion until other BiBCode tabs and windows close.",
+          "The browser queued connection database deletion until other Coddy Studio tabs and windows close.",
       });
       // A deletion the browser keeps queued must not leave the caller
       // waiting forever; settle with a descriptive failure while the queued
@@ -118,7 +118,7 @@ export function deleteIncompatibleConnectionDatabase(): Promise<"deleted"> {
         settled = true;
         reject(
           new Error(
-            "Deletion stayed blocked by other BiBCode tabs or windows. Close them and try again.",
+            "Deletion stayed blocked by other Coddy Studio tabs or windows. Close them and try again.",
           ),
         );
       }, DELETION_BLOCKED_SETTLE_TIMEOUT_MS);

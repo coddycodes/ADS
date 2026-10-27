@@ -1,4 +1,4 @@
-import type { PullRequestsPermission } from "@bibcode/contracts";
+import type { PullRequestsPermission } from "@coddy/contracts";
 import { useRef, useState, type ReactNode } from "react";
 import {
   AlertDialog,

@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { AtomCommand } from "@bibcode/client-runtime/state/runtime";
+import type { AtomCommand } from "@coddy/client-runtime/state/runtime";
 import {
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
   EMPTY_ENVIRONMENT_THREAD_STATE,
-} from "@bibcode/client-runtime/state/threads";
-import type { OrchestrationShellSnapshot } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/threads";
+import type { OrchestrationShellSnapshot } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -24,7 +24,7 @@ import {
   publishStatus,
 } from "./remaining-data";
 import { useDiffPanelStore } from "../../src/diffPanelStore";
-import { TurnId } from "@bibcode/contracts";
+import { TurnId } from "@coddy/contracts";
 
 type RemainingDiffState =
   | "branch"

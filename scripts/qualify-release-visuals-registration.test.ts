@@ -77,7 +77,7 @@ describe("visual qualification dispatch registration", () => {
       expect(admission.run).toContain("python3 -B scripts/qualify-chat-uploads.py preflight");
       expect(admission.run).toContain("scripts/qualify-release-visuals-workflow.test.ts");
       expect(steps.find((step) => step.name === "Build guarded production CLI")?.run).toBe(
-        "cargo build -p bibcode-server --bin bibcode --features hermetic-test-guard -j 2",
+        "cargo build -p coddy-studio-server --bin coddy-studio --features hermetic-test-guard -j 2",
       );
       const selections = [
         ["Run contained first visual batch", "release-visual-core"],

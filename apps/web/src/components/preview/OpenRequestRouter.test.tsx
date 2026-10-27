@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { RegistryContext } from "@effect/atom-react";
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot } from "react-dom/client";

@@ -1,5 +1,5 @@
-import { EnvironmentId } from "@bibcode/contracts";
-import { RelayEnvironmentStatusScope } from "@bibcode/contracts/relay";
+import { EnvironmentId } from "@coddy/contracts";
+import { RelayEnvironmentStatusScope } from "@coddy/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -27,7 +27,7 @@ function managedRelayTestLayer(
   );
   return ManagedRelay.layer({
     relayUrl,
-    clientId: "bibcode-web",
+    clientId: "coddy-studio-web",
     ...(accessTokenStore ? { accessTokenStore } : {}),
   }).pipe(Layer.provide(signerLayer), Layer.provide(httpClientLayer));
 }
@@ -268,7 +268,7 @@ describe("ManagedRelayClient", () => {
     let persistedTokens: ReadonlyArray<ManagedRelay.ManagedRelayAccessTokenCacheEntry> = [
       {
         accountId: "user-1",
-        clientId: "bibcode-web",
+        clientId: "coddy-studio-web",
         relayUrl: "https://relay.example.test",
         thumbprint: "client-thumbprint",
         scopes: [RelayEnvironmentStatusScope],

@@ -7,8 +7,8 @@ import type {
   DevicePlatform,
   DevicePlatformCatalog,
   DeviceSnapshot,
-} from "@bibcode/contracts";
-import { EnvironmentId } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -76,7 +76,7 @@ vi.mock("../../state/use-atom-command", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => false,
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error,
   isQueryTransportCutoff: () => false,
@@ -335,9 +335,9 @@ describe("DevicePanel", () => {
     ]);
   });
 
-  it("shows the server's message when the image already runs outside BiBCode", async () => {
+  it("shows the server's message when the image already runs outside Coddy Studio", async () => {
     const message =
-      "This simulator is already running outside BiBCode. Shut it down in Simulator, then open it here.";
+      "This simulator is already running outside Coddy Studio. Shut it down in Simulator, then open it here.";
     h.results.open = {
       _tag: "Failure",
       error: { _tag: "DeviceBusyError", imageId: "Pixel_8", message },
@@ -784,7 +784,7 @@ describe("DevicePanel with iOS simulators", () => {
     expect(groups.map((label) => label.textContent)).toEqual(["Android"]);
   });
 
-  it("disables a simulator running outside BiBCode", async () => {
+  it("disables a simulator running outside Coddy Studio", async () => {
     withCatalog(
       catalog({
         platforms: [
@@ -796,8 +796,8 @@ describe("DevicePanel with iOS simulators", () => {
       }),
     );
     const container = await render();
-    const busy = option(container, /Running outside BiBCode/);
-    expect(busy.textContent).toBe("iPhone 17 Pro · iOS 27.0 — Running outside BiBCode");
+    const busy = option(container, /Running outside Coddy Studio/);
+    expect(busy.textContent).toBe("iPhone 17 Pro · iOS 27.0 — Running outside Coddy Studio");
     expect(busy.getAttribute("aria-disabled")).toBe("true");
     // The busy simulator is not picked by default.
     expect(container.querySelector("[aria-label='Virtual device']")?.textContent).toBe(
@@ -881,7 +881,7 @@ describe("DevicePanel with iOS simulators", () => {
 
   it("view-only iOS shows why on the screen and disables input controls", async () => {
     const message =
-      "Xcode 27.1 changed the simulator interfaces BiBCode uses. Simulators open as screenshots without touch input.";
+      "Xcode 27.1 changed the simulator interfaces Coddy Studio uses. Simulators open as screenshots without touch input.";
     withCatalog(readyIosDevice({ canRotate: false }, "xcodeUnsupported", message));
     const container = await render();
     expect(h.screenProps?.inputDisabledReason).toBe(message);
@@ -1154,7 +1154,7 @@ describe("DevicePanel with iOS simulators", () => {
       const container = await render();
       await click(button(container, "Paste"));
       expect(container.querySelector("[role='status'][data-input-error]")?.textContent).toBe(
-        "BiBCode can't read the clipboard here. Click the screen and paste with Ctrl+V or ⌘V.",
+        "Coddy Studio can't read the clipboard here. Click the screen and paste with Ctrl+V or ⌘V.",
       );
     } finally {
       vi.unstubAllGlobals();

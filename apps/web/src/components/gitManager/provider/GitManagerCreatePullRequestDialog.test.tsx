@@ -5,7 +5,7 @@ import type {
   GitManagerCommitEntry,
   GitRunStackedActionResult,
   VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { act } from "react";
@@ -492,7 +492,7 @@ describe("GitManagerCreatePullRequestDialog", () => {
       const primary = button("Publish and create pull request");
       expect(primary.disabled).toBe(true);
       expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toContain(
-        "Update this environment's BiBCode server",
+        "Update this environment's Coddy Studio server",
       );
       await act(async () => primary.click());
       expect(h.runs).toEqual([]);
@@ -1012,7 +1012,7 @@ describe("GitManagerCreatePullRequestDialog", () => {
     h.status = status({ sourceControlProvider: undefined });
     await renderDialog();
     const reason =
-      "BiBCode hasn't identified this repository's host yet. Open Pull Requests for this project or run Rescan in Settings → Source Control.";
+      "Coddy Studio hasn't identified this repository's host yet. Open Pull Requests for this project or run Rescan in Settings → Source Control.";
     expect(text("create-pr-repository")).toBe("Not identified yet");
     expect(text("create-pr-status")).toBe(reason);
     const blocked = button("Publish and create pull request");

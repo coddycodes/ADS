@@ -5,7 +5,7 @@ import type {
   DesktopPreviewTabState,
   DesktopPreviewTunnelBridge,
   DesktopPreviewTunnelRequest,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { TauriDesktopCapabilityUnsupportedError } from "./tauriDesktopBridge";
 import { registerPreviewRuntimeCapabilities } from "./previewRuntimeCapabilities";

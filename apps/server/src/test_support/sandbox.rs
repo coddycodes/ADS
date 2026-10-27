@@ -34,7 +34,7 @@ pub(crate) struct FixtureLease {
 impl TestSandbox {
     pub(crate) fn new(name: &str) -> Self {
         let root = tempfile::Builder::new()
-            .prefix(&format!("bibcode-server-{name}-"))
+            .prefix(&format!("coddy-studio-server-{name}-"))
             .tempdir()
             .expect("test sandbox temporary root");
         Self {
@@ -130,7 +130,7 @@ impl TestSandbox {
         command
             .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
             .envs(environment.iter().map(|(name, value)| (*name, *value)))
-            .env("BIBCODE_TEST_ISOLATED_CASE", case)
+            .env("CODDY_STUDIO_TEST_ISOLATED_CASE", case)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         for name in removed {
@@ -184,8 +184,8 @@ impl TestSandbox {
 
     pub(crate) fn is_isolated_case(case: &str, test_name: &str) -> bool {
         let arguments = std::env::args_os().collect::<Vec<_>>();
-        let selected =
-            std::env::var_os("BIBCODE_TEST_ISOLATED_CASE").as_deref() == Some(OsStr::new(case));
+        let selected = std::env::var_os("CODDY_STUDIO_TEST_ISOLATED_CASE").as_deref()
+            == Some(OsStr::new(case));
         let valid_arguments = arguments
             .windows(2)
             .any(|values| values == [OsStr::new("--exact"), OsStr::new(test_name)])

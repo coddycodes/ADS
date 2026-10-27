@@ -1,5 +1,5 @@
-import { EnvironmentId } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { EnvironmentId } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "vite-plus/test";
 
 import { APP_VERSION } from "./branding";
@@ -21,7 +21,7 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("9.9.9")).toEqual({
       clientVersion: APP_VERSION,
       serverVersion: "9.9.9",
-      hint: "Version mismatch. Try syncing the client and server to the same BiBCode version.",
+      hint: "Version mismatch. Try syncing the client and server to the same Coddy Studio version.",
     });
   });
 
@@ -76,7 +76,7 @@ describe("versionSkew", () => {
     const mismatch = resolveVersionMismatch("9.9.9");
 
     expect(appendVersionMismatchHint("Socket closed.", mismatch)).toBe(
-      "Socket closed. Hint: Version mismatch. Try syncing the client and server to the same BiBCode version.",
+      "Socket closed. Hint: Version mismatch. Try syncing the client and server to the same Coddy Studio version.",
     );
   });
 });

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

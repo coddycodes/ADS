@@ -11,7 +11,7 @@ export class ConnectionWakeups extends Context.Service<
     /** Coalesced focus/visibility returns for view refreshes, never liveness probes. */
     readonly focusVisibility: Stream.Stream<void>;
   }
->()("@bibcode/client-runtime/connection/wakeups/ConnectionWakeups") {}
+>()("@coddy/client-runtime/connection/wakeups/ConnectionWakeups") {}
 
 export const make = (service: ConnectionWakeups["Service"]) => ConnectionWakeups.of(service);
 

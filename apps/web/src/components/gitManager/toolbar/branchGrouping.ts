@@ -1,4 +1,4 @@
-import type { GitManagerRefEntry } from "@bibcode/contracts";
+import type { GitManagerRefEntry } from "@coddy/contracts";
 
 const RECENT_BRANCH_LIMIT = 5;
 

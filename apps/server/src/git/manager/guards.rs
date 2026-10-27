@@ -313,7 +313,7 @@ fn add_worktree_occupancy_reasons(
         delete_message,
     ));
     // App policy: Git permits this rename and silently retargets the other
-    // worktree's HEAD. BiBCode blocks it to keep catalog/thread branch names in sync.
+    // worktree's HEAD. Coddy Studio blocks it to keep catalog/thread branch names in sync.
     blocked.push(blocked_reason(
         "rename-branch",
         BlockedCode::WorktreeCheckedOut,

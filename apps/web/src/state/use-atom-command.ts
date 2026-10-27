@@ -5,7 +5,7 @@ import {
   type AtomCommandResult,
   type AtomCommandRunOptions,
   runAtomCommand,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { useCallback, useContext } from "react";
 
 export function useAtomCommand<A, E, W>(

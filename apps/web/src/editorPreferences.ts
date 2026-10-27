@@ -1,9 +1,9 @@
-import { EDITORS, EditorId, EnvironmentId } from "@bibcode/contracts";
+import { EDITORS, EditorId, EnvironmentId } from "@coddy/contracts";
 import {
   mapAtomCommandResult,
   type AtomCommandFailure,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -12,7 +12,7 @@ import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 
-const LAST_EDITOR_KEY = "bibcode:last-editor";
+const LAST_EDITOR_KEY = "coddy-studio:last-editor";
 
 export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<PreferredEditorEnvironmentRequiredError>()(
   "PreferredEditorEnvironmentRequiredError",

@@ -1,6 +1,6 @@
 # Connection runtime
 
-`@bibcode/client-runtime` gives browser and desktop clients one supervised
+`@coddy/client-runtime` gives browser and desktop clients one supervised
 connection model for local, manually paired, relay, and SSH environments. The
 public package has no root export; callers use focused subpaths such as
 `connection`, `authorization`, `rpc`, `relay`, and `state/<domain>`.
@@ -148,7 +148,7 @@ The environment rail and saved-server list use the catalog target label, which
 survives catalog hydration and reconnects. The alias does not change the remote
 descriptor, environment identity, pairing credential, or server-side name.
 Without an alias the label is the offer's name or the descriptor label; a
-headless web-mode `bibcode serve` server declares its hostname there (see
+headless web-mode `coddy-studio serve` server declares its hostname there (see
 [Remote architecture](./remote.md#design-rules)).
 
 **Rename…** in **Settings → Remote Servers** rewrites that same target label
@@ -167,7 +167,7 @@ workspace card use the saved label. Disconnect reasons read the current saved
 catalog label from the supervisor's target Ref when the failure is published,
 so a rename during a live session also names the next disconnect correctly.
 Storage-identity errors still use the server's reported name. When a test
-server is paused while BiBCode stays visible, the visible disconnect reason uses
+server is paused while Coddy Studio stays visible, the visible disconnect reason uses
 the saved name after the 30-second liveness timeout, followed by an endpoint
 timeout; the health-check message does not become visible in this scenario.
 Restoring a hidden or minimized window during the pause runs the

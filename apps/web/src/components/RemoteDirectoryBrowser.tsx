@@ -1,9 +1,9 @@
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
-import type { EnvironmentId } from "@bibcode/contracts";
-import { joinHostPath } from "@bibcode/shared/path";
+} from "@coddy/client-runtime/state/runtime";
+import type { EnvironmentId } from "@coddy/contracts";
+import { joinHostPath } from "@coddy/shared/path";
 import {
   ArrowUpIcon,
   ChevronRightIcon,

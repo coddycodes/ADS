@@ -1191,8 +1191,8 @@ mod tests {
         ids.iter().map(|id| ((*id).to_owned(), None)).collect()
     }
 
-    const ATTACHMENT_ABORT_CHILD_DIR: &str = "BIBCODE_ATTACHMENT_ABORT_CHILD_DIR";
-    const ATTACHMENT_ABORT_CHILD_READY: &str = "BIBCODE_ATTACHMENT_ABORT_CHILD_READY";
+    const ATTACHMENT_ABORT_CHILD_DIR: &str = "CODDY_STUDIO_ATTACHMENT_ABORT_CHILD_DIR";
+    const ATTACHMENT_ABORT_CHILD_READY: &str = "CODDY_STUDIO_ATTACHMENT_ABORT_CHILD_READY";
 
     #[test]
     fn attachment_final_publication_abort_child() {

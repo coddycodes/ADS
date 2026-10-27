@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import type { ProfilerFinding, ProfilerStatus } from "@bibcode/contracts";
-import { EnvironmentId } from "@bibcode/contracts";
+import type { ProfilerFinding, ProfilerStatus } from "@coddy/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -67,7 +67,7 @@ vi.mock("@effect/atom-react", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { _tag?: string }) => result._tag === "Interrupted",
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error,
 }));
@@ -506,7 +506,7 @@ describe("ProfilerSection", () => {
 
     expect(buttonByText(container, "Open folder").disabled).toBe(true);
     expect(container.querySelector("[data-tooltip-popup]")!.textContent).toBe(
-      "The profiler folder is on Work Server. Use Export bundle or bibcode profiler on that machine.",
+      "The profiler folder is on Work Server. Use Export bundle or coddy-studio profiler on that machine.",
     );
     expect(h.openInEditorCalls).toHaveLength(0);
   });
@@ -523,7 +523,7 @@ describe("ProfilerSection", () => {
   });
 
   it("derives the profiler folder from a Windows logs path", async () => {
-    h.observability = { logsDirectoryPath: "C:\\Users\\me\\.bibcode\\userdata\\logs" };
+    h.observability = { logsDirectoryPath: "C:\\Users\\me\\.coddy/studio\\userdata\\logs" };
 
     const container = await render();
     await click(buttonByText(container, "Open folder"));
@@ -531,7 +531,7 @@ describe("ProfilerSection", () => {
     expect(h.openInEditorCalls).toEqual([
       {
         environmentId: ENVIRONMENT_ID,
-        input: { cwd: "C:\\Users\\me\\.bibcode\\userdata\\profiler", editor: "vscode" },
+        input: { cwd: "C:\\Users\\me\\.coddy/studio\\userdata\\profiler", editor: "vscode" },
       },
     ]);
   });
@@ -596,7 +596,7 @@ describe("ProfilerSection", () => {
     );
   });
 
-  it("tells the user to close the other BiBCode process that holds the profiler folder", async () => {
+  it("tells the user to close the other Coddy Studio process that holds the profiler folder", async () => {
     h.settingsByEnvironment[ENVIRONMENT_ID] = true;
     queryOf(
       status({
@@ -609,7 +609,7 @@ describe("ProfilerSection", () => {
     const container = await render();
 
     expect(container.textContent).toContain(
-      "Another BiBCode app or server is already recording to this profiler folder. Close it, then restart this one.",
+      "Another Coddy Studio app or server is already recording to this profiler folder. Close it, then restart this one.",
     );
     expect(container.textContent).toContain("Not recording.");
     expect(container.textContent).not.toContain("Starting...");
@@ -648,7 +648,7 @@ describe("ProfilerSection", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     const reason = document.getElementById(toggle.getAttribute("aria-describedby")!);
     expect(reason?.textContent).toBe(
-      "This server's BiBCode version has no profiler. Update the server to record.",
+      "This server's Coddy Studio version has no profiler. Update the server to record.",
     );
     // Nothing else of the profiler applies to it.
     expect(container.textContent).not.toContain("Recorded data");
@@ -677,7 +677,7 @@ describe("ProfilerSection", () => {
 
     expect(h.statusQuery.revalidate).not.toHaveBeenCalled();
     expect(container.textContent).toContain(
-      "This server's BiBCode version has no profiler. Update the server to record.",
+      "This server's Coddy Studio version has no profiler. Update the server to record.",
     );
     expect(container.textContent).not.toContain("The environment request failed.");
     expect(container.textContent).not.toContain("Retry");
@@ -693,7 +693,7 @@ describe("ProfilerSection", () => {
     const reopened = await render();
     expect(h.queried).toEqual([]);
     expect(reopened.textContent).toContain(
-      "This server's BiBCode version has no profiler. Update the server to record.",
+      "This server's Coddy Studio version has no profiler. Update the server to record.",
     );
   });
 
@@ -797,8 +797,8 @@ describe("ProfilerSection", () => {
         (popup) => popup.textContent,
       );
       expect(reasons).toEqual([
-        "The profiler folder is on Luna. Use bibcode profiler on that machine.",
-        "Export bundle covers Work Server only. Use bibcode profiler on Luna.",
+        "The profiler folder is on Luna. Use coddy-studio profiler on that machine.",
+        "Export bundle covers Work Server only. Use coddy-studio profiler on Luna.",
       ]);
       await click(buttonByText(container, "Export bundle"));
       expect(h.downloadCalls).toHaveLength(0);
@@ -806,7 +806,7 @@ describe("ProfilerSection", () => {
       const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
       expect(checkbox.disabled).toBe(true);
       expect(document.getElementById(checkbox.getAttribute("aria-describedby")!)?.textContent).toBe(
-        "Export bundle covers Work Server only. Use bibcode profiler on Luna.",
+        "Export bundle covers Work Server only. Use coddy-studio profiler on Luna.",
       );
     });
 

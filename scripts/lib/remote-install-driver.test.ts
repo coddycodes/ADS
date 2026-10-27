@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, vi } from "vite-plus/test";
-import type { RemoteUpdateSnapshot } from "@bibcode/contracts";
+import type { RemoteUpdateSnapshot } from "@coddy/contracts";
 import {
   assertWebDriverPhaseExit,
   createSeededUpgradeDriverSpec,

@@ -178,7 +178,12 @@ mod tests {
         assert_eq!(parse_event_xml(POSITIONAL), parse_event_xml(EVENT));
         assert!(parse_event_xml(POSITIONAL).is_some());
         let started = datetime!(2026-10-09 10:00 UTC);
-        assert!(event_matches(POSITIONAL, 0x2a2c, "bibcode.exe", started));
+        assert!(event_matches(
+            POSITIONAL,
+            0x2a2c,
+            "coddy-studio.exe",
+            started
+        ));
         assert!(!event_matches(POSITIONAL, 0x2a2c, "other.exe", started));
     }
 
@@ -193,11 +198,11 @@ mod tests {
 
     #[test]
     fn the_query_filters_by_app_name_in_any_data_element() {
-        let query = event_query("~/AppData/Local/BiBCode/bibcode.exe", 90_000);
+        let query = event_query("~/AppData/Local/Coddy Studio/coddy-studio.exe", 90_000);
         assert_eq!(
             query,
             "*[System[Provider[@Name='Application Error'] and (EventID=1000) and \
-             TimeCreated[timediff(@SystemTime) <= 90000]] and EventData[Data='bibcode.exe']]"
+             TimeCreated[timediff(@SystemTime) <= 90000]] and EventData[Data='coddy-studio.exe']]"
         );
         // Any `Data` child: the named and the positional forms both match.
         assert!(!query.contains("Data[@Name"), "{query}");
@@ -216,16 +221,16 @@ mod tests {
         assert!(event_matches(
             EVENT,
             0x2a2c,
-            "~/AppData/Local/BiBCode/bibcode.exe",
+            "~/AppData/Local/Coddy Studio/coddy-studio.exe",
             started
         ));
-        assert!(event_matches(EVENT, 0x2a2c, "BIBCODE.EXE", started));
-        assert!(!event_matches(EVENT, 0x2a2d, "bibcode.exe", started));
+        assert!(event_matches(EVENT, 0x2a2c, "CODDY_STUDIO.EXE", started));
+        assert!(!event_matches(EVENT, 0x2a2d, "coddy-studio.exe", started));
         assert!(!event_matches(EVENT, 0x2a2c, "other.exe", started));
         assert!(!event_matches(
             EVENT,
             0x2a2c,
-            "bibcode.exe",
+            "coddy-studio.exe",
             datetime!(2026-10-09 10:06 UTC)
         ));
     }

@@ -1,6 +1,6 @@
 /// <reference types="vite-plus/client" />
 
-import type { DesktopBridge, LocalApi } from "@bibcode/contracts";
+import type { DesktopBridge, LocalApi } from "@coddy/contracts";
 
 interface ImportMetaEnv {
   readonly VITE_HTTP_URL: string;

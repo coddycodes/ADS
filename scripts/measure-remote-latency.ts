@@ -5,13 +5,13 @@
 /**
  * High-latency measurement harness (development only).
  *
- * Starts a disposable `bibcode serve` with the packaged-UI provider fixtures, puts
+ * Starts a disposable `coddy-studio serve` with the packaged-UI provider fixtures, puts
  * `scripts/throttle-proxy.ts` with a one-way delay between it and a headless
  * Chromium, then drives user actions and records, per action, the RPCs sent,
  * the strictly sequential round trips on its critical path, bytes in each
  * direction, and the time until the result is visible.
  *
- *   node scripts/measure-remote-latency.ts --server-bin target/debug/bibcode \
+ *   node scripts/measure-remote-latency.ts --server-bin target/debug/coddy-studio \
  *     --static-dir apps/web/dist [--rtt 0,250] [--jitter 0] [--out report.json]
  *
  * See docs/reference/scripts.md and docs/testing/cross-platform-validation.md.
@@ -50,7 +50,7 @@ const RECORD_FLAG_CONTINUATION = 0x01;
 const RECORD_FLAG_CONTROL = 0x02;
 const RECORD_FLAG_DEFLATE = 0x10;
 
-/** Decodes RPC messages from text frames and plain `/ws` records (`bibcode.rpc.chunked.v1`). */
+/** Decodes RPC messages from text frames and plain `/ws` records (`coddy-studio.rpc.chunked.v1`). */
 export function decodeFrames(frames: ReadonlyArray<WebSocketFrame>): Array<DecodedMessage> {
   const decoded: Array<DecodedMessage> = [];
   const partial = new Map<string, { parts: Array<Buffer>; bytes: number; deflated: boolean }>();
@@ -165,7 +165,7 @@ export function criticalPath(
 
 /** Timer-driven polls that run whatever the user does; they are not part of any action. */
 /** The name the page uses for its server; Chromium maps it to 127.0.0.1. */
-const REMOTE_HOST = "bibcode-remote.test";
+const REMOTE_HOST = "coddy-studio-remote.test";
 
 /** Requests an action sends this long after its result shows still belong to it. */
 const SETTLE_MS = 500;
@@ -333,7 +333,7 @@ async function startHarness(options: {
 }): Promise<Harness> {
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
-    BIBCODE_E2E_RUN_ROOT: options.runRoot,
+    CODDY_STUDIO_E2E_RUN_ROOT: options.runRoot,
   };
   // The packaged-UI provider fixtures live with the desktop e2e suite, its own TS project.
   const fixtures = (await import(
@@ -391,11 +391,11 @@ async function startHarness(options: {
       env: {
         ...environment,
         RUST_LOG: "warn",
-        BIBCODE_LOG: "warn",
+        CODDY_STUDIO_LOG: "warn",
         // The compression kill switch passes through, to measure with it off.
-        ...(process.env.BIBCODE_REMOTE_COMPRESSION === undefined
+        ...(process.env.CODDY_STUDIO_REMOTE_COMPRESSION === undefined
           ? {}
-          : { BIBCODE_REMOTE_COMPRESSION: process.env.BIBCODE_REMOTE_COMPRESSION }),
+          : { CODDY_STUDIO_REMOTE_COMPRESSION: process.env.CODDY_STUDIO_REMOTE_COMPRESSION }),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -600,7 +600,7 @@ export async function runMeasureRemoteLatencyMain(
   // Always a fresh directory of our own, so cleanup never removes anything else.
   const parent = args.get("--run-root") ?? NodeOS.tmpdir();
   NodeFS.mkdirSync(parent, { recursive: true });
-  const runRoot = NodeFS.mkdtempSync(NodePath.join(parent, "bibcode-latency-"));
+  const runRoot = NodeFS.mkdtempSync(NodePath.join(parent, "coddy-studio-latency-"));
   const rtts = (args.get("--rtt") ?? "0,250").split(",").map(Number);
   const all: Array<ActionMeasurement> = [];
   for (const [index, rttMs] of rtts.entries()) {
@@ -619,7 +619,7 @@ export async function runMeasureRemoteLatencyMain(
     let harness: Harness | undefined;
     try {
       harness = await startHarness({
-        serverBin: NodePath.resolve(args.get("--server-bin") ?? "target/debug/bibcode"),
+        serverBin: NodePath.resolve(args.get("--server-bin") ?? "target/debug/coddy-studio"),
         staticDir: NodePath.resolve(args.get("--static-dir") ?? "apps/web/dist"),
         chromium: args.get("--chromium") ?? "/usr/bin/chromium",
         runRoot: harnessRoot,
@@ -688,7 +688,7 @@ export function formatTable(measurements: ReadonlyArray<ActionMeasurement>): str
 }
 
 const TYPED = "the quick brown fox jumps over a lazy dog";
-const RESPONSE = "BiBCode deterministic streamed fixture response.";
+const RESPONSE = "Coddy Studio deterministic streamed fixture response.";
 
 /** The sidebar thread button of the primary thread in the project named `project`. */
 const threadButton = (project: string) => `(() => {
@@ -814,7 +814,7 @@ export async function runScenarios(
     console.log(JSON.stringify(measurement));
     return measurement;
   };
-  const project = "BiBCode UI Fixture";
+  const project = "Coddy Studio UI Fixture";
   const other = "Second Fixture";
 
   // History for the thread-open scenarios, recorded before the link slows down.

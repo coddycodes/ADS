@@ -1,9 +1,9 @@
-const REPO = "mubeda/BibCode";
+const REPO = "mubeda/CoddyStudio";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-const CACHE_KEY = "bibcode-latest-release";
+const CACHE_KEY = "coddy-studio-latest-release";
 
 export interface ReleaseAsset {
   name: string;
@@ -20,11 +20,11 @@ const isInternalReleaseAsset = (name: string): boolean =>
   name.endsWith(".sig") ||
   name.endsWith(".minisig") ||
   name.endsWith(".sbom.json") ||
-  name === "bibcode-server-SHA256SUMS" ||
+  name === "coddy-studio-server-SHA256SUMS" ||
   name === "latest.json" ||
   name.startsWith("updater-") ||
   // Breakpad symbols, which share the server archives' `-<os>-<arch>.zip` suffix.
-  /^bibcode-(?:desktop|server)-symbols-/.test(name);
+  /^coddy-studio-(?:desktop|server)-symbols-/.test(name);
 
 export function findReleaseAsset(
   assets: ReadonlyArray<ReleaseAsset>,

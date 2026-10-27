@@ -4,7 +4,7 @@ import {
   type DeviceMediaSocket,
   type DeviceMediaTarget,
   type MediaFrame,
-} from "@bibcode/client-runtime/device";
+} from "@coddy/client-runtime/device";
 
 /** Main thread → device video worker. */
 export type DeviceVideoWorkerRequest =

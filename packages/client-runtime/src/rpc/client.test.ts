@@ -5,7 +5,7 @@ import {
   type TerminalEvent,
   ThreadId,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -135,7 +135,7 @@ describe("environment RPC", () => {
         [WS_METHODS.cloudGetRelayClientStatus]: () =>
           Effect.gen(function* () {
             const headers = yield* RpcClient.CurrentHeaders;
-            sent.push(Option.getOrUndefined(Headers.get(headers, "x-bibcode-profiler-rid")));
+            sent.push(Option.getOrUndefined(Headers.get(headers, "x-coddy-studio-profiler-rid")));
             return { status: "available", version: "2026.6.0" };
           }),
       } as unknown as WsRpcProtocolClient;
@@ -152,7 +152,7 @@ describe("environment RPC", () => {
           ),
         );
 
-      yield* requestWith({ "x-bibcode-profiler-rid": "c1:7" });
+      yield* requestWith({ "x-coddy-studio-profiler-rid": "c1:7" });
       yield* requestWith({});
 
       expect(sent).toEqual(["c1:7", undefined]);

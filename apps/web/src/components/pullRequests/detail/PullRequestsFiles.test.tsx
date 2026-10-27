@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createJSONStorage } from "zustand/middleware";
 import { usePullRequestsStore } from "../../../pullRequestsStore";
-import type { PullRequestsDetail, PullRequestsTimeline } from "@bibcode/contracts";
+import type { PullRequestsDetail, PullRequestsTimeline } from "@coddy/contracts";
 import { PullRequestsActionsContext } from "../usePullRequestsAction";
 import { allowed, mockRun } from "../review/testHelpers";
 import { context, detail, file, thread } from "./testFixtures";
@@ -133,11 +133,11 @@ describe("PullRequestsFiles", () => {
     expect(usePullRequestsStore.getState().selectViewState(projectRef).viewedFiles[14]).toEqual([
       "src/a.ts",
     ]);
-    const saved = persisted.get("bibcode:pull-requests-state:v1")!;
+    const saved = persisted.get("coddy-studio:pull-requests-state:v1")!;
     expect(saved).toContain("src/a.ts");
     await act(async () => root.render(null));
     usePullRequestsStore.setState({ byProjectKey: {} });
-    persisted.set("bibcode:pull-requests-state:v1", saved);
+    persisted.set("coddy-studio:pull-requests-state:v1", saved);
     await usePullRequestsStore.persist.rehydrate();
     await render();
     expect(

@@ -5,7 +5,7 @@
       "method": "POST",
       "path": "/api/session",
       "body": {
-        "title": "BiBCode capture",
+        "title": "Coddy Studio capture",
         "location": {
           "directory": "/work/project"
         },
@@ -47,7 +47,7 @@
             "created": 1792090048692,
             "updated": 1792090048692
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -90,7 +90,7 @@
             "created": 1792090048692,
             "updated": 1792090048692
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -108,13 +108,13 @@
       "method": "POST",
       "path": "/api/session/ses_ebf1bf74fffeycK1CwLlIiznew/prompt",
       "body": {
-        "id": "msg_bibcodecapture1792090048695",
+        "id": "msg_coddystudiocapture1792090048695",
         "text": "SLOW please"
       },
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090048695",
+          "id": "msg_coddystudiocapture1792090048695",
           "sessionID": "ses_ebf1bf74fffeycK1CwLlIiznew",
           "time": {
             "created": 1792090048697
@@ -178,7 +178,7 @@
             }
           },
           {
-            "id": "msg_bibcodecapture1792090048695",
+            "id": "msg_coddystudiocapture1792090048695",
             "time": {
               "created": 1792090048704
             },
@@ -194,12 +194,12 @@
     },
     {
       "method": "GET",
-      "path": "/api/session/ses_ebf1bf74fffeycK1CwLlIiznew/message/msg_bibcodecapture1792090048695",
+      "path": "/api/session/ses_ebf1bf74fffeycK1CwLlIiznew/message/msg_coddystudiocapture1792090048695",
       "body": null,
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090048695",
+          "id": "msg_coddystudiocapture1792090048695",
           "time": {
             "created": 1792090048704
           },

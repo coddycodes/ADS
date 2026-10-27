@@ -110,7 +110,10 @@ pub fn appimage_environment(root: &Path, extra: &[PathBuf]) -> Vec<(&'static str
         &std::env::var_os("PATH").expect("inherited PATH"),
     ));
     vec![
-        ("APPIMAGE", root.join("bibcode.AppImage").into_os_string()),
+        (
+            "APPIMAGE",
+            root.join("coddy-studio.AppImage").into_os_string(),
+        ),
         ("APPDIR", appdir.into_os_string()),
         ("PATH", std::env::join_paths(path).expect("PATH")),
     ]

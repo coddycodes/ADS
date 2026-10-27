@@ -1,5 +1,5 @@
 // @effect-diagnostics globalTimers:off - A bounded real-time pause proves no request was sent.
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Data from "effect/Data";

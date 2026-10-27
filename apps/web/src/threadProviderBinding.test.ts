@@ -5,7 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import type { Thread } from "./types";
 import { resolveThreadProviderBinding } from "./threadProviderBinding";

@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { WslEnvironmentCandidate } from "~/wslPaths";

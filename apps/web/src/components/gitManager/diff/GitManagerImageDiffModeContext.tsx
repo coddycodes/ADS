@@ -1,5 +1,5 @@
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import type { ScopedProjectRef } from "@bibcode/contracts";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import type { ScopedProjectRef } from "@coddy/contracts";
 import { createContext, memo, type ReactNode, useCallback, useContext, useMemo } from "react";
 
 import {

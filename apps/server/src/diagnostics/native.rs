@@ -352,7 +352,7 @@ fn collect_rows(system: &Arc<Mutex<System>>) -> Result<Vec<ProcessRow>, Sampling
 /// On macOS this is the physical footprint, which Activity Monitor and the Profiler show
 /// (#159): a WebKit process keeps freed allocator memory resident, so its resident size
 /// can be several times what the system charges it. A process this one may not inspect,
-/// such as another user's, keeps its resident size; attribution shows only BiBCode's own
+/// such as another user's, keeps its resident size; attribution shows only Coddy Studio's own
 /// processes. Elsewhere this is the resident size (Linux RSS, the Windows working set).
 #[cfg(target_os = "macos")]
 fn process_memory_bytes(pid: u32, resident: u64) -> u64 {

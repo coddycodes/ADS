@@ -1,6 +1,6 @@
 "use client";
 
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { ChevronDownIcon, FolderOpenIcon, GitBranchIcon, GlobeIcon, PlusIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
@@ -651,7 +651,7 @@ export function AddProjectCreateStep({
       }}
     >
       <StepHeading
-        description="Name it and BiBCode will create a real project with sensible defaults."
+        description="Name it and Coddy Studio will create a real project with sensible defaults."
         title="Create a new project"
       />
       <div className="space-y-1.5">

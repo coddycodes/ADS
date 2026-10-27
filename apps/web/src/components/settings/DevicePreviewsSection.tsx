@@ -1,8 +1,8 @@
-import type { DeviceCatalog, DeviceSnapshot, EnvironmentId } from "@bibcode/contracts";
+import type { DeviceCatalog, DeviceSnapshot, EnvironmentId } from "@coddy/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { InfoIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 

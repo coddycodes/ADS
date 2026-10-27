@@ -1,4 +1,4 @@
-import type { ContextMenuEntry } from "@bibcode/contracts";
+import type { ContextMenuEntry } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -131,7 +131,7 @@ describe("buildWorkspaceCardMenu", () => {
   it("explains a missing worktree on Open in and Pull with its recovery", () => {
     const reason = describeUnavailableWorkspace("missing-registered");
     expect(reason).toBe(
-      "The worktree directory is missing. Use Retry detection or Remove from BiBCode on its card.",
+      "The worktree directory is missing. Use Retry detection or Remove from Coddy Studio on its card.",
     );
     expect(describeUnavailableWorkspace("missing-unregistered")).toBe(reason);
     expect(describeUnavailableWorkspace("removing")).toBe("This worktree is being removed.");

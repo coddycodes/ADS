@@ -85,14 +85,14 @@ threads without serializing broad suites.
 Use a unique test-owned root:
 
 ```sh
-run_root=$(mktemp -d "${TMPDIR:-/tmp}/bibcode-linux-validation.XXXXXX")
+run_root=$(mktemp -d "${TMPDIR:-/tmp}/coddy-studio-linux-validation.XXXXXX")
 repository="$run_root/Repository With Spaces"
 worktrees="$run_root/External Worktrees"
 alias_root="$run_root/Symlink Alias"
 mkdir -p "$repository" "$worktrees"
 git -C "$repository" init
-git -C "$repository" config user.name 'BiBCode Test'
-git -C "$repository" config user.email 'bibcode-test@example.invalid'
+git -C "$repository" config user.name 'Coddy Studio Test'
+git -C "$repository" config user.email 'coddy-studio-test@example.invalid'
 printf 'fixture\n' >"$repository/README.md"
 git -C "$repository" add README.md
 git -C "$repository" commit -m 'fixture baseline'
@@ -105,7 +105,7 @@ realpath "$worktrees/Feature Alpha"
 realpath "$alias_root"
 ```
 
-Confirm the real path and symlink alias produce one BiBCode owner while the UI
+Confirm the real path and symlink alias produce one Coddy Studio owner while the UI
 retains the useful Git-reported display path. Exercise discovery, individual
 adoption, **Add all**, **Keep hidden**, restart, and on-disk existence using
 only fixture worktrees. Include the host's symlinked temporary-directory
@@ -131,7 +131,7 @@ propagation.
 Do not run `vp run test` and a separate broad Cargo command concurrently. Do
 not replace the normal Rust test harness with a serial harness.
 
-For update validation, isolate `BIBCODE_HOME` plus XDG config, cache, and data
+For update validation, isolate `CODDY_STUDIO_HOME` plus XDG config, cache, and data
 roots and use a disposable project. Keep a read subscription open while
 installing an available test update and confirm it does not block protection.
 During a deliberately held mutation, confirm the dialog promptly shows the
@@ -202,11 +202,11 @@ The regressions must cover:
 Run on Linux with a C compiler and system Git:
 
 ```sh
-cargo test --locked -p bibcode-server --test linux_appimage_git_environment -j 2 -- --nocapture
-cargo test --locked -p bibcode-server --test linux_appimage_child_environment -j 2 -- --nocapture
-cargo test --locked -p bibcode-server --lib appimage -j 2 -- --nocapture
-cargo test --locked -p bibcode-server --lib file_manager_launch -j 2 -- --nocapture
-cargo test --locked -p bibcode-desktop --lib appimage -j 2 -- --nocapture
+cargo test --locked -p coddy-studio-server --test linux_appimage_git_environment -j 2 -- --nocapture
+cargo test --locked -p coddy-studio-server --test linux_appimage_child_environment -j 2 -- --nocapture
+cargo test --locked -p coddy-studio-server --lib appimage -j 2 -- --nocapture
+cargo test --locked -p coddy-studio-server --lib file_manager_launch -j 2 -- --nocapture
+cargo test --locked -p coddy-studio-desktop --lib appimage -j 2 -- --nocapture
 ```
 
 The Git regression must first demonstrate the incompatible fixture library's
@@ -215,10 +215,10 @@ requires a real PTY child to exit zero and print `ok`. Capture its completion
 marker with `--nocapture`; to run it separately:
 
 ```sh
-cargo test --locked -p bibcode-server --test linux_appimage_child_environment python_in_appimage_terminal_uses_host_standard_library -- --nocapture
+cargo test --locked -p coddy-studio-server --test linux_appimage_child_environment python_in_appimage_terminal_uses_host_standard_library -- --nocapture
 ```
 
-Require `BIBCODE_PYTHON_PTY_RAN` and absence of `BIBCODE_PYTHON_PTY_SKIP` in the
+Require `CODDY_STUDIO_PYTHON_PTY_RAN` and absence of `CODDY_STUDIO_PYTHON_PTY_SKIP` in the
 captured stdout. A skip is **unavailable evidence, not a pass**; record it and
 rerun on a host with Python.
 
@@ -243,7 +243,7 @@ distribution result separately, including failures.
 
 For release qualification, also use the packaged app to fetch from a disposable
 HTTPS repository on each target distribution, both through Git Manager and a
-BiBCode terminal (`git ls-remote origin HEAD`). Confirm the terminal resolves
+Coddy Studio terminal (`git ls-remote origin HEAD`). Confirm the terminal resolves
 `xdg-open` and `xdg-mime` to host copies, then run
 `python3 -c 'print("ok")'` and require exit zero and `ok` output. Confirm a
 configured Claude Code status line whose script invokes Python renders normally.
@@ -279,14 +279,14 @@ its supported extraction fallback for testing.
 Build and run packaged E2E with:
 
 ```sh
-export BIBCODE_E2E_PLATFORM=linux
+export CODDY_STUDIO_E2E_PLATFORM=linux
 vp run test:ui:desktop:build
-export BIBCODE_E2E_APP_PATH="$(find "$PWD/target/$(rustc -vV | sed -n 's/^host: //p')/release/bundle/appimage" -maxdepth 1 -name '*.AppImage' -print -quit)"
-test -n "$BIBCODE_E2E_APP_PATH"
-WAYLAND_DISPLAY=bibcode-no-wayland xvfb-run --auto-servernum vp run test:ui:desktop
+export CODDY_STUDIO_E2E_APP_PATH="$(find "$PWD/target/$(rustc -vV | sed -n 's/^host: //p')/release/bundle/appimage" -maxdepth 1 -name '*.AppImage' -print -quit)"
+test -n "$CODDY_STUDIO_E2E_APP_PATH"
+WAYLAND_DISPLAY=coddy-studio-no-wayland xvfb-run --auto-servernum vp run test:ui:desktop
 ```
 
-When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+When the run ends, the artifact directory (`CODDY_STUDIO_E2E_ARTIFACT_DIR`) also holds
 `app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
 page-load lifecycle and webview process failures, next to the screenshots and
 WebdriverIO logs.
@@ -296,34 +296,34 @@ The packaged AppImage prefers the Wayland backend, and libwayland connects to
 with a live Wayland session the app would therefore open on the real desktop
 instead of Xvfb, and document reloads fail the suite. Pointing
 `WAYLAND_DISPLAY` at a socket that does not exist makes the Wayland connection
-fail and exercises the X11 fallback inside Xvfb; `BIBCODE_GDK_BACKEND=x11`
+fail and exercises the X11 fallback inside Xvfb; `CODDY_STUDIO_GDK_BACKEND=x11`
 is the alternative and skips the fallback path.
 
-`BIBCODE_E2E_APP_PATH` deliberately selects the AppImage produced by the E2E
+`CODDY_STUDIO_E2E_APP_PATH` deliberately selects the AppImage produced by the E2E
 build in the current worktree, not an installed production copy. The E2E build
 always passes the host target triple to Tauri, so the bundle lands under
 `target/<host triple>/release/bundle/appimage/`, not `target/release/`.
 
 Use the direct E2E command instead of Xvfb when a verified interactive display
-is required and available. Isolate BiBCode application data and XDG config,
+is required and available. Isolate Coddy Studio application data and XDG config,
 cache, and data roots for the test process without changing the parent shell or
 user profile globally.
 
-With that isolated instance running from the absolute `BIBCODE_E2E_APP_PATH`
-on a FUSE-capable test host, perform an update relaunch or **Restart BiBCode**.
+With that isolated instance running from the absolute `CODDY_STUDIO_E2E_APP_PATH`
+on a FUSE-capable test host, perform an update relaunch or **Restart Coddy Studio**.
 Once the replacement window is ready, require exactly one `.mount_` entry for
 this AppImage in `/proc/mounts` and one AppImage runtime process. Use a host
-where this is the only running BiBCode AppImage; the runtime's mount prefix uses
+where this is the only running Coddy Studio AppImage; the runtime's mount prefix uses
 the first six characters of the artifact name. Both checks below must exit zero
 and print exactly one entry; extraction mode cannot supply this FUSE evidence.
 
 ```sh
-appimage_mount_prefix="/.mount_$(basename "$BIBCODE_E2E_APP_PATH" | cut -c1-6)"
+appimage_mount_prefix="/.mount_$(basename "$CODDY_STUDIO_E2E_APP_PATH" | cut -c1-6)"
 awk -v prefix="$appimage_mount_prefix" '
   index($2, prefix) { print; mounts++ }
   END { exit (mounts != 1) }
 ' /proc/mounts &&
-  ps -ww -eo pid=,args= | awk -v appimage="$BIBCODE_E2E_APP_PATH" '
+  ps -ww -eo pid=,args= | awk -v appimage="$CODDY_STUDIO_E2E_APP_PATH" '
     { pid = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "") }
     $0 == appimage || index($0, appimage " ") == 1 { print pid, $0; runtimes++ }
     END { exit (runtimes != 1) }
@@ -337,7 +337,7 @@ manual development check beside an installed app, choose a separate Tauri
 identifier: Linux single-instance ownership is keyed by the identifier, so a
 second launch with the production identifier can exit successfully without
 opening a test window. An identifier alone does not isolate the backend data;
-also set a disposable `BIBCODE_HOME` and XDG config, cache, and data roots for
+also set a disposable `CODDY_STUDIO_HOME` and XDG config, cache, and data roots for
 every test process.
 
 With the isolated development graph already running, invoke Tauri from
@@ -367,7 +367,7 @@ do not change the user's desktop settings to make a harness reproduce it.
 Inspect an extracted copy of the built AppImage: no `libwayland-client.so*`
 files or symlinks may remain under `usr/lib*`, and
 `apprun-hooks/linuxdeploy-plugin-gtk.sh` must contain exactly one
-`export GDK_BACKEND="${BIBCODE_GDK_BACKEND:-wayland,x11}"` line. The hook must
+`export GDK_BACKEND="${CODDY_STUDIO_GDK_BACKEND:-wayland,x11}"` line. The hook must
 contain no `gsettings get org.gnome.desktop.interface gtk-theme` line, no
 `APPIMAGE_GTK_THEME="${APPIMAGE_GTK_THEME:-` default, and no unconditional
 `export GTK_THEME=` line. Require exactly one conditional override:
@@ -376,21 +376,21 @@ contain no `gsettings get org.gnome.desktop.interface gtk-theme` line, no
 if [ -n "${APPIMAGE_GTK_THEME:-}" ]; then export GTK_THEME="$APPIMAGE_GTK_THEME"; fi
 ```
 
-Record the backend actually used by the packaged BiBCode window, alongside the
+Record the backend actually used by the packaged Coddy Studio window, alongside the
 desktop session, monitor scale, `GDK_SCALE`, `GDK_DPI_SCALE`, and any
-`BIBCODE_GDK_BACKEND` override:
+`CODDY_STUDIO_GDK_BACKEND` override:
 
-- On Hyprland, capture `hyprctl clients -j` and identify BiBCode by its PID,
+- On Hyprland, capture `hyprctl clients -j` and identify Coddy Studio by its PID,
   class, and title. Its `xwayland` field must be `false` for native Wayland and
   `true` for Xwayland. Record monitor scaling with `hyprctl monitors -j`.
 - Elsewhere, record `WAYLAND_DISPLAY` and `DISPLAY`, then use
-  `xprop WM_CLASS _NET_WM_PID` to identify an X11 BiBCode window (Xwayland on a
+  `xprop WM_CLASS _NET_WM_PID` to identify an X11 Coddy Studio window (Xwayland on a
   Wayland session). For native Wayland, use the compositor's window inspector
   to confirm the app's backend. `WAYLAND_DISPLAY` alone only shows that Wayland
-  is available; it does not prove BiBCode used it. If the backend cannot be
+  is available; it does not prove Coddy Studio used it. If the backend cannot be
   established, record that evidence as unavailable.
 
-On Hyprland/Omarchy, launch with `BIBCODE_GDK_BACKEND` unset at a fractional
+On Hyprland/Omarchy, launch with `CODDY_STUDIO_GDK_BACKEND` unset at a fractional
 monitor scale such as 1.5×. Verify native Wayland and capture normal and minimum
 window sizes: text and controls must no longer render about 1.33× too large.
 Record the compositor's Xwayland scaling configuration, including
@@ -400,7 +400,7 @@ Close the test instance and repeat with the override, using the same isolated
 application and XDG roots:
 
 ```sh
-BIBCODE_GDK_BACKEND=x11 /absolute/path/to/BiBCode.AppImage
+CODDY_STUDIO_GDK_BACKEND=x11 /absolute/path/to/Coddy Studio.AppImage
 ```
 
 Confirm X11/Xwayland through the window evidence above; the override restores
@@ -411,11 +411,11 @@ separately; Xvfb evidence alone does not validate native Wayland scaling.
 
 #### Preview child webview geometry
 
-The BiBCode browser is a child webview placed over the right panel. Run this
-check in both the native Wayland launch and the `BIBCODE_GDK_BACKEND=x11`
+The Coddy Studio browser is a child webview placed over the right panel. Run this
+check in both the native Wayland launch and the `CODDY_STUDIO_GDK_BACKEND=x11`
 launch above, at the fractional scale. In a thread, serve a page in its
 terminal (`python3 -m http.server 8123 --bind 127.0.0.1`), open
-`http://localhost:8123/` in the BiBCode browser, then:
+`http://localhost:8123/` in the Coddy Studio browser, then:
 
 - resize the window, including to its minimum size and back;
 - drag the split between the conversation and the right panel both ways;
@@ -435,13 +435,13 @@ The placement itself is covered by an ignored unit test that needs a display;
 run it per backend before the manual steps:
 
 ```sh
-GDK_BACKEND=wayland cargo test -p bibcode-desktop --lib preview_child_follows -- --ignored --test-threads=1
-GDK_BACKEND=x11 cargo test -p bibcode-desktop --lib preview_child_follows -- --ignored --test-threads=1
+GDK_BACKEND=wayland cargo test -p coddy-studio-desktop --lib preview_child_follows -- --ignored --test-threads=1
+GDK_BACKEND=x11 cargo test -p coddy-studio-desktop --lib preview_child_follows -- --ignored --test-threads=1
 ```
 
 #### Preview tunnels
 
-On Linux, a remote environment (LAN, SSH, or BiBCode Connect) whose server
+On Linux, a remote environment (LAN, SSH, or Coddy Connect) whose server
 advertises `previewTunnels` previews its loopback dev servers through
 [preview tunnels](../architecture/remote.md#preview-tunnels), not the gateway.
 Run [Preview tunnels over SSH](ssh-environments.md#preview-tunnels-over-ssh-linux-desktop)
@@ -585,10 +585,10 @@ verify:
   list and environment rail show that alias after reconnecting and restarting
   the app. Blank aliases use the pairing code's server name; failed pairing
   preserves the alias for retry. The remote server's own name remains unchanged;
-- Add a headless web-mode `bibcode serve` server without an alias (pairing code
+- Add a headless web-mode `coddy-studio serve` server without an alias (pairing code
   or **Advanced: manual endpoint and token**) and confirm its name is the
   machine's hostname, with "Local" only if no usable hostname is reported.
-  `bibcode start`, bare `bibcode`, and desktop-owned backends keep "Local".
+  `coddy-studio start`, bare `coddy-studio`, and desktop-owned backends keep "Local".
   Select this server in the rail, then open **Settings → Remote Servers**.
   Choose **Rename…** from its **⋯** menu: the dialog is prefilled, refuses a
   blank name with **Enter a name for this server.**, and Enter in the name field
@@ -606,16 +606,16 @@ verify:
   the new alias. Repeat with a liveness timeout. Storage-identity errors still
   use the server's reported name;
 - With that renamed test server connected, check a stalled connection on a
-  Linux remote host: use `pgrep -f "bibcode serve"` or the process list to find
+  Linux remote host: use `pgrep -f "coddy-studio serve"` or the process list to find
   the test server's PID, then run `kill -STOP <pid>` on that host. Hover the
   Settings row's status dot and wait for
   `No data from <saved name> for 30 seconds. The connection is too slow or was lost. Reconnecting…`,
   followed by
-  `Remote environment endpoint <base URL>/.well-known/bibcode/environment timed out after 10000ms. Reconnecting…`
+  `Remote environment endpoint <base URL>/.well-known/coddy-studio/environment timed out after 10000ms. Reconnecting…`
   with the test server's endpoint URL. The disconnect reason uses the saved
   name (**Edge box**) and appears 27–33 seconds after the last data from the
   stopped server, when the client's liveness timeout closes the socket with
-  code 4408. Keep BiBCode visible and focused for the whole stall: the
+  code 4408. Keep Coddy Studio visible and focused for the whole stall: the
   disconnect then appears before a health-check message can become visible. If
   the window is restored from hidden or minimized during the stall, the
   application-active health check can report
@@ -663,24 +663,24 @@ verify:
   Linux firewall management remains explicitly operator-owned. The local-machine
   flow still has no Host selector; remote targeting is driven by the environment
   rail;
-- Headless pairing: on a second machine or VM run `bibcode serve --host
+- Headless pairing: on a second machine or VM run `coddy-studio serve --host
   <routable address>`, confirm the startup line contains `pairingCode`, and add it
   through **Add Server → Pairing code**. Confirm the saved server appears
   alongside — not in place of — the app's own **Local** environment, since both
-  hosts declare the environment id `local`. Mint a second offer with `bibcode
+  hosts declare the environment id `local`. Mint a second offer with `coddy-studio
   pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   it by name ("<label> is already saved."): two offers describe one environment.
   Then restart the headless server and confirm the saved server reconnects
   without re-pairing.
-- Headless service: on the second machine run `bibcode service install --host
-  <routable address>`, confirm `bibcode service status` reports `active`,
+- Headless service: on the second machine run `coddy-studio service install --host
+  <routable address>`, confirm `coddy-studio service status` reports `active`,
   reboot that machine, and confirm the desktop's saved server reconnects
   without re-pairing. On Linux confirm `loginctl show-user $USER` reports
   `Linger=yes`; on macOS confirm automatic login is enabled; on Windows confirm
-  the `BiBCode Server` task shows `Running` after logon. Finish with
-  `bibcode service uninstall` and confirm the definition is gone.
-- Remote server updates: with a second BiBCode server saved (headless
-  `bibcode serve` is sufficient), open Remote Servers settings, run **Check for
+  the `Coddy Studio Server` task shows `Running` after logon. Finish with
+  `coddy-studio service uninstall` and confirm the definition is gone.
+- Remote server updates: with a second Coddy Studio server saved (headless
+  `coddy-studio serve` is sufficient), open Remote Servers settings, run **Check for
   Server Updates**, and confirm each saved server row shows an update badge
   (**Manual updates** for a headless server) and a manual-instructions block
   with a copy button. An offline server must not block the rest of the batch and
@@ -708,7 +708,7 @@ verify:
   For the CI AppImage remote-install lane, use its isolated filename prefix:
   `/proc/mounts` must contain exactly one corresponding `.mount_` entry after
   restart, and the recorded runtime process count must be one. Count and stop
-  only processes whose current environment has that lane's exact `BIBCODE_HOME`.
+  only processes whose current environment has that lane's exact `CODDY_STUDIO_HOME`.
 
 - seed an incompatible newer connection IndexedDB version and confirm the
   boot-level recovery dialog lists the deleted data classes, keeps **Reload** as
@@ -721,7 +721,7 @@ verify:
   Reject a target containing username/password, and confirm legacy `code` query
   parameters are removed from both `/pair` and Remote Servers history after
   being retained for the current attempt;
-- from the OS, opening a well-formed `bibcode://pair?code=...` link while the
+- from the OS, opening a well-formed `coddy-studio://pair?code=...` link while the
   packaged app is running focuses that instance and lands on Add Server with
   the code prefilled;
 - provider settings and action menus show Claude, Codex, Cursor, and OpenCode
@@ -779,22 +779,22 @@ Use `--arch arm64` on an ARM64 host. The wrapper's post-bundle check must pass:
 it extracts the AppImage with `--appimage-extract` and fails unless the bundled
 binary has the stripped binary's build ID and symbol table. Record its output.
 The symbol store is `target/<triple>/release/symbols`, and the archive
-`bibcode-desktop-symbols-<version>-linux-<x86_64|aarch64>.zip` lands beside the
+`coddy-studio-desktop-symbols-<version>-linux-<x86_64|aarch64>.zip` lands beside the
 AppImage under `release/desktop/`.
 
-- **Executable.** Run the AppImage with `BIBCODE_HOME` set, and pass the
-  profiler commands to it: `BIBCODE_HOME=<root> <AppImage> profiler status --json`.
+- **Executable.** Run the AppImage with `CODDY_STUDIO_HOME` set, and pass the
+  profiler commands to it: `CODDY_STUDIO_HOME=<root> <AppImage> profiler status --json`.
   Without FUSE, put `--appimage-extract-and-run` before the arguments. The
   desktop process is the parent of the `--crash-monitor` process; use only a
-  host where this is the only running BiBCode AppImage.
+  host where this is the only running Coddy Studio AppImage.
 - **Capabilities.** `nativeDumps` is `available` unless
   `/proc/sys/kernel/yama/ptrace_scope` is 3, or 2 without `CAP_SYS_PTRACE`.
   `osCrashRecords` is `available` when `/proc/sys/kernel/core_pattern` pipes to
   systemd-coredump. Record both files. While the profiler is on,
-  `ls -la "$XDG_RUNTIME_DIR"/bibcode-$(id -u)-*` (or the same under `/tmp`
+  `ls -la "$XDG_RUNTIME_DIR"/coddy-studio-$(id -u)-*` (or the same under `/tmp`
   without `XDG_RUNTIME_DIR`) shows one directory with mode `drwx------` holding
   a `srw-------` `monitor.sock`; it is gone once the profiler is off.
-- **Crash.** Use `BIBCODE_PROFILER_CRASH_TEST=1 BIBCODE_HOME=<root> <AppImage>`,
+- **Crash.** Use `CODDY_STUDIO_PROFILER_CRASH_TEST=1 CODDY_STUDIO_HOME=<root> <AppImage>`,
   or `kill -SEGV <desktop pid>` while the app runs: on Linux the hook also
   handles a signal sent by another process, then re-raises it. After the
   restart, `coredumpctl list` shows the crash, and its frames may join the

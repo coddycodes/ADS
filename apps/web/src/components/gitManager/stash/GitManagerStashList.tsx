@@ -4,7 +4,7 @@ import type {
   GitManagerChangedFile,
   GitManagerStashEntry,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { LegendList } from "@legendapp/list/react";
 import { ArchiveRestoreIcon, PackageOpenIcon, Trash2Icon } from "lucide-react";
 import { memo, useCallback, useMemo, useState } from "react";

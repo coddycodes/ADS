@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-pub(crate) const WINDOWS_CONSOLE_THEME_ENV: &str = "BIBCODE_WINDOWS_CONSOLE_THEME";
+pub(crate) const WINDOWS_CONSOLE_THEME_ENV: &str = "CODDY_STUDIO_WINDOWS_CONSOLE_THEME";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]

@@ -1,8 +1,12 @@
-use bibcode_server::diagnostics::{DesktopUiProcessObserver, UnavailableDesktopUiProcessObserver};
+use coddy_studio_server::diagnostics::{
+    DesktopUiProcessObserver, UnavailableDesktopUiProcessObserver,
+};
 #[cfg(unix)]
-use bibcode_server::process::isolate_appimage_environment;
-use bibcode_server::process::{configure_background_command, configure_background_std_command};
-use bibcode_server::{
+use coddy_studio_server::process::isolate_appimage_environment;
+use coddy_studio_server::process::{
+    configure_background_command, configure_background_std_command,
+};
+use coddy_studio_server::{
     DESKTOP_SHUTDOWN_PATH as SERVER_BACKEND_SHUTDOWN_PATH,
     DESKTOP_SHUTDOWN_TOKEN_HEADER as SERVER_BACKEND_SHUTDOWN_TOKEN_HEADER, DataRootRequest,
     DataRootSource, ResolvedDataRoot, ServerConfig, ServerError, ServerRuntime,
@@ -48,9 +52,9 @@ const MAX_TCP_PORT: u16 = u16::MAX;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS: [&str; 3] = ["127.0.0.1", "0.0.0.0", "::"];
 pub const BACKEND_READY_EVENT: &str = "desktop:backend-ready";
 pub const PROJECT_DATA_STATUS_CHANGED_EVENT: &str = "desktop:project-data-status-changed";
-const WSL_SERVER_BINARY_ENV: &str = "BIBCODE_WSL_SERVER_BINARY";
+const WSL_SERVER_BINARY_ENV: &str = "CODDY_STUDIO_WSL_SERVER_BINARY";
 const DESKTOP_SETTINGS_FILE_NAME: &str = "desktop-settings.json";
-const BACKEND_READINESS_PATH: &str = "/.well-known/bibcode/environment";
+const BACKEND_READINESS_PATH: &str = "/.well-known/coddy-studio/environment";
 const DEFAULT_BACKEND_READINESS_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_BACKEND_READINESS_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -255,7 +259,7 @@ impl BackendLaunchPlan {
             "port": config.port,
             "host": &config.bind_host,
             "desktopBootstrapToken": &config.desktop_bootstrap_token,
-            "bibcodeHome": &input.data_root,
+            "coddyStudioHome": &input.data_root,
             "wslTransport": true,
             "tailscaleServeEnabled": false,
             "tailscaleServePort": TAILSCALE_SERVE_PORT,
@@ -366,7 +370,9 @@ impl std::fmt::Debug for ManagedBackendChild {
 
 /// The runtime's maintenance owner stays off the comparable launch configuration.
 #[derive(Clone)]
-pub(crate) struct InProcessUpdateMaintenance(pub(crate) Arc<bibcode_server::UpdateMaintenance>);
+pub(crate) struct InProcessUpdateMaintenance(
+    pub(crate) Arc<coddy_studio_server::UpdateMaintenance>,
+);
 
 impl std::fmt::Debug for InProcessUpdateMaintenance {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -380,7 +386,7 @@ impl std::fmt::Debug for InProcessUpdateMaintenance {
 struct ManagedBackendRuntime {
     run_id: u64,
     // Supervisor slots can outlive their runtime; update snapshots retain strong owners.
-    update_maintenance: Option<Weak<bibcode_server::UpdateMaintenance>>,
+    update_maintenance: Option<Weak<coddy_studio_server::UpdateMaintenance>>,
     stop_requested: Arc<AtomicBool>,
     shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     completion: Arc<Notify>,
@@ -390,7 +396,7 @@ struct ManagedBackendRuntime {
 }
 
 impl ManagedBackendRuntime {
-    fn new(run_id: u64, handle: bibcode_server::ServerHandle) -> Self {
+    fn new(run_id: u64, handle: coddy_studio_server::ServerHandle) -> Self {
         let update_maintenance = handle
             .update_maintenance()
             .map(|maintenance| Arc::downgrade(&maintenance));
@@ -592,7 +598,7 @@ struct SystemBackendPortResolver;
 
 impl BackendPortResolver for SystemBackendPortResolver {
     fn port(&self) -> u16 {
-        crate::config::bibcode_env_var("BIBCODE_PORT")
+        crate::config::coddy_studio_env_var("CODDY_STUDIO_PORT")
             .and_then(|value| value.into_string().ok())
             .and_then(|value| value.parse::<u16>().ok())
             .or_else(select_desktop_backend_port)
@@ -611,7 +617,7 @@ impl WslCommandResolver for SystemWslCommandResolver {
 
     fn server_binary_candidates(&self) -> Result<Vec<PathBuf>, String> {
         let mut candidates = Vec::new();
-        if let Some(path) = crate::config::bibcode_env_var(WSL_SERVER_BINARY_ENV)
+        if let Some(path) = crate::config::coddy_studio_env_var(WSL_SERVER_BINARY_ENV)
             && !path.is_empty()
         {
             candidates.push(PathBuf::from(path));
@@ -622,7 +628,7 @@ impl WslCommandResolver for SystemWslCommandResolver {
         let target_root = current_dir.join("target");
         for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
             for profile in ["debug", "release"] {
-                candidates.push(target_root.join(triple).join(profile).join("bibcode"));
+                candidates.push(target_root.join(triple).join(profile).join("coddy-studio"));
             }
         }
         Ok(candidates)
@@ -638,8 +644,9 @@ pub struct BackendSupervisor {
     recovery_listener: Arc<Mutex<Option<BackendRecoveryListener>>>,
     ui_process_observer: Arc<Mutex<Option<Arc<dyn DesktopUiProcessObserver>>>>,
     remote_update_delegate:
-        Arc<Mutex<Option<Arc<dyn bibcode_server::remote_update::RemoteUpdateDelegate>>>>,
-    remote_update_support: Arc<Mutex<Option<bibcode_server::remote_update::RemoteUpdateSupport>>>,
+        Arc<Mutex<Option<Arc<dyn coddy_studio_server::remote_update::RemoteUpdateDelegate>>>>,
+    remote_update_support:
+        Arc<Mutex<Option<coddy_studio_server::remote_update::RemoteUpdateSupport>>>,
     backend_port_resolver: Arc<dyn BackendPortResolver>,
     wsl_command_resolver: Arc<dyn WslCommandResolver>,
     #[cfg(test)]
@@ -718,7 +725,7 @@ impl BackendUpdateSnapshot {
     pub(crate) fn in_process_maintenance(
         &self,
         environment_id: &str,
-    ) -> Option<Arc<bibcode_server::UpdateMaintenance>> {
+    ) -> Option<Arc<coddy_studio_server::UpdateMaintenance>> {
         self.in_process_maintenance
             .get(environment_id)
             .map(|owner| owner.0.clone())
@@ -1151,8 +1158,8 @@ impl BackendSupervisor {
 
     pub fn install_remote_update_integration(
         &self,
-        delegate: Arc<dyn bibcode_server::remote_update::RemoteUpdateDelegate>,
-        support: bibcode_server::remote_update::RemoteUpdateSupport,
+        delegate: Arc<dyn coddy_studio_server::remote_update::RemoteUpdateDelegate>,
+        support: coddy_studio_server::remote_update::RemoteUpdateSupport,
     ) {
         *self.remote_update_delegate.lock().expect("delegate slot") = Some(delegate);
         *self.remote_update_support.lock().expect("support slot") = Some(support);
@@ -1382,7 +1389,7 @@ impl BackendSupervisor {
             if let Err(error) = self.start_default_plan(plan.clone(), held_ports).await {
                 self.record_plan_error(&plan, error.clone());
                 tracing::warn!(
-                    target: "bibcode_desktop_tauri::backend",
+                    target: "coddy_studio_desktop_tauri::backend",
                     environment_id = plan.config.environment_id,
                     "secondary desktop backend launch failed: {error}"
                 );
@@ -1915,7 +1922,7 @@ impl BackendSupervisor {
 
         self.publish_recovery_change();
         tracing::warn!(
-            target: "bibcode_desktop_tauri::backend",
+            target: "coddy_studio_desktop_tauri::backend",
             "desktop backend restart attempt {attempt} scheduled after {delay:?}"
         );
 
@@ -2046,12 +2053,12 @@ async fn wait_for_termination_signal() {
     if terminate.recv().await.is_none() {
         std::future::pending().await
     }
-    // A logout signals the whole session; the processes that die with BiBCode are not
+    // A logout signals the whole session; the processes that die with Coddy Studio are not
     // crashes.
-    bibcode_server::diagnostics::profiler::exits::note_terminating();
+    coddy_studio_server::diagnostics::profiler::exits::note_terminating();
     // A small synchronous write, read on the next start if this shutdown never finishes.
     let _ = tokio::task::spawn_blocking(|| {
-        bibcode_server::diagnostics::profiler::note_exit("signal", Some("SIGTERM"));
+        coddy_studio_server::diagnostics::profiler::note_exit("signal", Some("SIGTERM"));
     })
     .await;
 }
@@ -2080,7 +2087,7 @@ pub(crate) fn emit_project_data_status_changed<R: Runtime>(
         json!({ "environmentId": environment_id }),
     ) {
         tracing::warn!(
-            target: "bibcode_desktop_tauri::backend",
+            target: "coddy_studio_desktop_tauri::backend",
             environment_id,
             "desktop project-data status invalidation failed: Could not emit project-data status change: {error}"
         );
@@ -2091,8 +2098,10 @@ async fn start_managed_backend(
     plan: BackendLaunchPlan,
     readiness: BackendReadinessConfig,
     ui_process_observer: Arc<dyn DesktopUiProcessObserver>,
-    remote_update_delegate: Option<Arc<dyn bibcode_server::remote_update::RemoteUpdateDelegate>>,
-    remote_update_support: Option<bibcode_server::remote_update::RemoteUpdateSupport>,
+    remote_update_delegate: Option<
+        Arc<dyn coddy_studio_server::remote_update::RemoteUpdateDelegate>,
+    >,
+    remote_update_support: Option<coddy_studio_server::remote_update::RemoteUpdateSupport>,
     run_id: u64,
     listener_bind_retry: Option<Duration>,
 ) -> Result<(BackendRunConfig, ManagedBackend, Option<u32>), BackendStartFailure> {
@@ -2167,7 +2176,7 @@ async fn start_managed_backend(
             bootstrap_line,
             ..
         } => {
-            // BiBCode backend binaries need the AppImage's bundled libraries.
+            // Coddy Studio backend binaries need the AppImage's bundled libraries.
             // Keep this launch and the desktop/WebKitGTK environment intact;
             // the server isolates only its user-facing child commands.
             let mut command = Command::new(program);
@@ -2267,7 +2276,7 @@ fn server_config_for_launch(
         PathBuf::new(),
     );
     server_config.resolved_data_root = Some(data_root);
-    server_config.mode = bibcode_server::ServerMode::Desktop;
+    server_config.mode = coddy_studio_server::ServerMode::Desktop;
     server_config.no_browser = true;
     server_config.desktop_bootstrap_token = Some(config.desktop_bootstrap_token.clone());
     server_config.environment_id = config.environment_id.clone();
@@ -2586,17 +2595,17 @@ fn drain_output(
                 Ok(0) => break,
                 Ok(count) => {
                     let text = String::from_utf8_lossy(&buffer[..count]);
-                    tracing::debug!(target: "bibcode_desktop_tauri::backend", stream = stream_name, "{text}");
+                    tracing::debug!(target: "coddy_studio_desktop_tauri::backend", stream = stream_name, "{text}");
                     if let Some(file) = log_file.as_mut()
                         && let Err(error) =
                             write_backend_log_chunk(file, stream_name, &buffer[..count])
                     {
-                        tracing::debug!(target: "bibcode_desktop_tauri::backend", stream = stream_name, "backend output log write failed: {error}");
+                        tracing::debug!(target: "coddy_studio_desktop_tauri::backend", stream = stream_name, "backend output log write failed: {error}");
                         log_file = None;
                     }
                 }
                 Err(error) => {
-                    tracing::debug!(target: "bibcode_desktop_tauri::backend", stream = stream_name, "backend output drain failed: {error}");
+                    tracing::debug!(target: "coddy_studio_desktop_tauri::backend", stream = stream_name, "backend output drain failed: {error}");
                     break;
                 }
             }
@@ -2608,7 +2617,7 @@ fn open_backend_log_file(path: &Path) -> Option<fs::File> {
     if let Some(directory) = path.parent()
         && let Err(error) = fs::create_dir_all(directory)
     {
-        tracing::debug!(target: "bibcode_desktop_tauri::backend", "backend log directory creation failed: {error}");
+        tracing::debug!(target: "coddy_studio_desktop_tauri::backend", "backend log directory creation failed: {error}");
         return None;
     }
     fs::OpenOptions::new()
@@ -2616,7 +2625,7 @@ fn open_backend_log_file(path: &Path) -> Option<fs::File> {
         .append(true)
         .open(path)
         .map_err(|error| {
-            tracing::debug!(target: "bibcode_desktop_tauri::backend", "backend log file open failed: {error}");
+            tracing::debug!(target: "coddy_studio_desktop_tauri::backend", "backend log file open failed: {error}");
             error
         })
         .ok()
@@ -2758,7 +2767,7 @@ fn resolve_wsl_server_binary(
     }
 
     Err(format!(
-        "Could not find a Linux bibcode server binary for WSL. Set {WSL_SERVER_BINARY_ENV} or build one under target/<triple>/(debug|release)/bibcode."
+        "Could not find a Linux coddy-studio server binary for WSL. Set {WSL_SERVER_BINARY_ENV} or build one under target/<triple>/(debug|release)/coddy-studio."
     ))
 }
 
@@ -2777,7 +2786,7 @@ fn resolve_wsl_data_root(
     let environment = run_wsl_command(resolver, distro, &["env"])?;
     let value = environment
         .lines()
-        .find_map(|line| line.strip_prefix("BIBCODE_HOME="))
+        .find_map(|line| line.strip_prefix("CODDY_STUDIO_HOME="))
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .or_else(|| {
@@ -2785,9 +2794,9 @@ fn resolve_wsl_data_root(
                 .lines()
                 .find_map(|line| line.strip_prefix("HOME="))
                 .filter(|value| !value.is_empty())
-                .map(|home| format!("{}/.bibcode", home.trim_end_matches('/')))
+                .map(|home| format!("{}/.coddy/studio", home.trim_end_matches('/')))
         })
-        .ok_or_else(|| format!("WSL distro {distro} did not report BIBCODE_HOME or HOME."))?;
+        .ok_or_else(|| format!("WSL distro {distro} did not report CODDY_STUDIO_HOME or HOME."))?;
     if !value.starts_with('/') || value.contains('\r') || value.contains('\0') {
         return Err(format!(
             "WSL distro {distro} reported a project data root that is not an absolute Linux path."
@@ -2893,7 +2902,7 @@ where
             Ok(plan) => plans.push(plan),
             Err(error) => {
                 tracing::warn!(
-                    target: "bibcode_desktop_tauri::backend",
+                    target: "coddy_studio_desktop_tauri::backend",
                     "skipping secondary WSL backend launch planning: {error}"
                 );
                 unavailable_secondary = Some(configured_wsl_secondary_unavailable(settings, error));
@@ -3265,12 +3274,12 @@ pub(crate) fn recovery_test_supervisor(
 mod tests {
     use super::*;
     use crate::test_support::free_test_port;
-    use bibcode_server::diagnostics::{
+    use coddy_studio_server::diagnostics::{
         DesktopUiObservation, ProcessIdentity, UiCoverage, UiCoverageStatus,
     };
     #[cfg(unix)]
-    use bibcode_server::{DataRootRequest, resolve_data_root};
-    use bibcode_server::{DataRootSource, RpcExit, ServerMessage};
+    use coddy_studio_server::{DataRootRequest, resolve_data_root};
+    use coddy_studio_server::{DataRootSource, RpcExit, ServerMessage};
     use futures_util::{SinkExt, StreamExt};
     use std::{
         cell::Cell,
@@ -3376,8 +3385,12 @@ exec /bin/kill "$@"
         else {
             panic!("right resolver must produce a WSL process plan");
         };
-        assert!(left_args.iter().any(|arg| arg == "/left-wsl/bibcode"));
-        assert!(right_args.iter().any(|arg| arg == "/right-wsl/bibcode"));
+        assert!(left_args.iter().any(|arg| arg == "/left-wsl/coddy-studio"));
+        assert!(
+            right_args
+                .iter()
+                .any(|arg| arg == "/right-wsl/coddy-studio")
+        );
     }
 
     #[tokio::test]
@@ -3412,10 +3425,10 @@ exec /bin/kill "$@"
     impl TestWslCommandResolver {
         fn new(label: &str) -> Self {
             let root = tempfile::Builder::new()
-                .prefix(&format!("bibcode-desktop-wsl-{label}-"))
+                .prefix(&format!("coddy-studio-desktop-wsl-{label}-"))
                 .tempdir()
                 .expect("WSL resolver fixture directory should open");
-            let server_binary = root.path().join("bibcode");
+            let server_binary = root.path().join("coddy-studio");
             fs::write(&server_binary, b"fixture")
                 .expect("WSL resolver server fixture should write");
             #[cfg(unix)]
@@ -3435,7 +3448,7 @@ if [ "$2" = "Fail" ]; then
 fi
 if [ "$4" = "wslpath" ]; then
   if [ "$2" = "Empty" ]; then exit 0; fi
-  printf '/{label}/bibcode\n'
+  printf '/{label}/coddy-studio\n'
   exit 0
 fi
 if [ "$4" = "hostname" ]; then
@@ -3443,7 +3456,7 @@ if [ "$4" = "hostname" ]; then
   exit 0
 fi
 if [ "$4" = "env" ]; then
-  printf 'HOME=/home/bibcode-test\n'
+  printf 'HOME=/home/coddy-studio-test\n'
   exit 0
 fi
 exit 9
@@ -3472,7 +3485,7 @@ if "%2"=="Fail" (
 )
 if "%4"=="wslpath" (
   if "%2"=="Empty" exit /b 0
-  echo /{label}/bibcode
+  echo /{label}/coddy-studio
   exit /b 0
 )
 if "%4"=="hostname" (
@@ -3481,7 +3494,7 @@ if "%4"=="hostname" (
   exit /b 0
 )
 if "%4"=="env" (
-  echo HOME=/home/bibcode-test
+  echo HOME=/home/coddy-studio-test
   exit /b 0
 )
 exit /b 9
@@ -3536,7 +3549,7 @@ exit /b 9
     impl DesktopUiProcessObserver for MarkerDesktopUiProcessObserver {
         fn observe(
             &self,
-            _rows: Arc<[bibcode_server::diagnostics::ProcessRow]>,
+            _rows: Arc<[coddy_studio_server::diagnostics::ProcessRow]>,
             _server_identity: ProcessIdentity,
         ) -> Pin<Box<dyn std::future::Future<Output = DesktopUiObservation> + Send + '_>> {
             Box::pin(async {
@@ -3565,7 +3578,7 @@ exit /b 9
     impl DesktopUiProcessObserver for RecordingDesktopUiProcessObserver {
         fn observe(
             &self,
-            _rows: Arc<[bibcode_server::diagnostics::ProcessRow]>,
+            _rows: Arc<[coddy_studio_server::diagnostics::ProcessRow]>,
             _server_identity: ProcessIdentity,
         ) -> Pin<Box<dyn std::future::Future<Output = DesktopUiObservation> + Send + '_>> {
             self.observations.fetch_add(1, AtomicOrdering::SeqCst);
@@ -3820,7 +3833,7 @@ exit /b 9
 
     async fn start_test_server(
         base_dir: &Path,
-    ) -> (bibcode_server::ServerHandle, BackendRunConfig) {
+    ) -> (coddy_studio_server::ServerHandle, BackendRunConfig) {
         prepare_isolated_test_server_settings(base_dir)
             .expect("isolated desktop test settings should write");
         let mut config = local_test_config(0);
@@ -3839,7 +3852,7 @@ exit /b 9
 
     async fn start_rpc_test_server(
         base_dir: &Path,
-    ) -> (bibcode_server::ServerHandle, BackendRunConfig) {
+    ) -> (coddy_studio_server::ServerHandle, BackendRunConfig) {
         prepare_isolated_test_server_settings(base_dir)
             .expect("isolated desktop test settings should write");
         let mut config = local_test_config(0);
@@ -3858,7 +3871,7 @@ exit /b 9
 
     async fn start_wide_test_server(
         base_dir: &Path,
-    ) -> (bibcode_server::ServerHandle, BackendRunConfig) {
+    ) -> (coddy_studio_server::ServerHandle, BackendRunConfig) {
         prepare_isolated_test_server_settings(base_dir)
             .expect("isolated desktop test settings should write");
         let mut config = local_test_config(0);
@@ -3930,7 +3943,7 @@ exit /b 9
                 ("subject_token", config.desktop_bootstrap_token.as_str()),
                 (
                     "subject_token_type",
-                    "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                    "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
                 ),
                 (
                     "requested_token_type",
@@ -4703,7 +4716,7 @@ exit /b 9
         let temp = tempfile::tempdir().expect("isolated desktop data root");
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier = format!(
-            "com.bibcode.backend-bind-retry-tests-{}",
+            "com.coddy.studio.backend-bind-retry-tests-{}",
             std::process::id()
         );
         let app = mock_builder()
@@ -4804,22 +4817,24 @@ exit /b 9
     #[test]
     fn builds_local_server_launch_plan() {
         let config = local_test_config(3773);
-        let plan =
-            BackendLaunchPlan::local(PathBuf::from("C:/Users/mauro/.bibcode"), config.clone());
+        let plan = BackendLaunchPlan::local(
+            PathBuf::from("C:/Users/mauro/.coddy/studio"),
+            config.clone(),
+        );
 
         assert_eq!(plan.log_path, None);
         assert!(matches!(
             plan.target,
-            BackendLaunchTarget::InProcess { ref base_dir, .. } if base_dir == &PathBuf::from("C:/Users/mauro/.bibcode")
+            BackendLaunchTarget::InProcess { ref base_dir, .. } if base_dir == &PathBuf::from("C:/Users/mauro/.coddy/studio")
         ));
 
         let logged_plan = plan.with_log_path(PathBuf::from(
-            "C:/Users/mauro/.bibcode/dev/logs/server-child.log",
+            "C:/Users/mauro/.coddy/studio/dev/logs/server-child.log",
         ));
         assert_eq!(
             logged_plan.log_path,
             Some(PathBuf::from(
-                "C:/Users/mauro/.bibcode/dev/logs/server-child.log"
+                "C:/Users/mauro/.coddy/studio/dev/logs/server-child.log"
             ))
         );
     }
@@ -4830,8 +4845,8 @@ exit /b 9
         let server_config = server_config_for_launch(
             ResolvedDataRoot {
                 source: DataRootSource::Cli,
-                requested: PathBuf::from("C:/Users/mauro/.bibcode"),
-                effective: PathBuf::from("C:/Users/mauro/.bibcode"),
+                requested: PathBuf::from("C:/Users/mauro/.coddy/studio"),
+                effective: PathBuf::from("C:/Users/mauro/.coddy/studio"),
                 is_filesystem_alias: false,
             },
             &config,
@@ -4841,7 +4856,7 @@ exit /b 9
         assert_eq!(server_config.port, 3773);
         assert_eq!(
             server_config.base_dir,
-            PathBuf::from("C:/Users/mauro/.bibcode")
+            PathBuf::from("C:/Users/mauro/.coddy/studio")
         );
         assert_eq!(
             server_config.desktop_bootstrap_token.as_deref(),
@@ -4886,11 +4901,11 @@ exit /b 9
             port: 5050,
             renderer_host: "172.27.0.99".to_string(),
             desktop_bootstrap_token: "desktop-token".to_string(),
-            binary_path: "/tmp/bibcode's launch/bibcode".to_string(),
-            data_root: "/srv/bibcode data".to_string(),
+            binary_path: "/tmp/coddy-studio's launch/coddy-studio".to_string(),
+            data_root: "/srv/coddy-studio data".to_string(),
         })
         .with_log_path(PathBuf::from(
-            "C:/Users/mauro/.bibcode/dev/logs/server-child-wsl-Ubuntu.log",
+            "C:/Users/mauro/.coddy/studio/dev/logs/server-child-wsl-Ubuntu.log",
         ));
 
         assert_eq!(plan.config.environment_id, "wsl:Ubuntu");
@@ -4906,14 +4921,14 @@ exit /b 9
                 ref bootstrap_line,
                 ref data_root,
             } if program == "wsl.exe"
-                && data_root.as_deref() == Some("/srv/bibcode data")
+                && data_root.as_deref() == Some("/srv/coddy-studio data")
                 && args == &vec![
                     "-d".to_string(),
                     "Ubuntu".to_string(),
                     "--exec".to_string(),
                     "env".to_string(),
                     format!("PATH={WSL_SERVER_SYSTEM_PATH}"),
-                    "/tmp/bibcode's launch/bibcode".to_string(),
+                    "/tmp/coddy-studio's launch/coddy-studio".to_string(),
                     "serve".to_string(),
                     "--bootstrap-fd".to_string(),
                     "0".to_string(),
@@ -4925,7 +4940,7 @@ exit /b 9
                         "port": 5050,
                         "host": "0.0.0.0",
                         "desktopBootstrapToken": "desktop-token",
-                        "bibcodeHome": "/srv/bibcode data",
+                        "coddyStudioHome": "/srv/coddy-studio data",
                         "wslTransport": true,
                         "tailscaleServeEnabled": false,
                         "tailscaleServePort": 443,
@@ -4939,7 +4954,7 @@ exit /b 9
         assert_eq!(
             plan.log_path,
             Some(PathBuf::from(
-                "C:/Users/mauro/.bibcode/dev/logs/server-child-wsl-Ubuntu.log"
+                "C:/Users/mauro/.coddy/studio/dev/logs/server-child-wsl-Ubuntu.log"
             ))
         );
     }
@@ -4961,7 +4976,7 @@ exit /b 9
     fn local_environment_bootstraps_include_parallel_primary_and_wsl_slots() {
         let supervisor = BackendSupervisor::new();
         let primary = BackendLaunchPlan::local(
-            PathBuf::from("C:/Users/mauro/.bibcode"),
+            PathBuf::from("C:/Users/mauro/.coddy/studio"),
             local_test_config(3773),
         );
         let wsl = BackendLaunchPlan::wsl(WslBackendLaunchPlanInput {
@@ -4971,8 +4986,8 @@ exit /b 9
             port: 3774,
             renderer_host: "172.27.0.99".to_string(),
             desktop_bootstrap_token: "wsl-token".to_string(),
-            binary_path: "/home/test/bibcode".to_string(),
-            data_root: "/home/test/.bibcode".to_string(),
+            binary_path: "/home/test/coddy-studio".to_string(),
+            data_root: "/home/test/.coddy/studio".to_string(),
         });
 
         {
@@ -5009,7 +5024,7 @@ exit /b 9
     fn current_run_config_prefers_primary_slot_when_secondary_exists() {
         let supervisor = BackendSupervisor::new();
         let primary = BackendLaunchPlan::local(
-            PathBuf::from("C:/Users/mauro/.bibcode"),
+            PathBuf::from("C:/Users/mauro/.coddy/studio"),
             local_test_config(3773),
         );
         let wsl = BackendLaunchPlan::wsl(WslBackendLaunchPlanInput {
@@ -5019,8 +5034,8 @@ exit /b 9
             port: 3774,
             renderer_host: "172.27.0.99".to_string(),
             desktop_bootstrap_token: "wsl-token".to_string(),
-            binary_path: "/home/test/bibcode".to_string(),
-            data_root: "/home/test/.bibcode".to_string(),
+            binary_path: "/home/test/coddy-studio".to_string(),
+            data_root: "/home/test/.coddy/studio".to_string(),
         });
 
         {
@@ -5065,8 +5080,8 @@ exit /b 9
             port: 4_101,
             renderer_host: "172.20.0.2".to_string(),
             desktop_bootstrap_token: "secondary-token".to_string(),
-            binary_path: "/usr/local/bin/bibcode".to_string(),
-            data_root: "/home/test/.bibcode".to_string(),
+            binary_path: "/usr/local/bin/coddy-studio".to_string(),
+            data_root: "/home/test/.coddy/studio".to_string(),
         });
         {
             let mut state = supervisor
@@ -5141,8 +5156,8 @@ exit /b 9
             port: 4_301,
             renderer_host: "172.20.0.2".to_string(),
             desktop_bootstrap_token: "secondary-token".to_string(),
-            binary_path: "/usr/local/bin/bibcode".to_string(),
-            data_root: "/home/test/.bibcode".to_string(),
+            binary_path: "/usr/local/bin/coddy-studio".to_string(),
+            data_root: "/home/test/.coddy/studio".to_string(),
         });
         {
             let mut state = supervisor
@@ -5832,8 +5847,8 @@ exit /b 9
             Ok("Ubuntu".to_string())
         );
         assert_eq!(
-            resolve_wsl_path(&resolver, "Ubuntu", Path::new(r"C:\bibcode")),
-            Ok("/native-wsl/bibcode".to_string())
+            resolve_wsl_path(&resolver, "Ubuntu", Path::new(r"C:\coddy-studio")),
+            Ok("/native-wsl/coddy-studio".to_string())
         );
         assert_eq!(
             resolve_wsl_renderer_host(&resolver, "Ubuntu"),
@@ -5841,7 +5856,7 @@ exit /b 9
         );
         assert_eq!(
             resolve_wsl_server_binary(&resolver, "Ubuntu"),
-            Ok("/native-wsl/bibcode".to_string())
+            Ok("/native-wsl/coddy-studio".to_string())
         );
         let plan = resolve_wsl_launch_plan_for_distro(
             &resolver,
@@ -5866,7 +5881,7 @@ exit /b 9
         assert_eq!(primary.config.environment_id, PRIMARY_LOCAL_ENVIRONMENT_ID);
         assert_eq!(resolve_wsl_renderer_host(&resolver, "Invalid"), None);
         assert!(
-            resolve_wsl_path(&resolver, "Empty", Path::new(r"C:\bibcode"))
+            resolve_wsl_path(&resolver, "Empty", Path::new(r"C:\coddy-studio"))
                 .unwrap_err()
                 .contains("returned no Linux path")
         );
@@ -6081,8 +6096,8 @@ exit /b 9
             port: 3773,
             renderer_host: "172.27.0.1".to_string(),
             desktop_bootstrap_token: "desktop-token".to_string(),
-            binary_path: "/usr/local/bin/bibcode".to_string(),
-            data_root: "/home/test/.bibcode".to_string(),
+            binary_path: "/usr/local/bin/coddy-studio".to_string(),
+            data_root: "/home/test/.coddy/studio".to_string(),
         });
         let error = classify_primary_start_error(&plan, "WSL process exited before readiness")
             .expect("WSL primary startup failures must remain typed");
@@ -6362,7 +6377,7 @@ exit /b 9
         let test_data_root = temp.path().join("data-root");
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier =
-            format!("com.bibcode.backend-tests-{}", std::process::id());
+            format!("com.coddy.studio.backend-tests-{}", std::process::id());
         let app = mock_builder()
             .manage(IsolatedTestDataRoot::new(test_data_root.clone()))
             .build(context)
@@ -6433,7 +6448,7 @@ exit /b 9
         let test_data_root = temp.path().join("data-root");
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier = format!(
-            "com.bibcode.backend-project-data-failure-tests-{}",
+            "com.coddy.studio.backend-project-data-failure-tests-{}",
             std::process::id(),
         );
         let app = mock_builder()
@@ -6512,7 +6527,7 @@ exit /b 9
     #[test]
     fn writes_backend_log_chunks_with_stream_prefixes() {
         let path = std::env::temp_dir().join(format!(
-            "bibcode-tauri-backend-log-{}-{}.log",
+            "coddy-studio-tauri-backend-log-{}-{}.log",
             std::process::id(),
             Uuid::new_v4().simple()
         ));
@@ -6601,7 +6616,7 @@ exit /b 9
             let mut buffer = [0_u8; 1024];
             let count = stream.read(&mut buffer).expect("request should read");
             let request = String::from_utf8_lossy(&buffer[..count]);
-            assert!(request.starts_with("GET /.well-known/bibcode/environment "));
+            assert!(request.starts_with("GET /.well-known/coddy-studio/environment "));
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}")
                 .expect("response should write");
@@ -6637,7 +6652,7 @@ exit /b 9
                 Ok(expected)
             );
             let request = request.recv().expect("request should be captured");
-            assert!(request.starts_with("GET /.well-known/bibcode/environment HTTP/1.1"));
+            assert!(request.starts_with("GET /.well-known/coddy-studio/environment HTTP/1.1"));
             server.join().expect("server should finish");
         }
     }
@@ -6725,8 +6740,8 @@ exit /b 9
             .expect("soft shutdown should be requested");
 
         let request = receiver.recv().expect("request should be captured");
-        assert!(request.starts_with("POST /.well-known/bibcode/desktop/shutdown HTTP/1.1"));
-        assert!(request.contains("x-bibcode-desktop-bootstrap-token: desktop-token"));
+        assert!(request.starts_with("POST /.well-known/coddy-studio/desktop/shutdown HTTP/1.1"));
+        assert!(request.contains("x-coddy-studio-desktop-bootstrap-token: desktop-token"));
     }
 
     #[tokio::test]
@@ -6746,7 +6761,7 @@ exit /b 9
             request
                 .recv()
                 .expect("request should be captured")
-                .starts_with("POST /.well-known/bibcode/desktop/shutdown HTTP/1.1")
+                .starts_with("POST /.well-known/coddy-studio/desktop/shutdown HTTP/1.1")
         );
         server.join().expect("server should finish");
     }
@@ -6755,7 +6770,7 @@ exit /b 9
     async fn managed_backend_reports_process_spawn_and_local_bind_failures() {
         let missing = BackendLaunchPlan {
             target: BackendLaunchTarget::ExternalProcess {
-                program: format!("missing-bibcode-backend-{}", Uuid::new_v4().simple()),
+                program: format!("missing-coddy-studio-backend-{}", Uuid::new_v4().simple()),
                 args: Vec::new(),
                 bootstrap_line: "{}\n".to_string(),
                 data_root: None,
@@ -6941,7 +6956,7 @@ exit /b 9
 
         // Hold preparation at the real store lock until a progress poll arrives.
         let mut store_lock = Some(
-            bibcode_server::persistence::StoreOperationGuard::acquire(
+            coddy_studio_server::persistence::StoreOperationGuard::acquire(
                 temp.path(),
                 tokio_util::sync::CancellationToken::new(),
                 Duration::from_secs(2),
@@ -6987,7 +7002,7 @@ exit /b 9
         let (handle, config) = start_test_server(temp.path()).await;
         let maintenance = handle.update_maintenance().expect("in-process owner");
         let transport = UpdateProtectionTransport::InProcess(maintenance.clone());
-        let store_lock = bibcode_server::persistence::StoreOperationGuard::acquire(
+        let store_lock = coddy_studio_server::persistence::StoreOperationGuard::acquire(
             temp.path(),
             tokio_util::sync::CancellationToken::new(),
             Duration::from_secs(2),
@@ -7565,8 +7580,8 @@ $client.Dispose()
             .recv_timeout(Duration::from_secs(1))
             .expect("shutdown request should be captured")
             .to_ascii_lowercase();
-        assert!(shutdown.starts_with("post /.well-known/bibcode/desktop/shutdown http/1.1"));
-        assert!(shutdown.contains("x-bibcode-desktop-bootstrap-token: desktop-token"));
+        assert!(shutdown.starts_with("post /.well-known/coddy-studio/desktop/shutdown http/1.1"));
+        assert!(shutdown.contains("x-coddy-studio-desktop-bootstrap-token: desktop-token"));
         server.join().expect("test HTTP server should finish");
         bootstrap_server
             .join()
@@ -7698,10 +7713,10 @@ $client.Dispose()
             .server_binary_candidates()
             .expect("candidate discovery should work");
         for suffix in [
-            PathBuf::from("target/x86_64-unknown-linux-gnu/debug/bibcode"),
-            PathBuf::from("target/x86_64-unknown-linux-gnu/release/bibcode"),
-            PathBuf::from("target/aarch64-unknown-linux-gnu/debug/bibcode"),
-            PathBuf::from("target/aarch64-unknown-linux-gnu/release/bibcode"),
+            PathBuf::from("target/x86_64-unknown-linux-gnu/debug/coddy-studio"),
+            PathBuf::from("target/x86_64-unknown-linux-gnu/release/coddy-studio"),
+            PathBuf::from("target/aarch64-unknown-linux-gnu/debug/coddy-studio"),
+            PathBuf::from("target/aarch64-unknown-linux-gnu/release/coddy-studio"),
         ] {
             assert!(
                 candidates

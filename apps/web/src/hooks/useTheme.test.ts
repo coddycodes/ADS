@@ -30,10 +30,10 @@ function installThemeBrowser({
   stored = null,
   prefersDark = false,
 }: { stored?: string | null; prefersDark?: boolean } = {}) {
-  const browserWindow = new Window({ url: "https://bibcode.test/" });
+  const browserWindow = new Window({ url: "https://coddy.test/" });
   openWindows.push(browserWindow);
   const storage = createStorage();
-  if (stored !== null) storage.setItem("bibcode:theme", stored);
+  if (stored !== null) storage.setItem("coddy-studio:theme", stored);
   let matches = prefersDark;
   const mediaListeners = new Set<() => void>();
   const media = {
@@ -136,7 +136,7 @@ describe("theme failure handling", () => {
       expect(error).toBeInstanceOf(ThemeStorageError);
       expect(error).toMatchObject({
         operation: "read",
-        storageKey: "bibcode:theme",
+        storageKey: "coddy-studio:theme",
         cause: readCause,
       });
     }
@@ -148,7 +148,7 @@ describe("theme failure handling", () => {
       expect(error).toBeInstanceOf(ThemeStorageError);
       expect(error).toMatchObject({
         operation: "write",
-        storageKey: "bibcode:theme",
+        storageKey: "coddy-studio:theme",
         theme: "dark",
         cause: writeCause,
       });
@@ -175,10 +175,10 @@ describe("theme failure handling", () => {
     await expect(import("./useTheme")).resolves.toBeDefined();
 
     expect(errorLog).toHaveBeenCalledWith(
-      "Failed to read theme preference for bibcode:theme.",
+      "Failed to read theme preference for coddy-studio:theme.",
       expect.objectContaining({
         operation: "read",
-        storageKey: "bibcode:theme",
+        storageKey: "coddy-studio:theme",
         errorTag: "ThemeStorageError",
       }),
     );
@@ -233,7 +233,7 @@ describe("theme failure handling", () => {
     readSnapshot?.();
     expect(getItem).toHaveBeenCalledTimes(1);
 
-    storageHandler?.({ key: "bibcode:theme" } as StorageEvent);
+    storageHandler?.({ key: "coddy-studio:theme" } as StorageEvent);
     readSnapshot?.();
 
     expect(getItem).toHaveBeenCalledTimes(2);
@@ -290,17 +290,17 @@ describe("theme failure handling", () => {
     vi.stubGlobal("window", { localStorage: storage });
     const browserModule = await import("./useTheme");
     for (const theme of ["light", "dark", "system"] as const) {
-      storage.setItem("bibcode:theme", theme);
+      storage.setItem("coddy-studio:theme", theme);
       expect(browserModule.readThemePreference()).toBe(theme);
     }
-    storage.setItem("bibcode:theme", "invalid");
+    storage.setItem("coddy-studio:theme", "invalid");
     expect(browserModule.readThemePreference()).toBe("system");
     browserModule.writeThemePreference("light");
-    expect(storage.getItem("bibcode:theme")).toBe("light");
+    expect(storage.getItem("coddy-studio:theme")).toBe("light");
   });
 
   it("synchronizes browser chrome colors and reuses its dynamic meta tag", async () => {
-    const browserWindow = new Window({ url: "https://bibcode.test/" });
+    const browserWindow = new Window({ url: "https://coddy.test/" });
     const surface = browserWindow.document.createElement("main");
     surface.setAttribute("data-slot", "sidebar-inset");
     surface.style.backgroundColor = "rgb(12, 34, 56)";
@@ -360,12 +360,12 @@ describe("theme failure handling", () => {
 
     browser.switchOs(true);
     browser.fireStorage("unrelated");
-    browser.storage.setItem("bibcode:theme", "dark");
-    browser.fireStorage("bibcode:theme");
+    browser.storage.setItem("coddy-studio:theme", "dark");
+    browser.fireStorage("coddy-studio:theme");
     expect(emitCount).toBe(2);
 
     theme.setTheme("light");
-    expect(browser.storage.getItem("bibcode:theme")).toBe("light");
+    expect(browser.storage.getItem("coddy-studio:theme")).toBe("light");
     expect(browser.isDark()).toBe(false);
     expect(emitCount).toBe(3);
 
@@ -397,8 +397,8 @@ describe("theme failure handling", () => {
     theme.setTheme("dark");
 
     expect(errorLog).toHaveBeenCalledWith(
-      "Failed to write theme preference for bibcode:theme.",
-      expect.objectContaining({ operation: "write", storageKey: "bibcode:theme", theme: "dark" }),
+      "Failed to write theme preference for coddy-studio:theme.",
+      expect.objectContaining({ operation: "write", storageKey: "coddy-studio:theme", theme: "dark" }),
     );
   });
 });
@@ -439,8 +439,8 @@ describe("app-wide theme subscription", () => {
     const browser = installThemeBrowser();
     await import("./useTheme");
 
-    browser.storage.setItem("bibcode:theme", "dark");
-    browser.fireStorage("bibcode:theme");
+    browser.storage.setItem("coddy-studio:theme", "dark");
+    browser.fireStorage("coddy-studio:theme");
     expect(browser.isDark()).toBe(true);
   });
 

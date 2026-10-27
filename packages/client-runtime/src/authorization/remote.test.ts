@@ -5,7 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import { EnvironmentAuthInvalidError } from "@bibcode/contracts";
+import { EnvironmentAuthInvalidError } from "@coddy/contracts";
 import {
   bootstrapRemoteBearerSession,
   exchangeRemoteDpopAccessToken,
@@ -154,7 +154,7 @@ describe("remote environment authorization", () => {
         credential: "one-time-credential",
         dpopProof: "token-proof",
         clientMetadata: {
-          label: "BiBCode Desktop",
+          label: "Coddy Studio Desktop",
           deviceType: "desktop",
           os: "Windows",
         },
@@ -169,7 +169,7 @@ describe("remote environment authorization", () => {
         url: "https://remote.example.com/oauth/token",
         method: "POST",
         headers: { dpop: "token-proof", "content-type": "application/x-www-form-urlencoded" },
-        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=one-time-credential&subject_token_type=urn%3Abibcode%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=BiBCode+Desktop&client_device_type=desktop&client_os=Windows",
+        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=one-time-credential&subject_token_type=urn%3Abibcode%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=Coddy Studio+Desktop&client_device_type=desktop&client_os=Windows",
       });
       expectFetchCall(fetch.calls, 2, {
         url: "https://remote.example.com/api/auth/websocket-ticket",
@@ -202,7 +202,7 @@ describe("remote environment authorization", () => {
         httpBaseUrl: "https://remote.example.com/",
         credential: "pairing-token",
         clientMetadata: {
-          label: "BiBCode Desktop",
+          label: "Coddy Studio Desktop",
           deviceType: "desktop",
           os: "Windows",
         },
@@ -211,7 +211,7 @@ describe("remote environment authorization", () => {
       expectFetchCall(fetch.calls, 1, {
         url: "https://remote.example.com/oauth/token",
         method: "POST",
-        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=pairing-token&subject_token_type=urn%3Abibcode%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=BiBCode+Desktop&client_device_type=desktop&client_os=Windows",
+        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=pairing-token&subject_token_type=urn%3Abibcode%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=Coddy Studio+Desktop&client_device_type=desktop&client_os=Windows",
       });
     }),
   );
@@ -270,7 +270,7 @@ describe("remote environment authorization", () => {
               policy: "remote-reachable",
               bootstrapMethods: ["one-time-token"],
               sessionMethods: ["browser-session-cookie", "bearer-access-token"],
-              sessionCookieName: "bibcode_session",
+              sessionCookieName: "coddy_studio_session",
             },
             scopes: [
               "orchestration:read",
@@ -325,7 +325,7 @@ describe("remote environment authorization", () => {
       });
 
       expectFetchCall(fetch.calls, 1, {
-        url: "https://remote.example.com/.well-known/bibcode/environment",
+        url: "https://remote.example.com/.well-known/coddy-studio/environment",
         method: "GET",
       });
       expectFetchCall(fetch.calls, 2, {
@@ -354,7 +354,7 @@ describe("remote environment authorization", () => {
             policy: "remote-reachable",
             bootstrapMethods: ["one-time-token"],
             sessionMethods: ["dpop-access-token"],
-            sessionCookieName: "bibcode_session",
+            sessionCookieName: "coddy_studio_session",
           },
           sessionMethod: "dpop-access-token",
           scopes: [
@@ -398,7 +398,7 @@ describe("remote environment authorization", () => {
 
       expect(error).toBeInstanceOf(RemoteEnvironmentAuthTimeoutError);
       expect(error.message).toBe(
-        "Remote environment endpoint http://remote.example.com/.well-known/bibcode/environment timed out after 25ms.",
+        "Remote environment endpoint http://remote.example.com/.well-known/coddy-studio/environment timed out after 25ms.",
       );
     }).pipe(Effect.provide(TestClock.layer())),
   );

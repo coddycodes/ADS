@@ -1,4 +1,4 @@
-import type { PreviewRenderedViewportSize, PreviewViewportSetting } from "@bibcode/contracts";
+import type { PreviewRenderedViewportSize, PreviewViewportSetting } from "@coddy/contracts";
 
 import { browserViewportSettingKey } from "~/browser/browserViewportLayout";
 

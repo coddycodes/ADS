@@ -28,7 +28,7 @@ import {
   type ConnectionTarget,
   PrimaryConnectionTarget,
   SshConnectionTarget,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -50,9 +50,9 @@ import {
   ThreadId,
   TurnId,
   UploadError,
-} from "@bibcode/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { RpcClientError } from "effect/rpc";
@@ -61,7 +61,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/environment";
 
 const h = vi.hoisted(() => {
   return {
@@ -417,8 +417,8 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
   };
 });
 
-vi.mock("@bibcode/client-runtime/environment", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@bibcode/client-runtime/environment")>();
+vi.mock("@coddy/client-runtime/environment", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@coddy/client-runtime/environment")>();
   return {
     ...actual,
     scopedProjectKey: (ref: unknown) => {

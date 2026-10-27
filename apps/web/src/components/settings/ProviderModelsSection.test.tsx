@@ -15,7 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 const harness = vi.hoisted(() => {
   type Matcher = (initial: unknown) => boolean;
@@ -99,8 +99,8 @@ vi.mock("../../modelSelection", () => ({
   MAX_CUSTOM_MODEL_LENGTH: 256,
 }));
 
-vi.mock("@bibcode/shared/model", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@bibcode/shared/model")>();
+vi.mock("@coddy/shared/model", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@coddy/shared/model")>();
   return {
     ...actual,
     normalizeModelSlug: (value: string | null | undefined) => {

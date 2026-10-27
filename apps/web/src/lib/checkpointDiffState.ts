@@ -1,7 +1,7 @@
 import {
   type CheckpointDiffState,
   type CheckpointDiffTarget,
-} from "@bibcode/client-runtime/state/threads";
+} from "@coddy/client-runtime/state/threads";
 
 import { useCheckpointDiff as useCheckpointDiffQuery } from "../state/queries";
 

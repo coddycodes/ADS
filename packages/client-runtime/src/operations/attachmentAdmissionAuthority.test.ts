@@ -5,7 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   ORCHESTRATION_WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

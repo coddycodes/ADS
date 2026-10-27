@@ -294,13 +294,13 @@ it("reports invalid nested expression nodes on decode and encode", () => {
 
 it("constructs and round-trips keybindings config errors", () => {
   const error = new KeybindingsConfigError({
-    configPath: "/repo/.bibcode/keybindings.json",
+    configPath: "/repo/.coddy/studio/keybindings.json",
     detail: "invalid command",
   });
 
   assert.strictEqual(
     error.message,
-    "Unable to parse keybindings config at /repo/.bibcode/keybindings.json: invalid command",
+    "Unable to parse keybindings config at /repo/.coddy/studio/keybindings.json: invalid command",
   );
   const encoded = encodeConfigError(error);
   assert.strictEqual(decodeConfigError(encoded)._tag, "KeybindingsConfigParseError");

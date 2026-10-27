@@ -1,4 +1,4 @@
-use bibcode_server::production::orchestration_effects;
+use coddy_studio_server::production::orchestration_effects;
 
 use std::{
     path::{Path, PathBuf},
@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     git::{BoxWorktreeBaseDirectoryFuture, GitRepository, WorktreeBaseDirectoryProvider},
     orchestration::engine::{EngineOptions, OrchestrationCommand, OrchestrationEngine},
     persistence::{Database, OrchestrationEvent, run_migrations},
@@ -218,10 +218,13 @@ impl RealGitFixture {
 async fn initialize_repository() -> RealGitFixture {
     let directory = tempfile::tempdir().unwrap();
     git(directory.path(), &["init"]);
-    git(directory.path(), &["config", "user.name", "BiBCode Test"]);
     git(
         directory.path(),
-        &["config", "user.email", "bibcode@example.test"],
+        &["config", "user.name", "Coddy Studio Test"],
+    );
+    git(
+        directory.path(),
+        &["config", "user.email", "coddy-studio@example.test"],
     );
     std::fs::write(directory.path().join("tracked.txt"), "baseline\n").unwrap();
     git(directory.path(), &["add", "."]);
@@ -361,7 +364,7 @@ async fn bootstrap_admission_does_not_use_the_injected_workspace_before_delivery
                 },
                 "prepareWorktree":{
                     "projectCwd":source.path(), "baseBranch":"HEAD",
-                    "branch":"bibcode/workspace-test"
+                    "branch":"coddy-studio/workspace-test"
                 },
                 "runSetupScript":false
             },
@@ -424,7 +427,7 @@ async fn bootstrap_admission_persists_turn_without_running_prerequisites() {
                 },
                 "prepareWorktree":{
                     "projectCwd":repository.path(), "baseBranch":"HEAD",
-                    "branch":"bibcode/bootstrap-test"
+                    "branch":"coddy-studio/bootstrap-test"
                 },
                 "runSetupScript":true
             },
@@ -504,7 +507,7 @@ async fn bootstrap_admission_does_not_run_failing_setup_before_delivery() {
             },
             "prepareWorktree":{
                 "projectCwd":repository.path(), "baseBranch":"HEAD",
-                "branch":"bibcode/setup-failure-test"
+                "branch":"coddy-studio/setup-failure-test"
             },
             "runSetupScript":true
         },
@@ -534,11 +537,11 @@ async fn bootstrap_admission_does_not_run_failing_setup_before_delivery() {
         .unwrap();
     assert!(thread.deleted_at.is_none());
     let worktrees = git(repository.path(), &["worktree", "list", "--porcelain"]);
-    assert!(!worktrees.contains("bibcode/setup-failure-test"));
+    assert!(!worktrees.contains("coddy-studio/setup-failure-test"));
     assert!(
         git(
             repository.path(),
-            &["branch", "--list", "bibcode/setup-failure-test"]
+            &["branch", "--list", "coddy-studio/setup-failure-test"]
         )
         .is_empty()
     );
@@ -572,7 +575,7 @@ async fn bootstrap_admission_does_not_refresh_workspace_before_delivery() {
             },
             "prepareWorktree":{
                 "projectCwd":repository.path(), "baseBranch":"HEAD",
-                "branch":"bibcode/refresh-failure-test"
+                "branch":"coddy-studio/refresh-failure-test"
             }
         },
         "createdAt":NOW
@@ -584,11 +587,11 @@ async fn bootstrap_admission_does_not_refresh_workspace_before_delivery() {
         .await
         .expect("bootstrap is admitted");
     let worktrees = git(repository.path(), &["worktree", "list", "--porcelain"]);
-    assert!(!worktrees.contains("bibcode/refresh-failure-test"));
+    assert!(!worktrees.contains("coddy-studio/refresh-failure-test"));
     assert!(
         git(
             repository.path(),
-            &["branch", "--list", "bibcode/refresh-failure-test"]
+            &["branch", "--list", "coddy-studio/refresh-failure-test"]
         )
         .is_empty()
     );
@@ -628,7 +631,7 @@ async fn bootstrap_admission_does_not_fetch_origin_before_delivery() {
             },
             "prepareWorktree":{
                 "projectCwd":repository.path(), "baseBranch":"main",
-                "branch":"bibcode/fetch-failure-test", "startFromOrigin":true
+                "branch":"coddy-studio/fetch-failure-test", "startFromOrigin":true
             }
         },
         "createdAt":NOW
@@ -652,7 +655,7 @@ async fn bootstrap_admission_does_not_fetch_origin_before_delivery() {
     assert!(
         git(
             repository.path(),
-            &["branch", "--list", "bibcode/fetch-failure-test"]
+            &["branch", "--list", "coddy-studio/fetch-failure-test"]
         )
         .is_empty()
     );

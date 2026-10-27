@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { Globe, RadioTower } from "lucide-react";
 
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";

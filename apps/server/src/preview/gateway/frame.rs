@@ -1,4 +1,4 @@
-//! Lets BiBCode's own UI frame gateway previews and follow their navigation:
+//! Lets Coddy Studio's own UI frame gateway previews and follow their navigation:
 //! the framing policy, the bootstrap's UI origin, and the same-origin
 //! navigation reporter the gateway inserts into HTML pages.
 
@@ -7,39 +7,39 @@ use hyper::body::{Body, Bytes, Frame};
 use hyper::header::{CONTENT_SECURITY_POLICY, HeaderMap, HeaderValue, X_FRAME_OPTIONS};
 
 /// Same-origin path of the navigation reporter.
-pub const FRAME_SCRIPT_PATH: &str = "/__bibcode/frame.js";
+pub const FRAME_SCRIPT_PATH: &str = "/__coddy-studio/frame.js";
 
 /// `sessionStorage` key the bootstrap page stores the validated UI origin under.
-pub const UI_ORIGIN_STORAGE_KEY: &str = "bibcode-ui-origin";
+pub const UI_ORIGIN_STORAGE_KEY: &str = "coddy-studio-ui-origin";
 
 /// How far into an HTML response the gateway looks for `<head>`.
 const INJECT_SCAN_LIMIT: usize = 64 * 1024;
 
-const FRAME_SCRIPT_TAG: &[u8] = b"<script src=\"/__bibcode/frame.js\"></script>";
+const FRAME_SCRIPT_TAG: &[u8] = b"<script src=\"/__coddy-studio/frame.js\"></script>";
 
-/// Posts the frame's URL, title, and history state to the BiBCode UI that
+/// Posts the frame's URL, title, and history state to the Coddy Studio UI that
 /// framed it (the origin the bootstrap stored), obeys back/forward/reload
 /// commands from that origin only, sends links to other origins out of the
-/// frame (asking BiBCode to open the server's localhost ones), and keeps the
+/// frame (asking Coddy Studio to open the server's localhost ones), and keeps the
 /// reload keys to the frame. Does nothing when not framed.
 pub const FRAME_SCRIPT: &str = r#"(() => {
   "use strict";
-  // Only the frame BiBCode itself holds (BiBCode is always the top window): a
+  // Only the frame Coddy Studio itself holds (Coddy Studio is always the top window): a
   // page's own nested frames keep their links and keys, and their reports
   // would reach only that page.
   if (window.top === window || window.parent !== window.top) return;
   let uiOrigin = null;
-  try { uiOrigin = sessionStorage.getItem("bibcode-ui-origin"); } catch (_) {}
+  try { uiOrigin = sessionStorage.getItem("coddy-studio-ui-origin"); } catch (_) {}
   if (!uiOrigin) return;
   // Only the Navigation API traverses this frame's own history; `history` would
-  // move the whole tab, BiBCode included, so without it Back/Forward stay off.
+  // move the whole tab, Coddy Studio included, so without it Back/Forward stay off.
   const nav = window.navigation;
   let lastTitle = null;
   const report = () => {
     lastTitle = document.title;
     try {
       window.parent.postMessage({
-        type: "bibcode-preview-frame",
+        type: "coddy-studio-preview-frame",
         url: location.href,
         title: document.title,
         canGoBack: nav ? nav.canGoBack : false,
@@ -69,10 +69,10 @@ pub const FRAME_SCRIPT: &str = r#"(() => {
   };
   if (document.readyState === "loading") addEventListener("DOMContentLoaded", watchTitle);
   else watchTitle();
-  // A link to another origin leaves what BiBCode can follow (and another host
+  // A link to another origin leaves what Coddy Studio can follow (and another host
   // is blocked by the UI's framing policy). One to the server's localhost (the
   // app's own absolute link, or another dev server) means the server, not this
-  // computer, however it is opened: BiBCode opens it as a tab. A plain click to
+  // computer, however it is opened: Coddy Studio opens it as a tab. A plain click to
   // any other origin opens a new browser tab instead.
   const followLink = (event) => {
     if (event.defaultPrevented || (event.type === "auxclick" && event.button !== 1)) return;
@@ -83,7 +83,7 @@ pub const FRAME_SCRIPT: &str = r#"(() => {
     if (!/^https?:$/.test(url.protocol) || url.origin === location.origin) return;
     if (/^(localhost|.+\.localhost|127(\.\d+){3}|\[::1\]|0\.0\.0\.0|\[::\])$/.test(url.hostname)) {
       event.preventDefault();
-      try { window.parent.postMessage({ type: "bibcode-preview-open", url: url.href }, uiOrigin); } catch (_) {}
+      try { window.parent.postMessage({ type: "coddy-studio-preview-open", url: url.href }, uiOrigin); } catch (_) {}
       return;
     }
     if (event.type !== "click" || event.button !== 0) return;
@@ -94,7 +94,7 @@ pub const FRAME_SCRIPT: &str = r#"(() => {
   };
   addEventListener("click", followLink);
   addEventListener("auxclick", followLink);
-  // The browser's reload keys would reload BiBCode itself from inside the frame.
+  // The browser's reload keys would reload Coddy Studio itself from inside the frame.
   addEventListener("keydown", (event) => {
     const reloadKey = event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r");
     if (!reloadKey || event.defaultPrevented || event.altKey) return;
@@ -104,7 +104,7 @@ pub const FRAME_SCRIPT: &str = r#"(() => {
   addEventListener("message", (event) => {
     if (event.origin !== uiOrigin || event.source !== window.parent) return;
     const data = event.data;
-    if (!data || data.type !== "bibcode-preview-command") return;
+    if (!data || data.type !== "coddy-studio-preview-command") return;
     if (data.command === "reload") location.reload();
     else if (nav && data.command === "back" && nav.canGoBack) nav.back();
     else if (nav && data.command === "forward" && nav.canGoForward) nav.forward();
@@ -112,14 +112,14 @@ pub const FRAME_SCRIPT: &str = r#"(() => {
 })();
 "#;
 
-/// Only the BiBCode UI that opened the preview, and the preview's own pages
+/// Only the Coddy Studio UI that opened the preview, and the preview's own pages
 /// (frames nested inside it), may frame it. `None` for an IPv6 origin: browsers
 /// don't parse IPv6 host sources, and such a UI frames no preview.
 pub fn frame_ancestors_policy(ui_origin: &str) -> Option<String> {
     (!ui_origin.contains("://[")).then(|| format!("frame-ancestors 'self' {ui_origin}"))
 }
 
-/// For a preview no BiBCode UI frames (a desktop view, a system-browser tab):
+/// For a preview no Coddy Studio UI frames (a desktop view, a system-browser tab):
 /// the upstream's own rules stay, and only the preview's own pages may frame it,
 /// so a same-site sibling cannot frame it with the gateway cookie.
 pub fn apply_self_only_framing(headers: &mut HeaderMap) {
@@ -165,7 +165,7 @@ pub fn strip_frame_ancestors(value: &[u8]) -> Option<Vec<u8>> {
     (!policies.is_empty()).then(|| policies.join(b", ".as_slice()))
 }
 
-/// Lets `ui_origin` (a validated BiBCode UI origin) frame the response:
+/// Lets `ui_origin` (a validated Coddy Studio UI origin) frame the response:
 /// replaces the upstream's framing restrictions with the gateway's policy.
 /// When that policy cannot name the origin, the response fails closed as
 /// [`apply_self_only_framing`] leaves it.
@@ -190,7 +190,7 @@ pub fn apply_frame_policy(headers: &mut HeaderMap, ui_origin: &str) {
     headers.append(CONTENT_SECURITY_POLICY, policy);
 }
 
-/// The BiBCode UI origin from the bootstrap link, kept only when it is a bare
+/// The Coddy Studio UI origin from the bootstrap link, kept only when it is a bare
 /// `http`/`https` origin on the gateway's own host, and returned as browsers
 /// serialize it (lowercase host, no default port) so `MessageEvent.origin`
 /// matches it exactly.
@@ -466,7 +466,7 @@ mod tests {
         String::from_utf8(bytes.to_vec()).expect("utf-8")
     }
 
-    const TAG: &str = r#"<script src="/__bibcode/frame.js"></script>"#;
+    const TAG: &str = r#"<script src="/__coddy-studio/frame.js"></script>"#;
 
     #[test]
     fn frame_ancestors_allow_only_the_ui_that_opened_the_preview() {

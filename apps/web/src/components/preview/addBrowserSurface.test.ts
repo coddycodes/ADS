@@ -1,4 +1,4 @@
-import type { PreviewOpenInput, PreviewSessionSnapshot, ScopedThreadRef } from "@bibcode/contracts";
+import type { PreviewOpenInput, PreviewSessionSnapshot, ScopedThreadRef } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 

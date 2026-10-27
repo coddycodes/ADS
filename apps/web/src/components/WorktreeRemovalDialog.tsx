@@ -1,6 +1,6 @@
-import { scopeProjectRef, scopeThreadRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/shell";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+import { scopeProjectRef, scopeThreadRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/shell";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import {
   WorktreeRemovalError,
   type AdoptedWorktreeAvailability,
@@ -12,7 +12,7 @@ import {
   type WorktreeRemovalMode,
   type WorktreeRemovalPlan,
   type WorktreeRemovalResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
@@ -128,7 +128,7 @@ export function WorktreeRemovalDialog({
   const getRemovalPlan = useAtomCommand(worktreeEnvironment.getRemovalPlan, {
     reportFailure: false,
   });
-  const removeFromBibCode = useAtomCommand(worktreeEnvironment.removeFromBibCode, {
+  const removeFromCoddyStudio = useAtomCommand(worktreeEnvironment.removeFromCoddyStudio, {
     reportFailure: false,
   });
   const remove = useAtomCommand(worktreeEnvironment.remove, { reportFailure: false });
@@ -246,7 +246,7 @@ export function WorktreeRemovalDialog({
     setIsRemoving(true);
     setError(null);
     setServerRefusedRunning(false);
-    const result = await removeFromBibCode({
+    const result = await removeFromCoddyStudio({
       environmentId: requestTarget.environmentId,
       input: {
         commandId: newCommandId(),
@@ -261,7 +261,7 @@ export function WorktreeRemovalDialog({
       return;
     }
     finishRemoval(requestTarget, result.value, isCurrent);
-  }, [finishRemoval, isRemoving, removeFromBibCode, target]);
+  }, [finishRemoval, isRemoving, removeFromCoddyStudio, target]);
 
   const executeDestructiveRemoval = useCallback(
     async (mode: WorktreeRemovalMode, forceDirty: boolean, confirmPrune: boolean) => {
@@ -378,7 +378,7 @@ export function WorktreeRemovalDialog({
         <DialogHeader>
           <DialogTitle>Remove worktree</DialogTitle>
           <DialogDescription>
-            Choose whether to remove only BiBCode history or also modify Git.
+            Choose whether to remove only Coddy Studio history or also modify Git.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
@@ -447,7 +447,7 @@ export function WorktreeRemovalDialog({
 
           {completed ? (
             <div role="status" className="space-y-2 text-sm">
-              <p className="font-medium">Removed from BiBCode</p>
+              <p className="font-medium">Removed from Coddy Studio</p>
               {completed.gitOutcome === "failed" || completed.orphanCleanupPending ? (
                 <p className="text-warning">
                   Git cleanup still needs attention. {completed.detail ?? "Clean it up manually."}
@@ -548,7 +548,7 @@ export function WorktreeRemovalDialog({
                 disabled={isRemoving || removalUnavailable || target === null}
                 onClick={() => void detach()}
               >
-                Remove from BiBCode
+                Remove from Coddy Studio
               </Button>
               {destructiveEligible ? (
                 <Button

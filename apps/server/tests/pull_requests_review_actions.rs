@@ -3,7 +3,7 @@
 #[path = "support/pull_request_action_fixture.rs"]
 mod pull_request_action_fixture;
 
-use bibcode_server::pull_requests::model::ActionResult;
+use coddy_studio_server::pull_requests::model::ActionResult;
 use pull_request_action_fixture::Fixture;
 use serde_json::{Value, json};
 use std::fs;

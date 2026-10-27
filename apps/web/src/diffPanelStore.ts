@@ -1,5 +1,5 @@
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
-import type { ScopedThreadRef, TurnId } from "@bibcode/contracts";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
+import type { ScopedThreadRef, TurnId } from "@coddy/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -131,7 +131,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         }),
     }),
     {
-      name: "bibcode:diff-panel-state:v1",
+      name: "coddy-studio:diff-panel-state:v1",
       version: 1,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),

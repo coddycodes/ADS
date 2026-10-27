@@ -16,24 +16,24 @@ island until Astro's checker supports TypeScript 7 through its public API.
 - `vp run dev:web`: start only the Vite frontend.
 - `vp run dev:desktop`: start the Tauri 2 desktop app with frontend HMR.
 - `vp run dev:marketing`: start the Astro marketing site.
-- `vp run start`: run the native `bibcode` CLI through its package script.
+- `vp run start`: run the native `coddy-studio` CLI through its package script.
 - `vp run start:desktop`: alias the Tauri development command.
 - `vp run start:marketing`: preview the built marketing site.
 - `vp run start:mock-update-server`: run the local desktop-updater fixture
   server.
-- `cargo run -p bibcode-server -- serve`: run the native headless server
+- `cargo run -p coddy-studio-server -- serve`: run the native headless server
   directly from this checkout.
 
 `scripts/dev-runner.ts` uses server/web ports `13773` and `5733` by default.
-Set `BIBCODE_DEV_INSTANCE` to shift both deterministically, or set
-`BIBCODE_PORT_OFFSET` to an explicit numeric offset. These are development-runner
+Set `CODDY_STUDIO_DEV_INSTANCE` to shift both deterministically, or set
+`CODDY_STUDIO_PORT_OFFSET` to an explicit numeric offset. These are development-runner
 defaults; the standalone native server's default port is `3773`.
 
-The desktop development runner defaults `BIBCODE_HOME` to `~/.bibcode`. Debug
+The desktop development runner defaults `CODDY_STUDIO_HOME` to `~/.coddy/studio`. Debug
 builds use its `dev` state kind while installed builds use `userdata`; a dev
 launch does not make either store disposable. Desktop Rust tests use explicit
 temporary roots and fail closed if a Tauri mock attempts to resolve the real
-default user root, so `cargo test -p bibcode-desktop` must not mutate either
+default user root, so `cargo test -p coddy-studio-desktop` must not mutate either
 state kind.
 
 ## Build And Quality
@@ -84,7 +84,7 @@ the binary declaring the Common Controls v6 dependency and
 re-reads the manifest. Rust test binaries have no embedded manifest, so without
 the `asInvoker` declaration UAC installer detection refuses to start any target
 whose name contains `install`, `setup`, `update`, or `patch` (for example the
-`remote_update_rpc` and `bibcode-updater-verifier` tests) with
+`remote_update_rpc` and `coddy-studio-updater-verifier` tests) with
 "The requested operation requires elevation", which Node reports as `EACCES`.
 When an explicit `CARGO_TARGET_DIR` is supplied to a Cargo test command, the
 shared Cargo launcher resolves it from the launch directory, creates it, and
@@ -146,11 +146,11 @@ removes the Windows Defender Firewall rules that Windows generates for one exact
 repository-built test executable after a "Windows Security Alert" prompt, then
 re-queries and fails unless zero matching rules remain. It refuses installed
 locations (Program Files, per-user Programs, the Windows directory) and never
-removes the app-managed `BiBCode Remote Access` rule. Run it from an elevated
+removes the app-managed `Coddy Studio Remote Access` rule. Run it from an elevated
 PowerShell; on other platforms it exits 0 without doing anything.
 
 The wrapper, `scripts/build-desktop-artifact.ts`, rejects cross-platform builds
-by default, invokes the canonical `@bibcode/desktop` Tauri package, and copies
+by default, invokes the canonical `@coddy/desktop` Tauri package, and copies
 bundle output under `release/desktop/<platform>-<arch>` unless an output
 directory is supplied. It compiles with `tauri build --no-bundle` and then
 packages that binary with `tauri bundle` (the desktop package's `build` and
@@ -195,7 +195,7 @@ installers pack the binary itself. Cargo would re-link its unstripped artifact
 over the binary even when nothing needs rebuilding, so this check, not the Tauri
 CLI's current behavior, keeps an unstripped binary out of the bundles. The
 output directory also receives
-`bibcode-desktop-symbols-<version>-<os>-<arch>.zip`; see
+`coddy-studio-desktop-symbols-<version>-<os>-<arch>.zip`; see
 [Symbol assets](../operations/release.md#symbol-assets). `--symbols` needs
 `dump_syms` on `PATH` and cannot be combined with `--skip-build`.
 
@@ -218,9 +218,9 @@ features, because the lookup of the PDB that a Windows binary names is part of
 the `http` feature.
 
 Release assembly, `scripts/assemble-release-assets.ts`, requires twelve symbol
-archives, `bibcode-{desktop,server}-symbols-<version>-<os>-<arch>.zip` for each
+archives, `coddy-studio-{desktop,server}-symbols-<version>-<os>-<arch>.zip` for each
 of the six release targets, and still rejects any file outside its allowlist.
-`bibcode profiler symbolicate --download` fetches exactly these names, so a
+`coddy-studio profiler symbolicate --download` fetches exactly these names, so a
 renamed archive breaks symbol downloads for that release; see
 [Symbol assets](../operations/release.md#symbol-assets).
 
@@ -235,7 +235,7 @@ the profiler's crash monitor is the same executable relaunched.
 - `vp run dist:server:linux:arm64` / `:x64`: Linux archive plus `.deb` and `.rpm`.
 - `vp run dist:server:win:arm64` / `:x64`: Windows server archive.
 
-The builder stages the native `bibcode` executable, production web client,
+The builder stages the native `coddy-studio` executable, production web client,
 `docs/user/server-installation.md`, and license under one versioned root. Use
 `scripts/smoke-server-distribution.ts` against that staged root. Linux CI additionally
 uses `scripts/test-linux-server-package.ts` to install, start, remove, and verify data
@@ -252,7 +252,7 @@ own root. Never run this command locally. For code changes, run only:
 vp test run scripts/seeded-desktop-upgrade-smoke.test.ts scripts/lib/remote-install-driver.test.ts
 node --check scripts/seeded-desktop-upgrade-smoke.ts
 node --check scripts/lib/remote-install-driver.ts
-vp run --filter @bibcode/scripts typecheck
+vp run --filter @coddy/scripts typecheck
 ```
 
 The Node driver imports the product coordinator through the client-runtime's
@@ -265,7 +265,7 @@ performing a production install.
 
 ## Repository Maintenance
 
-- `cargo run -p bibcode-server --example remote_update_fake_host -- <base-dir> <port 4800-4899> <server-version> [label]`:
+- `cargo run -p coddy-studio-server --example remote_update_fake_host -- <base-dir> <port 4800-4899> <server-version> [label]`:
   development-only, loopback-only scripted interactive host for remote-update
   live checks (default label: `Fake-host`). Stdin accepts one JSON object per
   line: `{"status":{...}}` replaces the camelCase update status,
@@ -273,7 +273,7 @@ performing a production install.
   data root and port with a fresh boot ID and idle status (`afterMs` defaults to
   2000), `{"stop":true}` stops serving permanently while the process stays alive,
   and `{"exit":true}` or EOF shuts down and exits. Pair through
-  `bibcode pairing offer --base-dir <base-dir> --endpoint http://127.0.0.1:<port> --reach this-computer --json`;
+  `coddy-studio pairing offer --base-dir <base-dir> --endpoint http://127.0.0.1:<port> --reach this-computer --json`;
   the example prints only a `started` JSON event with `port`, `serverVersion`,
   and `bootId`, without pairing credentials.
 - `bash scripts/measure-gitlab-merge-request-load.sh [rtt-ms] [runs]`: measure a
@@ -281,7 +281,7 @@ performing a production install.
   the local harness in `apps/server/tests/pull_requests_gitlab_load_harness.rs`.
   The default round trip is 200 ms and the default sample count is 5. The
   command prints `HARNESS_JSON` and writes the same document to
-  `BIBCODE_GITLAB_HARNESS_REPORT` (`/tmp/bibcode-gitlab-mr-load.json` when unset).
+  `CODDY_STUDIO_GITLAB_HARNESS_REPORT` (`/tmp/coddy-studio-gitlab-mr-load.json` when unset).
   It also runs the ignored
   `gitlab_subscribed_merge_request_polling_records_host_requests` scenario,
   which waits through several real 20 s poll ticks and prints
@@ -298,7 +298,7 @@ performing a production install.
   upstream-tracked ignored files, applies configured pruning, treats every
   configured prefix and prune path as a literal Git path, and creates no commit.
   It holds the atomic file
-  `<absolute-git-common-dir>/bibcode-reference-repos-sync.lock` from the initial
+  `<absolute-git-common-dir>/coddy-studio-reference-repos-sync.lock` from the initial
   clean check through fetch, snapshot construction, apply, and any verified
   rollback, so linked worktrees share one writer. A concurrent invocation fails
   before fetch without changing or stealing the lock. Success, pre-apply
@@ -313,7 +313,7 @@ performing a production install.
   `sync-reference-repos` process owns the repository and verify or recover the
   index/worktree. Then obtain the exact common directory with
   `git rev-parse --path-format=absolute --git-common-dir` and remove only its
-  `bibcode-reference-repos-sync.lock` file; the command never removes a stale
+  `coddy-studio-reference-repos-sync.lock` file; the command never removes a stale
   lock automatically.
 - `vp run measure:desktop-runtime -- ...`: capture startup, memory, and
   process-tree measurements.
@@ -328,8 +328,8 @@ performing a production install.
 - `node scripts/measure-remote-latency.ts [--rtt 0,250] [--jitter <ms>] [--typing-interval <ms>] [--seed-messages <n>] [--out <json>] [--keep]`:
   development-only
   [high-latency measurement](../testing/cross-platform-validation.md#high-latency-measurement).
-  For each round trip it starts a disposable `bibcode serve` (`--server-bin`,
-  default `target/debug/bibcode`, which must come from `cargo build`: a binary left by
+  For each round trip it starts a disposable `coddy-studio serve` (`--server-bin`,
+  default `target/debug/coddy-studio`, which must come from `cargo build`: a binary left by
   `cargo test` refuses tools on the ambient `PATH`) with the packaged-UI provider fixtures, puts
   the throttle proxy between it and a headless Chromium (`--chromium`, default
   `/usr/bin/chromium`), and drives user actions. It prints one JSON line per

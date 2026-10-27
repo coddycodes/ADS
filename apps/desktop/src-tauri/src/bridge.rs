@@ -1,5 +1,5 @@
-use bibcode_server::diagnostic_bundle::MAX_DIAGNOSTIC_ARCHIVE_BYTES;
-use bibcode_server::process::configure_background_std_command;
+use coddy_studio_server::diagnostic_bundle::MAX_DIAGNOSTIC_ARCHIVE_BYTES;
+use coddy_studio_server::process::configure_background_std_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -59,7 +59,7 @@ struct TestSystemThemeReader(std::sync::Arc<dyn Fn() -> Option<tauri::Theme> + S
 
 const AUTH_ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 const AUTH_ENVIRONMENT_BOOTSTRAP_TOKEN_TYPE: &str =
-    "urn:bibcode:params:oauth:token-type:environment-bootstrap";
+    "urn:coddy-studio:params:oauth:token-type:environment-bootstrap";
 const AUTH_TOKEN_EXCHANGE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const CLIENT_SETTINGS_FILE_NAME: &str = "client-settings.json";
 const CONNECTION_CATALOG_FILE_NAME: &str = "connection-catalog.tauri.json";
@@ -642,7 +642,7 @@ fn advertised_endpoints_for_config(
                 #[cfg(not(target_os = "windows"))]
                 {
                     format!(
-                        "Observed public address through network interface {}. Native sharing never selects it; use only through an externally managed listener or reverse proxy. BiBCode does not manage this platform's firewall.",
+                        "Observed public address through network interface {}. Native sharing never selects it; use only through an externally managed listener or reverse proxy. Coddy Studio does not manage this platform's firewall.",
                         address.interface_name
                     )
                 }
@@ -1082,7 +1082,7 @@ fn ensure_app_restart_allowed(
 ) -> Result<(), String> {
     if update_coordination || install_in_flight {
         return Err(
-            "BiBCode can't restart while an update or project-data operation is running."
+            "Coddy Studio can't restart while an update or project-data operation is running."
                 .to_owned(),
         );
     }
@@ -1248,7 +1248,7 @@ pub async fn desktop_bridge_fetch_environment_descriptor(
     remote_get_json(
         "fetch-environment-descriptor",
         http_base_url,
-        "/.well-known/bibcode/environment",
+        "/.well-known/coddy-studio/environment",
         None,
     )
     .await
@@ -1269,7 +1269,7 @@ pub async fn desktop_bridge_bootstrap_ssh_bearer_session(
             AUTH_ENVIRONMENT_BOOTSTRAP_TOKEN_TYPE.to_string(),
         ),
         ("requested_token_type", AUTH_ACCESS_TOKEN_TYPE.to_string()),
-        ("client_label", "BiBCode Tauri Desktop".to_string()),
+        ("client_label", "Coddy Studio Tauri Desktop".to_string()),
         ("client_device_type", "desktop".to_string()),
     ];
     // Without `scope` the exchange grants everything the bootstrap allows,
@@ -1664,10 +1664,11 @@ fn validate_transfer_url(url: &str) -> Result<reqwest::Url, String> {
 }
 
 /// The tail `desktop_bridge_download_to_folder` gives its partial files.
-const DOWNLOAD_PARTIAL_SUFFIX: &str = "bibcode-download.part";
+const DOWNLOAD_PARTIAL_SUFFIX: &str = "coddy-studio-download.part";
 
-/// One path component may hold 255 bytes on every filesystem BiBCode supports.
-const MAX_PATH_COMPONENT_BYTES: usize = bibcode_server::transfer::upload::MAX_PATH_COMPONENT_BYTES;
+/// One path component may hold 255 bytes on every filesystem Coddy Studio supports.
+const MAX_PATH_COMPONENT_BYTES: usize =
+    coddy_studio_server::transfer::upload::MAX_PATH_COMPONENT_BYTES;
 
 /// The longest tail still treated as an extension worth preserving when a name is shortened.
 /// Past this it is not an extension, it is the name.
@@ -1692,7 +1693,8 @@ fn download_file_name_for(name: &str, windows_rules: bool) -> Result<String, Str
     // came from the server's filesystem and the user has no way to change it. Only a name that
     // is not a plain file name at all -- empty, `.`/`..`, a separator, a control byte -- refuses,
     // because that means something is wrong rather than merely unportable.
-    if !bibcode_server::transfer::upload::is_plain_transfer_file_name(name, usize::MAX, false) {
+    if !coddy_studio_server::transfer::upload::is_plain_transfer_file_name(name, usize::MAX, false)
+    {
         return Err(
             "Download file name must be a plain file name: no / or \\ and no control characters."
                 .to_owned(),
@@ -1722,7 +1724,7 @@ fn fit_within_component(name: &str) -> String {
         .filter(|extension| extension.len() <= MAX_KEPT_EXTENSION_BYTES)
         .unwrap_or("");
     let stem = &name[..name.len() - extension.len()];
-    let kept = bibcode_server::transfer::upload::truncate_on_char_boundary(
+    let kept = coddy_studio_server::transfer::upload::truncate_on_char_boundary(
         stem,
         MAX_PATH_COMPONENT_BYTES - extension.len(),
     );
@@ -1737,7 +1739,9 @@ fn windows_safe_file_name(name: &str, max_bytes: usize) -> String {
     let replaced: String = name
         .chars()
         .map(|character| {
-            if bibcode_server::transfer::upload::WINDOWS_FORBIDDEN_CHARACTERS.contains(&character) {
+            if coddy_studio_server::transfer::upload::WINDOWS_FORBIDDEN_CHARACTERS
+                .contains(&character)
+            {
                 '_'
             } else {
                 character
@@ -1746,12 +1750,12 @@ fn windows_safe_file_name(name: &str, max_bytes: usize) -> String {
         .collect();
     let trimmed = replaced.trim_end_matches(['.', ' ']);
     let mut safe = trimmed.to_owned();
-    if bibcode_server::transfer::upload::is_windows_device_name(&safe) {
+    if coddy_studio_server::transfer::upload::is_windows_device_name(&safe) {
         safe.insert(0, '_');
     }
     // The device prefix is the one step that can lengthen the name, so the budget is re-applied;
     // trimming again keeps a cut that lands after a dot from reintroducing a trailing one.
-    let fitted = bibcode_server::transfer::upload::truncate_on_char_boundary(&safe, max_bytes)
+    let fitted = coddy_studio_server::transfer::upload::truncate_on_char_boundary(&safe, max_bytes)
         .trim_end_matches(['.', ' ']);
     if fitted.is_empty() {
         "download".to_owned()
@@ -1881,7 +1885,7 @@ pub async fn desktop_bridge_download_to_folder(
     // The partial-name shape and its stem budget both come from the server crate, so the two
     // sides of a transfer cannot drift into writing different partials.
     let partial = directory.join(
-        bibcode_server::transfer::upload::partial_transfer_file_name(
+        coddy_studio_server::transfer::upload::partial_transfer_file_name(
             &file_name,
             DOWNLOAD_PARTIAL_SUFFIX,
         ),
@@ -1976,7 +1980,7 @@ pub async fn desktop_bridge_confirm(
     let dialog = app
         .dialog()
         .message(message)
-        .title("BiBCode")
+        .title("Coddy Studio")
         .buttons(MessageDialogButtons::OkCancel);
     await_dialog(|answer| dialog.show(answer)).await
 }
@@ -2396,7 +2400,9 @@ mod tests {
 
     #[test]
     fn diagnostic_archive_filename_accepts_only_plain_zip_names() {
-        assert!(validate_diagnostic_archive_filename("bibcode-diagnostics-20260716.zip").is_ok());
+        assert!(
+            validate_diagnostic_archive_filename("coddy-studio-diagnostics-20260716.zip").is_ok()
+        );
         assert!(validate_diagnostic_archive_filename("../diagnostics.zip").is_err());
         assert!(validate_diagnostic_archive_filename("diagnostics.txt").is_err());
     }
@@ -2475,7 +2481,7 @@ mod tests {
                     "{saved} ({windows_rules})"
                 );
                 assert!(!saved.is_empty(), "{name} ({windows_rules})");
-                let partial = bibcode_server::transfer::upload::partial_transfer_file_name(
+                let partial = coddy_studio_server::transfer::upload::partial_transfer_file_name(
                     &saved,
                     DOWNLOAD_PARTIAL_SUFFIX,
                 );
@@ -2924,7 +2930,7 @@ mod tests {
             .map(|duration| duration.as_nanos())
             .unwrap_or_default();
         std::env::temp_dir().join(format!(
-            "bibcode-tauri-bridge-{name}-{}-{suffix}.json",
+            "coddy-studio-tauri-bridge-{name}-{}-{suffix}.json",
             std::process::id()
         ))
     }
@@ -2978,7 +2984,7 @@ mod tests {
 
     #[test]
     fn environment_endpoint_urls_reject_non_http_schemes() {
-        let error = environment_endpoint_url("file:///tmp/bibcode", "/api/auth/session")
+        let error = environment_endpoint_url("file:///tmp/coddy-studio", "/api/auth/session")
             .expect_err("file URLs must not reach the remote API client");
 
         assert_eq!(
@@ -4083,7 +4089,7 @@ mod tests {
             serde_json::json!({ "environmentId": "env-tauri" })
         );
         let request = requests.recv().expect("request should be captured");
-        assert!(request.starts_with("GET /.well-known/bibcode/environment HTTP/1.1"));
+        assert!(request.starts_with("GET /.well-known/coddy-studio/environment HTTP/1.1"));
     }
 
     #[tokio::test]
@@ -4101,7 +4107,7 @@ mod tests {
             requests
                 .recv()
                 .expect("failed request should be captured")
-                .starts_with("GET /.well-known/bibcode/environment HTTP/1.1")
+                .starts_with("GET /.well-known/coddy-studio/environment HTTP/1.1")
         );
 
         let (base_url, requests) = spawn_json_test_server("not-json");
@@ -4178,7 +4184,7 @@ mod tests {
             request
                 .contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange")
         );
-        assert!(request.contains("client_label=BiBCode+Tauri+Desktop"));
+        assert!(request.contains("client_label=Coddy Studio+Tauri+Desktop"));
         assert!(
             request.contains("scope=orchestration%3Aread+terminal%3Aoperate"),
             "{request}"
@@ -4223,7 +4229,7 @@ mod tests {
         for (coordination, installing) in [(true, false), (false, true), (true, true)] {
             assert_eq!(
                 ensure_app_restart_allowed(coordination, installing).expect_err("restart is busy"),
-                "BiBCode can't restart while an update or project-data operation is running."
+                "Coddy Studio can't restart while an update or project-data operation is running."
             );
         }
     }
@@ -4264,7 +4270,7 @@ mod tests {
         // permissions as the production desktop shell.
         let mut context = crate::desktop_context();
         context.config_mut().identifier =
-            format!("com.bibcode.bridge-tests-{}", std::process::id());
+            format!("com.coddy.studio.bridge-tests-{}", std::process::id());
         let app = mock_builder()
             .manage(IsolatedTestDataRoot::new(temp.path().join("data-root")))
             .manage(BackendSupervisor::new())

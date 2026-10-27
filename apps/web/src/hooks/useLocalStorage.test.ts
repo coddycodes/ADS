@@ -32,14 +32,14 @@ afterEach(() => {
 });
 
 describe("local storage errors", () => {
-  it("reads BiBCode values", async () => {
+  it("reads Coddy Studio values", async () => {
     const storage = createStorage();
-    storage.setItem("bibcode:theme", JSON.stringify("dark"));
+    storage.setItem("coddy-studio:theme", JSON.stringify("dark"));
     const { getLocalStorageItem } = await loadWithStorage(storage);
 
-    expect(getLocalStorageItem("bibcode:theme", Schema.String)).toBe("dark");
-    expect(storage.getItem("bibcode:theme")).toBe(JSON.stringify("dark"));
-    expect(storage.getItem("bibcode:theme")).toBe(JSON.stringify("dark"));
+    expect(getLocalStorageItem("coddy-studio:theme", Schema.String)).toBe("dark");
+    expect(storage.getItem("coddy-studio:theme")).toBe(JSON.stringify("dark"));
+    expect(storage.getItem("coddy-studio:theme")).toBe(JSON.stringify("dark"));
   });
 
   it("preserves read failure context", async () => {

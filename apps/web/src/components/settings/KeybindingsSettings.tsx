@@ -26,12 +26,12 @@ import {
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 
 import { isDesktopHost } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
@@ -257,7 +257,7 @@ function UnknownWhenVariableWarning({
         }
       />
       <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-relaxed">
-        BiBCode does not recognize this condition yet. It can still be saved, but it may not match
+        Coddy Studio does not recognize this condition yet. It can still be saved, but it may not match
         unless the runtime provides it.
       </TooltipPopup>
     </Tooltip>
@@ -1281,7 +1281,7 @@ export function KeybindingsSettingsPanel() {
           <div className="flex items-start gap-2 border-b border-warning/20 bg-warning/5 px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
             <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
             <p>
-              Some shortcuts may be claimed by the browser before BiBCode sees them. Use the desktop
+              Some shortcuts may be claimed by the browser before Coddy Studio sees them. Use the desktop
               app for better keybinding support.
             </p>
           </div>

@@ -1,5 +1,5 @@
 /* oxlint-disable react/immutability -- the probe component captures the hook result for the test. */
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ChangeEvent } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -15,7 +15,7 @@ const testState = vi.hoisted(() => ({
   commandResults: {} as Record<string, unknown>,
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { _tag: string; interrupted?: boolean }) =>
     result._tag === "Interrupted" || result.interrupted === true,
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error,

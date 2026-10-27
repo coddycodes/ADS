@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri, header},
     response::IntoResponse,
 };
-use bibcode_server::{
+use coddy_studio_server::{
     RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime, mcp,
     preview::{
         MAX_PENDING_OPEN_REQUESTS, PreviewManager,
@@ -249,7 +249,7 @@ async fn open_url_route_rejects_bad_tokens_and_cookies() {
     let mut cookie = HeaderMap::new();
     cookie.insert(
         header::COOKIE,
-        HeaderValue::from_static("bibcode_session=session-token"),
+        HeaderValue::from_static("coddy_studio_session=session-token"),
     );
     for headers in [
         HeaderMap::new(),
@@ -404,13 +404,13 @@ async fn claim_open_request_rpc_is_single_use() {
     }
 }
 
-/// Runs the real `bibcode open-url` the shim runs, with `env` as its only open-url settings.
+/// Runs the real `coddy-studio open-url` the shim runs, with `env` as its only open-url settings.
 async fn run_open_url_cli(url: &str, env: &[(&str, &str)]) -> std::process::Output {
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_bibcode"));
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_coddy-studio"));
     command
         .args(["open-url", url])
-        .env_remove("BIBCODE_OPEN_URL_ENDPOINT")
-        .env_remove("BIBCODE_OPEN_URL_AUTH");
+        .env_remove("CODDY_STUDIO_OPEN_URL_ENDPOINT")
+        .env_remove("CODDY_STUDIO_OPEN_URL_AUTH");
     for (key, value) in env {
         command.env(key, value);
     }
@@ -439,8 +439,8 @@ async fn open_url_cli_posts_to_the_route_and_emits_open_request() {
     let output = run_open_url_cli(
         url,
         &[
-            ("BIBCODE_OPEN_URL_ENDPOINT", &endpoint),
-            ("BIBCODE_OPEN_URL_AUTH", &credential.token),
+            ("CODDY_STUDIO_OPEN_URL_ENDPOINT", &endpoint),
+            ("CODDY_STUDIO_OPEN_URL_AUTH", &credential.token),
         ],
     )
     .await;
@@ -456,8 +456,8 @@ async fn open_url_cli_posts_to_the_route_and_emits_open_request() {
     let output = run_open_url_cli(
         url,
         &[
-            ("BIBCODE_OPEN_URL_ENDPOINT", &endpoint),
-            ("BIBCODE_OPEN_URL_AUTH", &credential.token),
+            ("CODDY_STUDIO_OPEN_URL_ENDPOINT", &endpoint),
+            ("CODDY_STUDIO_OPEN_URL_AUTH", &credential.token),
         ],
     )
     .await;
@@ -469,8 +469,8 @@ async fn open_url_cli_posts_to_the_route_and_emits_open_request() {
     let output = run_open_url_cli(
         url,
         &[
-            ("BIBCODE_OPEN_URL_ENDPOINT", &endpoint),
-            ("BIBCODE_OPEN_URL_AUTH", "not-a-token"),
+            ("CODDY_STUDIO_OPEN_URL_ENDPOINT", &endpoint),
+            ("CODDY_STUDIO_OPEN_URL_AUTH", "not-a-token"),
         ],
     )
     .await;
@@ -480,15 +480,16 @@ async fn open_url_cli_posts_to_the_route_and_emits_open_request() {
     server.abort();
 }
 
-/// The Windows `bibcode-open-url.exe` alias is the server binary under another name; it takes
+/// The Windows `coddy-studio-open-url.exe` alias is the server binary under another name; it takes
 /// the URL as its only argument. Dispatch is by name, so it is exercised on every platform.
 #[tokio::test]
 async fn open_url_alias_posts_the_url_and_rejects_a_missing_one() {
     let temp = TempDir::new().unwrap();
-    let alias = temp
-        .path()
-        .join(format!("bibcode-open-url{}", std::env::consts::EXE_SUFFIX));
-    executable_fixture::copy_executable(Path::new(env!("CARGO_BIN_EXE_bibcode")), &alias);
+    let alias = temp.path().join(format!(
+        "coddy-studio-open-url{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    executable_fixture::copy_executable(Path::new(env!("CARGO_BIN_EXE_coddy-studio")), &alias);
     let connect = Arc::new(setup_service(&temp).await);
     let preview = PreviewManager::new();
     let mut events = preview.subscribe_events();
@@ -505,8 +506,8 @@ async fn open_url_alias_posts_the_url_and_rejects_a_missing_one() {
         let mut command = tokio::process::Command::new(&alias);
         command
             .args(args)
-            .env("BIBCODE_OPEN_URL_ENDPOINT", &endpoint)
-            .env("BIBCODE_OPEN_URL_AUTH", &credential.token);
+            .env("CODDY_STUDIO_OPEN_URL_ENDPOINT", &endpoint)
+            .env("CODDY_STUDIO_OPEN_URL_AUTH", &credential.token);
         async move {
             timeout(Duration::from_secs(20), command.output())
                 .await
@@ -527,7 +528,7 @@ async fn open_url_alias_posts_the_url_and_rejects_a_missing_one() {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "bibcode open-url: expected an http(s) URL\n"
+        "coddy-studio open-url: expected an http(s) URL\n"
     );
     server.abort();
 }
@@ -545,6 +546,6 @@ async fn open_url_cli_without_a_session_prints_the_url_and_rejects_non_http() {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "bibcode open-url: expected an http(s) URL\n"
+        "coddy-studio open-url: expected an http(s) URL\n"
     );
 }

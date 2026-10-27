@@ -3141,7 +3141,7 @@ mod tests {
     #[tokio::test]
     async fn attributed_history_wire_includes_independent_claimed_roots() {
         let sampled_at_ms = OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
-        let mut server = ProcessRow::fixture(10, 1, "/native/bibcode --serve");
+        let mut server = ProcessRow::fixture(10, 1, "/native/coddy-studio --serve");
         server.started_at = 100;
         server.cpu_percent = 10.0;
         server.cpu_core_percent = Some(5.0);
@@ -3279,7 +3279,7 @@ mod tests {
 
     #[test]
     fn attributed_current_wire_reproduces_native_metadata() {
-        let mut server = ProcessRow::fixture(10, 1, "/opt/bibcode server");
+        let mut server = ProcessRow::fixture(10, 1, "/opt/coddy-studio server");
         server.started_at = 100;
         server.pgid = Some(10);
         server.status = "Sleep".to_owned();
@@ -3396,7 +3396,7 @@ mod tests {
         assert_eq!(processes[0]["pgid"]["value"], 10);
         assert_eq!(processes[0]["status"], "Sleep");
         assert_eq!(processes[0]["elapsed"], "01:02:03");
-        assert_eq!(processes[0]["command"], "/opt/bibcode server");
+        assert_eq!(processes[0]["command"], "/opt/coddy-studio server");
         assert_eq!(processes[0]["depth"], 0);
         assert_eq!(processes[0]["childPids"], json!([11]));
         assert_eq!(processes[1]["depth"], 1);
@@ -3406,7 +3406,7 @@ mod tests {
 
     #[test]
     fn attributed_current_wire_includes_independently_claimed_roots() {
-        let server = ProcessRow::fixture(10, 1, "bibcode");
+        let server = ProcessRow::fixture(10, 1, "coddy-studio");
         let server_child = ProcessRow::fixture(11, 10, "server child");
         let claimed_root = ProcessRow::fixture(20, 1, "claimed provider");
         let claimed_child = ProcessRow::fixture(21, 20, "claimed provider child");

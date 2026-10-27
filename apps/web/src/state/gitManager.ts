@@ -1,15 +1,15 @@
-import { runStream } from "@bibcode/client-runtime/rpc";
-import { createGitManagerEnvironmentAtoms } from "@bibcode/client-runtime/state/git-manager";
+import { runStream } from "@coddy/client-runtime/rpc";
+import { createGitManagerEnvironmentAtoms } from "@coddy/client-runtime/state/git-manager";
 import {
   runStreamInEnvironment,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   WS_METHODS,
   type EnvironmentId,
   type GitManagerOperationEvent,
   type GitManagerOperationRequest,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { type AtomRegistry } from "effect/reactivity";

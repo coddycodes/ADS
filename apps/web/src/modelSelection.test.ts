@@ -1,5 +1,5 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@bibcode/contracts";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@bibcode/contracts/settings";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@coddy/contracts";
+import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@coddy/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {

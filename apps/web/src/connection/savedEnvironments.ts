@@ -1,4 +1,4 @@
-import { isPersistedConnectionTarget } from "@bibcode/client-runtime/connection";
+import { isPersistedConnectionTarget } from "@coddy/client-runtime/connection";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 

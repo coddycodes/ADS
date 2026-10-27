@@ -12,7 +12,7 @@ import {
   type ActivityEntry,
   type ActivitySnapshot,
   type ActivityWorkItemSummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 

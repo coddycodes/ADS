@@ -1,6 +1,6 @@
-import { EnvironmentId, type ProfilerFinding, type ProfilerStatus } from "@bibcode/contracts";
-import type { EnvironmentConnectionPhase } from "@bibcode/client-runtime/connection";
-import type { UnifiedSettings } from "@bibcode/contracts/settings";
+import { EnvironmentId, type ProfilerFinding, type ProfilerStatus } from "@coddy/contracts";
+import type { EnvironmentConnectionPhase } from "@coddy/client-runtime/connection";
+import type { UnifiedSettings } from "@coddy/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import {
@@ -371,7 +371,7 @@ function EnvironmentProfiler({
   );
   const environmentLabel = environment.label.trim() || "the server";
   const primaryLabel = primaryEnvironment?.label.trim() || "the main server";
-  const profilerCommand = <span className="font-mono">bibcode profiler</span>;
+  const profilerCommand = <span className="font-mono">coddy-studio profiler</span>;
   // The folder opens through this machine's editor and the bundle comes over the primary
   // connection, so both belong to the primary environment alone.
   const openFolderDisabledReason: ReactNode | null =
@@ -438,7 +438,7 @@ function EnvironmentProfiler({
     : storage === "failing"
       ? "Could not write profiling data. Check free disk space and folder permissions."
       : storage === "locked"
-        ? "Another BiBCode app or server is already recording to this profiler folder. Close it, then restart this one."
+        ? "Another Coddy Studio app or server is already recording to this profiler folder. Close it, then restart this one."
         : null;
 
   return (

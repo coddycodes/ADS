@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { EnvironmentId, TerminalSessionSnapshot, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, TerminalSessionSnapshot, ThreadId } from "@coddy/contracts";
 import { Effect, Latch, Layer, Stream } from "effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 

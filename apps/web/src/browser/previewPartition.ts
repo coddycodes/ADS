@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";

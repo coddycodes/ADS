@@ -1,4 +1,4 @@
-import type { DesktopPreviewPointerEvent } from "@bibcode/contracts";
+import type { DesktopPreviewPointerEvent } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 

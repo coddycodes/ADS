@@ -1,4 +1,4 @@
-import { ProviderDriverKind } from "@bibcode/contracts";
+import { ProviderDriverKind } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
@@ -1458,7 +1458,7 @@ describe("working row answer delivery", () => {
   it("reports a settled answer on a turn the provider has not closed", () => {
     // Codex sends `turn/completed` tens of seconds after the final answer
     // (measured 19.8s-114.9s), so the turn is still running while the answer is
-    // already on screen. Reporting that as a plain wait blamed BiBCode for the
+    // already on screen. Reporting that as a plain wait blamed Coddy Studio for the
     // provider's lag.
     expect(workingRowFor(false)?.answerDelivered).toBe(true);
   });

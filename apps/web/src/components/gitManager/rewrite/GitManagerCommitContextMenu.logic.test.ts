@@ -1,4 +1,4 @@
-import type { GitManagerCommitEntry } from "@bibcode/contracts";
+import type { GitManagerCommitEntry } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

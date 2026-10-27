@@ -1458,7 +1458,7 @@ impl CodexSessionRuntime {
 
     /// Drops the newest `num_turns` turns from the Codex conversation history with
     /// `thread/revert`. Codex does not touch files; checkpoint revert restores them from
-    /// BiBCode's own Git refs once this succeeds.
+    /// Coddy Studio's own Git refs once this succeeds.
     pub async fn rollback_thread(&self, num_turns: u64) -> Result<(), RuntimeError> {
         if num_turns == 0 {
             return Ok(());
@@ -2721,7 +2721,7 @@ impl CodexSessionRuntime {
             }
             unhandled => {
                 // Unknown notification methods were dropped in total silence,
-                // so we had no field evidence of what codex sends that BiBCode
+                // so we had no field evidence of what codex sends that Coddy Studio
                 // ignores. Method names only — params carry conversation content.
                 tracing::debug!(
                     provider = PROVIDER,
@@ -3674,7 +3674,7 @@ fn codex_error_is_informative(error: &Value) -> bool {
 }
 
 /// The text for a failure whose `codexErrorInfo` is absent or newer than the
-/// variants BiBCode knows.
+/// variants Coddy Studio knows.
 const CODEX_UNCLASSIFIED_FAILURE: &str = "Codex reported a failed turn.";
 
 /// The error class and fallback text for one `codexErrorInfo` variant, or

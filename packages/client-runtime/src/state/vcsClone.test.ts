@@ -1,4 +1,4 @@
-import { EnvironmentId, GitCloneOperationError, WS_METHODS } from "@bibcode/contracts";
+import { EnvironmentId, GitCloneOperationError, WS_METHODS } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";

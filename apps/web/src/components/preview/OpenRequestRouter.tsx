@@ -1,8 +1,8 @@
 "use client";
 
 import { RegistryContext } from "@effect/atom-react";
-import { scopedThreadKey, scopeThreadRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@bibcode/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect } from "react";
 
@@ -36,7 +36,7 @@ function shownAs(host: ScopedThreadRef, threadId: string): "route" | "panel" | n
 }
 
 /**
- * Opens what a thread's commands ask to open (`$BROWSER`, `bibcode-open-url`).
+ * Opens what a thread's commands ask to open (`$BROWSER`, `coddy-studio-open-url`).
  * Every client sees the request and one claims it: a visible client showing
  * that thread at once; otherwise, after a short delay, a visible client asks
  * the user in a prompt naming the thread (or a hidden one showing the thread).

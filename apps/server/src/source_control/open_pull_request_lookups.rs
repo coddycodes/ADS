@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 use super::{ProviderKind, ResolvedPullRequest, SourceControlProviderError};
 
 /// How long a successful lookup answers later status reads. Short, because
-/// pull requests also change outside BiBCode (merged or closed on the web).
+/// pull requests also change outside Coddy Studio (merged or closed on the web).
 pub(crate) const OPEN_PULL_REQUEST_LOOKUP_TTL: Duration = Duration::from_secs(10);
 /// Upper bound on remembered and in-flight lookups across all worktrees.
 pub(crate) const OPEN_PULL_REQUEST_LOOKUP_CAPACITY: usize = 64;

@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentPresentation } from "@bibcode/client-runtime/connection";
-import { createEnvironmentPresentationAtoms } from "@bibcode/client-runtime/state/presentation";
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentPresentation } from "@coddy/client-runtime/connection";
+import { createEnvironmentPresentationAtoms } from "@coddy/client-runtime/state/presentation";
+import type { EnvironmentId } from "@coddy/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";

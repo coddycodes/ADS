@@ -1,4 +1,4 @@
-import type { AuthShareStateResult, DesktopServerExposureState } from "@bibcode/contracts";
+import type { AuthShareStateResult, DesktopServerExposureState } from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import { RefreshCwIcon } from "lucide-react";
 import {
@@ -69,7 +69,7 @@ function classifyMintError(error: unknown): "retryable" | "fatal" {
 
 function defaultOfferName(label: string | null): string {
   const trimmed = label?.trim();
-  return trimmed ? trimmed : "BiBCode Server";
+  return trimmed ? trimmed : "Coddy Studio Server";
 }
 
 function copyText(value: string): void {
@@ -339,7 +339,7 @@ export function ShareThisHostTab(): ReactElement {
             title="Custom address"
             description={
               customAddressError ??
-              "Enter an externally managed http(s) address. BiBCode does not change the native listener or firewall."
+              "Enter an externally managed http(s) address. Coddy Studio does not change the native listener or firewall."
             }
             status={
               customAddressError ? (
@@ -444,11 +444,11 @@ export function ShareThisHostTab(): ReactElement {
               {wslOnlyPrimary ? (
                 <span className="block">
                   This WSL listener is externally managed. WSL/Hyper-V firewall policy controls
-                  external reachability, and BiBCode cannot switch it off automatically.
+                  external reachability, and Coddy Studio cannot switch it off automatically.
                 </span>
               ) : !hasDesktopBridge ? (
                 <span className="block">
-                  Exposure is controlled where the server is launched — restart `bibcode serve` with
+                  Exposure is controlled where the server is launched — restart `coddy-studio serve` with
                   `--host` to change it.
                 </span>
               ) : (
@@ -518,11 +518,11 @@ function GeneratedOfferPanel({ offer }: { readonly offer: GeneratedShareOffer })
     <div className="mx-4 mb-4 grid gap-4 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-[1fr_auto]">
       <div className="min-w-0 space-y-3">
         <OfferValue label="Pairing code" value={offer.code} />
-        <OfferValue label="BiBCode link" value={offer.deepLink} />
+        <OfferValue label="Coddy Studio link" value={offer.deepLink} />
         <OfferValue label="Open in browser — for networks you trust" value={offer.browserUrl} />
         <p className="text-xs text-warning">
           This link and the page it loads travel over plain HTTP. Prefer the pairing code for
-          BiBCode clients.
+          Coddy Studio clients.
         </p>
         {offer.reach === "this-computer" || offer.endpointClass === "loopback" ? (
           <p className="text-xs text-muted-foreground">
@@ -535,7 +535,7 @@ function GeneratedOfferPanel({ offer }: { readonly offer: GeneratedShareOffer })
         size={128}
         level="M"
         marginSize={2}
-        title="Pairing code — scan with a BiBCode client"
+        title="Pairing code — scan with a Coddy Studio client"
       />
     </div>
   );

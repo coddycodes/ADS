@@ -76,7 +76,7 @@ describe("run-windows-cargo-target", () => {
 
   it("uses native manifest IO and maps a missing exit status to failure", () => {
     const temporary = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-windows-cargo-target-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-windows-cargo-target-"),
     );
     const executable = NodePath.join(temporary, "fixture.exe");
     const manifestPath = `${executable}.manifest`;

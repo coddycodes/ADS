@@ -1,4 +1,4 @@
-import { AuthStandardClientScopes, EnvironmentId } from "@bibcode/contracts";
+import { AuthStandardClientScopes, EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,7 +18,7 @@ const CLIENT_PRESENTATION_LAYER = Layer.succeed(
   ClientPresentation,
   ClientPresentation.of({
     metadata: {
-      label: "BiBCode Test",
+      label: "Coddy Studio Test",
       deviceType: "desktop",
       os: "Test OS",
     },
@@ -34,7 +34,7 @@ function pairingHttpLayer(
     const url = String(input);
     calls.push({ url, init });
 
-    if (url.endsWith("/.well-known/bibcode/environment")) {
+    if (url.endsWith("/.well-known/coddy-studio/environment")) {
       if (options?.failDescriptor === true) {
         return Promise.resolve(
           Response.json({ message: "descriptor unavailable" }, { status: 503 }),
@@ -102,7 +102,7 @@ describe("connection onboarding", () => {
         },
       });
       expect(calls.map((call) => call.url)).toEqual([
-        "https://remote.example.test/.well-known/bibcode/environment",
+        "https://remote.example.test/.well-known/coddy-studio/environment",
         "https://remote.example.test/oauth/token",
       ]);
 
@@ -114,7 +114,7 @@ describe("connection onboarding", () => {
       const tokenParams = new URLSearchParams(tokenBody);
       expect(tokenParams.get("subject_token")).toBe("pairing-token");
       expect(tokenParams.get("scope")).toBe(AuthStandardClientScopes.join(" "));
-      expect(tokenParams.get("client_label")).toBe("BiBCode Test");
+      expect(tokenParams.get("client_label")).toBe("Coddy Studio Test");
     }),
   );
 
@@ -136,7 +136,7 @@ describe("connection onboarding", () => {
       );
 
       expect(calls.map((call) => call.url)).toEqual([
-        "https://remote.example.test/.well-known/bibcode/environment",
+        "https://remote.example.test/.well-known/coddy-studio/environment",
       ]);
     }),
   );

@@ -1,8 +1,8 @@
 # Source Control Integrations
 
-BiBCode uses Git for local repository operations and provider-specific tools for
+Coddy Studio uses Git for local repository operations and provider-specific tools for
 hosted repository and pull-request operations. Authentication belongs on the
-machine running the BiBCode server.
+machine running the Coddy Studio server.
 
 ## Current capability matrix
 
@@ -45,7 +45,7 @@ requires both permissions when both choices are selected. For GitLab merge
 message writes, the API payload sends both `auto_merge` (renamed in 17.11) and
 `merge_when_pipeline_succeeds` for older hosts.
 
-“Clone from URL” is a generic Git clone. It does not require BiBCode to identify
+“Clone from URL” is a generic Git clone. It does not require Coddy Studio to identify
 the hosting provider, but the URL's normal SSH or HTTPS credentials must work on
 the server.
 
@@ -79,7 +79,7 @@ disabled; publishing is not wired there.
 
 ## Pull requests and merge requests
 
-From the Git actions or Source Control UI, BiBCode can:
+From the Git actions or Source Control UI, Coddy Studio can:
 
 - detect an open PR/MR for the current branch;
 - generate proposed title and description text;
@@ -231,7 +231,7 @@ do not count.
 Azure DevOps and Bitbucket keep the plain dialog; the server refuses options
 for them before anything is published.
 An older environment that does not advertise branch-selection support disables
-creation with instructions to update its BiBCode server. The action also checks
+creation with instructions to update its Coddy Studio server. The action also checks
 the live connection's support before mutation, including after reconnect.
 The dialog renders separate publishing/creation phases when the connected server
 provides them. Native stacked actions currently emit start and terminal outcomes
@@ -292,7 +292,7 @@ The explicit header makes the raw file payload JSON on hosts that reject an
 empty content type; GraphQL queries and variables remain in the private file.
 Host/repository operands and `GH_HOST` / `GITLAB_HOST`
 pin every request; `glab api` also receives `--hostname`. Every `glab` that
-BiBCode starts, including status lookups, request creation and Settings
+Coddy Studio starts, including status lookups, request creation and Settings
 discovery, runs with `GLAB_SEND_TELEMETRY=0`: otherwise glab sends a telemetry
 event to the host before each command returns, which roughly doubles the cost
 of every call on a slow link. Your own `glab` configuration is unchanged. See the
@@ -349,7 +349,7 @@ publishing is not implemented.
 
 ### GitHub Enterprise and self-hosted GitLab
 
-Run authentication on the machine hosting the selected BiBCode environment,
+Run authentication on the machine hosting the selected Coddy Studio environment,
 using the same account/configuration as its server process:
 
 ```bash
@@ -357,7 +357,7 @@ gh auth login --hostname github.company.example
 glab auth login --hostname gitlab.company.example
 ```
 
-Use the actual hostname from the checkout's `origin`. BiBCode recognizes
+Use the actual hostname from the checkout's `origin`. Coddy Studio recognizes
 configured CLI hosts, including GitLab subgroup repository paths; it does not
 guess a provider from an arbitrary hostname. Only the host name counts:
 `github.com`, a host containing `gitlab`, Azure DevOps and Bitbucket hosts are
@@ -390,7 +390,7 @@ az extension add --name azure-devops
 az login
 ```
 
-BiBCode invokes `az repos pr` with repository auto-detection for pull-request
+Coddy Studio invokes `az repos pr` with repository auto-detection for pull-request
 operations. Native repository lookup and publishing are not implemented.
 
 ### Bitbucket
@@ -399,18 +399,18 @@ Bitbucket pull-request operations use its REST API directly. Configure either a
 bearer access token:
 
 ```bash
-export BIBCODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
+export CODDY_STUDIO_BITBUCKET_ACCESS_TOKEN="your-access-token"
 ```
 
 or an Atlassian email/API-token pair:
 
 ```bash
-export BIBCODE_BITBUCKET_EMAIL="you@example.com"
-export BIBCODE_BITBUCKET_API_TOKEN="your-api-token"
+export CODDY_STUDIO_BITBUCKET_EMAIL="you@example.com"
+export CODDY_STUDIO_BITBUCKET_API_TOKEN="your-api-token"
 ```
 
 Restart the server after changing its environment. The `origin` remote must be a
-recognizable Bitbucket URL so BiBCode can identify the workspace and repository.
+recognizable Bitbucket URL so Coddy Studio can identify the workspace and repository.
 Each Bitbucket REST operation has one 30-second deadline spanning request and
 response-body work. Response bodies are capped at 1 MiB before JSON decoding;
 both declared and chunked oversized responses fail with a typed provider error.
@@ -422,7 +422,7 @@ credentials are absent.
 
 ## Troubleshooting
 
-- Confirm `git` and the relevant provider CLI are on the BiBCode server's
+- Confirm `git` and the relevant provider CLI are on the Coddy Studio server's
   `PATH`, not only on the browser machine.
 - A newly configured upstream may precede its local remote-tracking ref, notably
   in a single-branch clone. Git Manager keeps local branches usable in that
@@ -437,7 +437,7 @@ credentials are absent.
 ## CLI launch failures
 
 The provider CLI must be available on the machine running the selected
-BiBCode environment. A failure to start `glab`, `gh`, or `az` is different from a
+Coddy Studio environment. A failure to start `glab`, `gh`, or `az` is different from a
 CLI that starts and returns an authentication, network or hosting-service error.
 Launch errors report a closed operating-system category and, when available, its
 numeric error code. They do not expose command arguments, environment values,

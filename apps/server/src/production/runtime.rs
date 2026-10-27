@@ -367,6 +367,18 @@ impl ProductionRuntime {
             ManagedEndpointRuntime::with_process_attribution(process_attribution.clone())
                 .with_relay_hosts(relay_hosts.clone());
         let provider_settings = ProviderSettingsStore::new(&state_paths.state_dir);
+        crate::server_settings::policy::init(crate::server_settings::policy::StudioPolicy::load(
+            &state_paths.state_dir,
+        ));
+        let device_sync_engine = orchestration.clone();
+        let device_sync_state = state_paths.state_dir.clone();
+        tokio::spawn(async move {
+            crate::production::device_projects::sync_device_projects(
+                &device_sync_engine,
+                &device_sync_state,
+            )
+            .await;
+        });
         let provider_terminal_preparer = ProviderTerminalActivitySupervisor::new_with_authority(
             Arc::new(ProviderSettingsInventoryAuthority::new(provider_settings)),
             terminal_activity_controller.clone(),
@@ -1815,8 +1827,8 @@ mod tests {
         let git = if cfg!(windows) { "git.exe" } else { "git" };
         for args in [
             &["init", "--quiet", "-b", "main"][..],
-            &["config", "user.name", "BiBCode Test"][..],
-            &["config", "user.email", "bibcode@example.invalid"][..],
+            &["config", "user.name", "Coddy Studio Test"][..],
+            &["config", "user.email", "coddy-studio@example.invalid"][..],
         ] {
             let output = std::process::Command::new(git)
                 .args(args)
@@ -3089,10 +3101,10 @@ mod tests {
             let output = std::process::Command::new("git")
                 .args(args)
                 .current_dir(&repository)
-                .env("GIT_AUTHOR_NAME", "BiBCode Test")
-                .env("GIT_AUTHOR_EMAIL", "bibcode@example.invalid")
-                .env("GIT_COMMITTER_NAME", "BiBCode Test")
-                .env("GIT_COMMITTER_EMAIL", "bibcode@example.invalid")
+                .env("GIT_AUTHOR_NAME", "Coddy Studio Test")
+                .env("GIT_AUTHOR_EMAIL", "coddy-studio@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Coddy Studio Test")
+                .env("GIT_COMMITTER_EMAIL", "coddy-studio@example.invalid")
                 .output()
                 .expect("Git command");
             assert!(
@@ -3208,8 +3220,8 @@ mod tests {
         };
         git(&["init", "--quiet"]);
         git(&["checkout", "--quiet", "-b", "main"]);
-        git(&["config", "user.email", "test@bibcode.local"]);
-        git(&["config", "user.name", "BiBCode Test"]);
+        git(&["config", "user.email", "test@coddy-studio.local"]);
+        git(&["config", "user.name", "Coddy Studio Test"]);
         std::fs::write(repository.path().join("tracked.txt"), "base\n").expect("write base");
         git(&["add", "tracked.txt"]);
         git(&["commit", "--quiet", "-m", "base"]);
@@ -3325,7 +3337,7 @@ mod tests {
         };
         use crate::test_support::reexec;
 
-        const FIXTURE: &str = "BIBCODE_REVIEW_ENVIRONMENT_FIXTURE";
+        const FIXTURE: &str = "CODDY_STUDIO_REVIEW_ENVIRONMENT_FIXTURE";
         const TEST: &str =
             "production::runtime::tests::review_diff_commands_ignore_appimage_environment";
         if let Some(child) = reexec::enter(TEST, "review-diff") {
@@ -3475,13 +3487,13 @@ mod tests {
             configure(command);
             command
                 .envs(environment)
-                .env("BIBCODE_TEST_REVIEW_REPOSITORY", &repository);
+                .env("CODDY_STUDIO_TEST_REVIEW_REPOSITORY", &repository);
         });
     }
 
     #[cfg(target_os = "linux")]
     fn review_repository() -> String {
-        std::env::var("BIBCODE_TEST_REVIEW_REPOSITORY").expect("review repository")
+        std::env::var("CODDY_STUDIO_TEST_REVIEW_REPOSITORY").expect("review repository")
     }
 
     #[cfg(target_os = "linux")]
@@ -3527,7 +3539,7 @@ mod tests {
         child.complete();
     }
 
-    /// `cargo test -p bibcode-server --lib -- --ignored --nocapture review_diff_timing`
+    /// `cargo test -p coddy-studio-server --lib -- --ignored --nocapture review_diff_timing`
     /// prints the median time of one tracked and one untracked review diff with an idle
     /// host and with a host that holds 4 GiB of touched heap.
     #[cfg(target_os = "linux")]
@@ -3556,7 +3568,7 @@ mod tests {
                         samples
                     });
                 samples.sort();
-                let results = std::env::var_os("BIBCODE_BENCH_RESULTS").expect("results path");
+                let results = std::env::var_os("CODDY_STUDIO_BENCH_RESULTS").expect("results path");
                 let mut existing = std::fs::read_to_string(&results).unwrap_or_default();
                 existing.push_str(&format!(
                     "heap={heap_gib}GiB review diffs median={:?} min={:?} max={:?}\n",
@@ -3576,7 +3588,7 @@ mod tests {
             run_review_case_as_appimage(REVIEW_BENCH_TEST, phase, |command| {
                 command
                     .arg("--include-ignored")
-                    .env("BIBCODE_BENCH_RESULTS", &path);
+                    .env("CODDY_STUDIO_BENCH_RESULTS", &path);
             });
         }
         print!(
@@ -3620,8 +3632,8 @@ mod tests {
         };
         git(&["init", "--quiet"]);
         git(&["checkout", "--quiet", "-b", "main"]);
-        git(&["config", "user.email", "test@bibcode.local"]);
-        git(&["config", "user.name", "BiBCode Test"]);
+        git(&["config", "user.email", "test@coddy-studio.local"]);
+        git(&["config", "user.name", "Coddy Studio Test"]);
         std::fs::write(repository.path().join("tracked.txt"), "base\n").expect("tracked file");
         git(&["add", "tracked.txt"]);
         git(&["commit", "--quiet", "-m", "base"]);

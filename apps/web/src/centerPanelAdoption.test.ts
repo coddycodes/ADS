@@ -1,5 +1,5 @@
-import { scopedThreadKey, scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ThreadId, type TerminalSummary } from "@bibcode/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@coddy/client-runtime/environment";
+import { EnvironmentId, ThreadId, type TerminalSummary } from "@coddy/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {

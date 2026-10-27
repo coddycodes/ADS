@@ -72,7 +72,7 @@ describe("ManagedEndpointAllocations", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user-1",
       environmentId: "env-1",
-      hostname: "environment.bibcode.test",
+      hostname: "environment.coddy.test",
       tunnelId: "tunnel-1",
       tunnelName: "tunnel-name",
       dnsRecordId: "dns-1",
@@ -88,13 +88,13 @@ describe("ManagedEndpointAllocations", () => {
       });
 
     expect(resolve({}, undefined)).toBeNull();
-    expect(resolve({ readyAt: null }, "bibcode.test")).toBeNull();
-    expect(resolve({ tunnelId: null }, "bibcode.test")).toBeNull();
-    expect(resolve({ dnsRecordId: null }, "bibcode.test")).toBeNull();
-    expect(resolve({ hostname: "outside.example.test" }, "bibcode.test")).toBeNull();
-    expect(resolve({}, "bibcode.test")).toEqual({
-      httpBaseUrl: "https://environment.bibcode.test/",
-      wsBaseUrl: "wss://environment.bibcode.test/ws",
+    expect(resolve({ readyAt: null }, "coddy.test")).toBeNull();
+    expect(resolve({ tunnelId: null }, "coddy.test")).toBeNull();
+    expect(resolve({ dnsRecordId: null }, "coddy.test")).toBeNull();
+    expect(resolve({ hostname: "outside.example.test" }, "coddy.test")).toBeNull();
+    expect(resolve({}, "coddy.test")).toEqual({
+      httpBaseUrl: "https://environment.coddy.test/",
+      wsBaseUrl: "wss://environment.coddy.test/ws",
       providerKind: "cloudflare_tunnel",
     });
   });
@@ -185,7 +185,7 @@ describe("ManagedEndpointAllocations", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user-1",
       environmentId: "env-1",
-      hostname: "env-1.bibcode.test",
+      hostname: "env-1.coddy.test",
       tunnelId: null,
       tunnelName: "tunnel-1",
       dnsRecordId: null,
@@ -213,7 +213,7 @@ describe("ManagedEndpointAllocations", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user-1",
       environmentId: "env-1",
-      hostname: "env-1.bibcode.test",
+      hostname: "env-1.coddy.test",
       tunnelId: null,
       tunnelName: "tunnel-1",
       dnsRecordId: null,
@@ -248,7 +248,7 @@ describe("ManagedEndpointAllocations", () => {
     const winner: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user-1",
       environmentId: "env-1",
-      hostname: "winner.bibcode.test",
+      hostname: "winner.coddy.test",
       tunnelId: "tunnel-winner",
       tunnelName: "winner",
       dnsRecordId: null,
@@ -271,7 +271,7 @@ describe("ManagedEndpointAllocations", () => {
         yield* allocations.reserve({
           userId: "user-1",
           environmentId: "env-1",
-          hostname: "candidate.bibcode.test",
+          hostname: "candidate.coddy.test",
           tunnelName: "candidate",
           ownership,
         }),
@@ -289,7 +289,7 @@ describe("ManagedEndpointAllocations", () => {
           allocations.reserve({
             userId: "user-1",
             environmentId: "env-1",
-            hostname: "env-1.bibcode.test",
+            hostname: "env-1.coddy.test",
             tunnelName: "tunnel-1",
             ownership,
           }),
@@ -611,7 +611,7 @@ describe("ManagedEndpointAllocations", () => {
         service.reserve({
           userId: ownership.userId,
           environmentId: ownership.environmentId,
-          hostname: "env-1.bibcode.test",
+          hostname: "env-1.coddy.test",
           tunnelName: "env-1",
           ownership,
         }),
@@ -970,7 +970,7 @@ describe("ManagedEndpointAllocations", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user-1",
       environmentId: "env-1",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       tunnelId: null,
       tunnelName: "tunnel",
       dnsRecordId: null,

@@ -8,7 +8,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CODEX_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");

@@ -27,10 +27,10 @@ const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "bibcode-relay",
+  clerkJwtAudience: "coddy-studio-relay",
   cloudMintPrivateKey: Redacted.make("cloud-private-key"),
   cloudMintPublicKey: "cloud-public-key",
-  managedEndpointBaseDomain: "bibcode.test",
+  managedEndpointBaseDomain: "coddy.test",
   managedEndpointNamespace: "dev_julius",
 });
 
@@ -300,7 +300,7 @@ function expectedManagedHostname(environmentId: string, userId = "user_ABC"): st
     .update(`dev_julius:${userId}:${environmentId}`)
     .digest("hex")
     .slice(0, 16);
-  return `dev-julius-${hash}.bibcode.test`;
+  return `dev-julius-${hash}.coddy.test`;
 }
 
 function expectedPreviewHostnames(environmentId: string, userId = "user_ABC"): string[] {
@@ -313,7 +313,7 @@ function expectedManagedTunnelName(environmentId: string, userId = "user_ABC"): 
     .update(`dev_julius:${userId}:${environmentId}`)
     .digest("hex")
     .slice(0, 16);
-  return `bibcoderelay-managedendpoint-dev-julius-${hash}`;
+  return `coddy-studio-relay-managedendpoint-dev-julius-${hash}`;
 }
 
 describe("ManagedEndpointProvider", () => {
@@ -553,7 +553,7 @@ describe("ManagedEndpointProvider", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user_ABC",
       environmentId: "env-stage",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       tunnelId: "tunnel-id",
       tunnelName: "tunnel-name",
       dnsRecordId: "dns-id",
@@ -922,7 +922,7 @@ describe("ManagedEndpointProvider", () => {
     const existingAllocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user_ABC",
       environmentId: "env-bindings-failure",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       tunnelId: "tunnel-id",
       tunnelName: "tunnel-name",
       dnsRecordId: "dns-id",
@@ -1002,7 +1002,7 @@ describe("ManagedEndpointProvider", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user_ABC",
       environmentId: "env-cloudflare-not-found",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       tunnelId: "tunnel-id",
       tunnelName: "tunnel-name",
       dnsRecordId: "dns-id",
@@ -1049,7 +1049,7 @@ describe("ManagedEndpointProvider", () => {
     let retryLists = 0;
     const failure = new ManagedEndpointProvider.ManagedEndpointDnsClientError({
       operation: "create-record",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       cause: "ambiguous create",
     });
     // Only the environment record collides; preview records are created normally.
@@ -1101,7 +1101,7 @@ describe("ManagedEndpointProvider", () => {
     let createFailed = false;
     const failure = new ManagedEndpointProvider.ManagedEndpointDnsClientError({
       operation: "create-record",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       cause: "ambiguous create",
     });
     const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
@@ -1141,7 +1141,7 @@ describe("ManagedEndpointProvider", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user_ABC",
       environmentId: "env-cleanup",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       tunnelId: "tunnel-id",
       tunnelName: "tunnel-name",
       dnsRecordId: "dns-id",
@@ -1185,7 +1185,7 @@ describe("ManagedEndpointProvider", () => {
     const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
       userId: "user_ABC",
       environmentId: "env-cleanup",
-      hostname: "env.bibcode.test",
+      hostname: "env.coddy.test",
       tunnelId: null,
       tunnelName: "tunnel-name",
       dnsRecordId: null,
@@ -1706,7 +1706,7 @@ describe("ManagedEndpointProvider", () => {
           | { readonly name?: string }
           | undefined
       )?.name;
-      expect(requestedName).toMatch(/^bibcoderelay-managedendpoint-dev-julius-[a-f0-9]{16}$/);
+      expect(requestedName).toMatch(/^coddy-studio-relay-managedendpoint-dev-julius-[a-f0-9]{16}$/);
       const configBody = (
         tunnelCalls.find((call) => call.operation === "putConfiguration")?.input as
           | { readonly tunnelConfig?: unknown }
@@ -1715,11 +1715,11 @@ describe("ManagedEndpointProvider", () => {
       expect(configBody).toMatchObject({
         ingress: [
           {
-            hostname: expect.stringMatching(/^dev-julius-[a-f0-9]{16}\.bibcode\.test$/),
+            hostname: expect.stringMatching(/^dev-julius-[a-f0-9]{16}\.coddy\.test$/),
           },
           ...[1, 2, 3, 4].map((slot) => ({
             hostname: expect.stringMatching(
-              new RegExp(`^dev-julius-[a-f0-9]{16}-p${slot}\\.bibcode\\.test$`, "u"),
+              new RegExp(`^dev-julius-[a-f0-9]{16}-p${slot}\\.coddy\\.test$`, "u"),
             ),
           })),
           { service: "http_status:404" },

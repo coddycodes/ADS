@@ -60,7 +60,7 @@ impl Controls {
         DecodedCloudProof {
             issuer: "https://relay.example".into(),
             subject: "cloud-user".into(),
-            audience: "bibcode-env:env-1".into(),
+            audience: "coddy-studio-env:env-1".into(),
             jwt_id: token.into(),
             issued_at: now,
             expires_at: now + 120,

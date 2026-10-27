@@ -11,7 +11,7 @@ mod hermetic_providers;
 
 use std::time::{Duration, Instant};
 
-use bibcode_server::{ServerConfig, ServerHandle, ServerRuntime};
+use coddy_studio_server::{ServerConfig, ServerHandle, ServerRuntime};
 use futures_util::{SinkExt, StreamExt};
 use tempfile::TempDir;
 use tokio_tungstenite::{
@@ -24,7 +24,7 @@ const MAX_CIPHERTEXT_BYTES: usize = 65_535;
 const RECORD_FINAL: u8 = 0;
 const RECORD_CONTINUATION: u8 = 1;
 /// The media route's Noise prologue; the TS client sends the same bytes.
-const MEDIA_PROLOGUE: &[u8] = b"bibcode-device-media/1";
+const MEDIA_PROLOGUE: &[u8] = b"coddy-studio-device-media/1";
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;

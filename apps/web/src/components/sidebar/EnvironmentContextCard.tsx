@@ -3,7 +3,7 @@ import { EllipsisIcon } from "lucide-react";
 import * as React from "react";
 import { useMemo } from "react";
 
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { cn } from "../../lib/utils";

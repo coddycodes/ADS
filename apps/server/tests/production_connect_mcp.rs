@@ -6,11 +6,11 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use bibcode_server::production::connect_mcp::{
+use coddy_studio_server::production::connect_mcp::{
     ConnectMcpConfig, ConnectMcpService, DecodedCloudProof, EndpointRuntime, JwtCodec,
     PairingCredential, PairingIssuer, PreviewInvoker, PreviewScope,
 };
-use bibcode_server::production::http_routes::{JsonOperation, RouteContext};
+use coddy_studio_server::production::http_routes::{JsonOperation, RouteContext};
 
 fn context(headers: HeaderMap) -> RouteContext {
     RouteContext {
@@ -39,7 +39,7 @@ async fn setup_service(
             Ok(DecodedCloudProof {
                 issuer: "https://relay.example".into(),
                 subject: "cloud-user".into(),
-                audience: "bibcode-env:env-1".into(),
+                audience: "coddy-studio-env:env-1".into(),
                 jwt_id: token.clone(),
                 issued_at: 1_700_000_000,
                 expires_at: 1_700_000_120,
@@ -160,7 +160,7 @@ async fn setup_service_with_failures(
             Ok(DecodedCloudProof {
                 issuer: "https://relay.example".into(),
                 subject: "cloud-user".into(),
-                audience: "bibcode-env:env-1".into(),
+                audience: "coddy-studio-env:env-1".into(),
                 jwt_id: token.clone(),
                 issued_at: 1_700_000_000,
                 expires_at: 1_700_000_120,
@@ -357,7 +357,7 @@ async fn link_proof_mint_and_unlink_preserve_connect_wire_contracts() {
             .body
             .as_str()
             .unwrap()
-            .starts_with("signed:bibcode-env-link+jwt:")
+            .starts_with("signed:coddy-studio-env-link+jwt:")
     );
 
     let minted = service
@@ -373,7 +373,7 @@ async fn link_proof_mint_and_unlink_preserve_connect_wire_contracts() {
         minted.body["proof"]
             .as_str()
             .unwrap()
-            .starts_with("signed:bibcode-env-mint+jwt:")
+            .starts_with("signed:coddy-studio-env-mint+jwt:")
     );
 
     let unlinked = service

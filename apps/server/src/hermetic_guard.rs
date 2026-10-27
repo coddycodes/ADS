@@ -9,10 +9,11 @@ use std::{
 use crate::process::{Platform, launch_executable_extensions, locate_executable};
 
 const DEFAULT_MODE: &str = "abort";
-const MODE_ENV: &str = "BIBCODE_HERMETIC_GUARD";
+const MODE_ENV: &str = "CODDY_STUDIO_HERMETIC_GUARD";
 const GUARDED_PROGRAMS: &[&str] = &[
     "claude",
     "codex",
+    "coddy",
     "opencode",
     "cursor-agent",
     "agent",
@@ -247,7 +248,7 @@ pub(crate) fn refusal_fixture(test: &str, program: &str) -> Option<PathBuf> {
     let case = "guard-direct-boundary";
     if TestSandbox::is_isolated_case(case, test) {
         return Some(PathBuf::from(
-            std::env::var_os("BIBCODE_GUARD_EXECUTABLE").unwrap(),
+            std::env::var_os("CODDY_STUDIO_GUARD_EXECUTABLE").unwrap(),
         ));
     }
     let sandbox = TestSandbox::new(program);
@@ -257,7 +258,7 @@ pub(crate) fn refusal_fixture(test: &str, program: &str) -> Option<PathBuf> {
     let trace = sandbox.path("spawned");
     executable_fixture::write_executable(
         &executable,
-        b"#!/bin/sh\nprintf spawned > \"$BIBCODE_GUARD_TRACE\"\n",
+        b"#!/bin/sh\nprintf spawned > \"$CODDY_STUDIO_GUARD_TRACE\"\n",
     );
     let output = sandbox.run_isolated_case(
         case,
@@ -268,8 +269,8 @@ pub(crate) fn refusal_fixture(test: &str, program: &str) -> Option<PathBuf> {
             ("TEMP", allowed.as_os_str()),
             ("HOME", allowed.as_os_str()),
             ("USERPROFILE", allowed.as_os_str()),
-            ("BIBCODE_GUARD_EXECUTABLE", executable.as_os_str()),
-            ("BIBCODE_GUARD_TRACE", trace.as_os_str()),
+            ("CODDY_STUDIO_GUARD_EXECUTABLE", executable.as_os_str()),
+            ("CODDY_STUDIO_GUARD_TRACE", trace.as_os_str()),
             (MODE_ENV, OsStr::new("report")),
         ],
     );
@@ -300,13 +301,14 @@ mod tests {
         const CASE: &str = "guard-malformed-reexec";
         const TEST: &str =
             "hermetic_guard::tests::malformed_isolated_child_arguments_fail_before_any_relaunch";
-        if std::env::var_os("BIBCODE_TEST_ISOLATED_CASE").as_deref() == Some(OsStr::new(CASE)) {
+        if std::env::var_os("CODDY_STUDIO_TEST_ISOLATED_CASE").as_deref() == Some(OsStr::new(CASE))
+        {
             assert!(TestSandbox::is_isolated_case(CASE, TEST));
             return;
         }
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
-            .env("BIBCODE_TEST_ISOLATED_CASE", CASE)
+            .env("CODDY_STUDIO_TEST_ISOLATED_CASE", CASE)
             .output()
             .unwrap();
         assert!(!output.status.success());
@@ -338,12 +340,12 @@ mod tests {
         std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .current_dir(sandbox.root())
-            .env("BIBCODE_TEST_ISOLATED_CASE", case)
+            .env("CODDY_STUDIO_TEST_ISOLATED_CASE", case)
             .env("PATH", path)
             .env("HOME", sandbox.root())
             .env("USERPROFILE", sandbox.root())
             .env("XDG_CONFIG_HOME", sandbox.root())
-            .env_remove("BIBCODE_HERMETIC_GUARD")
+            .env_remove("CODDY_STUDIO_HERMETIC_GUARD")
             .output()
             .unwrap()
     }
@@ -449,7 +451,7 @@ mod tests {
         let trace = sandbox.path("spawned");
         executable_fixture::write_executable(
             &sandbox.path("gh"),
-            b"#!/bin/sh\nprintf 'spawned' > \"$BIBCODE_GUARD_TRACE\"\n",
+            b"#!/bin/sh\nprintf 'spawned' > \"$CODDY_STUDIO_GUARD_TRACE\"\n",
         );
         let search_path =
             std::env::join_paths([sandbox.root(), Path::new(env!("CARGO_MANIFEST_DIR"))]).unwrap();
@@ -458,8 +460,8 @@ mod tests {
             TEST,
             &[
                 ("PATH", search_path.as_os_str()),
-                ("BIBCODE_GUARD_TRACE", trace.as_os_str()),
-                ("BIBCODE_HERMETIC_GUARD", OsStr::new("report")),
+                ("CODDY_STUDIO_GUARD_TRACE", trace.as_os_str()),
+                ("CODDY_STUDIO_HERMETIC_GUARD", OsStr::new("report")),
             ],
         );
         assert!(
@@ -506,7 +508,7 @@ mod tests {
         const CASE: &str = "guard-outside-root";
         const TEST: &str = "hermetic_guard::tests::explicit_outside_root_executable_is_refused_and_missing_paths_stay_missing";
         if TestSandbox::is_isolated_case(CASE, TEST) {
-            let executable = std::env::var("BIBCODE_GUARD_EXECUTABLE").unwrap();
+            let executable = std::env::var("CODDY_STUDIO_GUARD_EXECUTABLE").unwrap();
             assert!(
                 crate::production::provider_runtime::resolve_provider_executable_in_path(
                     &executable,
@@ -549,8 +551,8 @@ mod tests {
                 ("TMPDIR", allowed.as_os_str()),
                 ("TMP", allowed.as_os_str()),
                 ("TEMP", allowed.as_os_str()),
-                ("BIBCODE_GUARD_EXECUTABLE", executable.as_os_str()),
-                ("BIBCODE_HERMETIC_GUARD", OsStr::new("report")),
+                ("CODDY_STUDIO_GUARD_EXECUTABLE", executable.as_os_str()),
+                ("CODDY_STUDIO_HERMETIC_GUARD", OsStr::new("report")),
             ],
         );
         assert!(
@@ -566,7 +568,8 @@ mod tests {
         const CASE: &str = "guard-isolated-path";
         const TEST: &str = "hermetic_guard::tests::isolated_process_path_and_explicit_fixture_executables_are_allowed";
         if TestSandbox::is_isolated_case(CASE, TEST) {
-            let executable = PathBuf::from(std::env::var_os("BIBCODE_GUARD_EXECUTABLE").unwrap());
+            let executable =
+                PathBuf::from(std::env::var_os("CODDY_STUDIO_GUARD_EXECUTABLE").unwrap());
             for input in ["codex", executable.to_str().unwrap()] {
                 assert_eq!(
                     crate::production::provider_runtime::resolve_provider_executable_in_path(
@@ -586,7 +589,7 @@ mod tests {
             TEST,
             &[
                 ("PATH", sandbox.root().as_os_str()),
-                ("BIBCODE_GUARD_EXECUTABLE", executable.as_os_str()),
+                ("CODDY_STUDIO_GUARD_EXECUTABLE", executable.as_os_str()),
             ],
         );
         assert!(
@@ -603,7 +606,7 @@ mod tests {
         std::fs::create_dir_all(profile.join("deps")).unwrap();
         std::fs::create_dir_all(profile.join("examples")).unwrap();
         let locations = [
-            profile.join("bibcode"),
+            profile.join("coddy-studio"),
             profile.join("deps/test"),
             profile.join("examples/example"),
         ];
@@ -624,7 +627,8 @@ mod tests {
         const CASE: &str = "guard-runtime-manifest";
         const TEST: &str = "hermetic_guard::tests::runtime_manifest_fixture_root_is_allowed_outside_the_child_temporary_root";
         if TestSandbox::is_isolated_case(CASE, TEST) {
-            let executable = PathBuf::from(std::env::var_os("BIBCODE_GUARD_EXECUTABLE").unwrap());
+            let executable =
+                PathBuf::from(std::env::var_os("CODDY_STUDIO_GUARD_EXECUTABLE").unwrap());
             assert_eq!(
                 crate::production::provider_runtime::resolve_provider_executable_in_path(
                     executable.to_str().unwrap(),
@@ -649,7 +653,7 @@ mod tests {
                 ("TMP", temporary.as_os_str()),
                 ("TEMP", temporary.as_os_str()),
                 ("CARGO_MANIFEST_DIR", sandbox.root().as_os_str()),
-                ("BIBCODE_GUARD_EXECUTABLE", executable.as_os_str()),
+                ("CODDY_STUDIO_GUARD_EXECUTABLE", executable.as_os_str()),
             ],
         );
         assert!(
@@ -684,7 +688,7 @@ mod tests {
             );
             assert_eq!(
                 result.is_some(),
-                std::env::var("BIBCODE_GUARD_EXPECT_ALLOWED").unwrap() == "yes"
+                std::env::var("CODDY_STUDIO_GUARD_EXPECT_ALLOWED").unwrap() == "yes"
             );
             return;
         }
@@ -724,10 +728,10 @@ mod tests {
                 &[
                     ("PATH", path.as_os_str()),
                     (
-                        "BIBCODE_GUARD_EXPECT_ALLOWED",
+                        "CODDY_STUDIO_GUARD_EXPECT_ALLOWED",
                         OsStr::new(if allowed { "yes" } else { "no" }),
                     ),
-                    ("BIBCODE_HERMETIC_GUARD", OsStr::new("report")),
+                    ("CODDY_STUDIO_HERMETIC_GUARD", OsStr::new("report")),
                 ],
             );
             assert!(
@@ -806,7 +810,7 @@ mod tests {
         const TEST: &str = "hermetic_guard::tests::invalid_mode_aborts_with_raw_stderr_instead_of_allowing_an_off_switch";
         if TestSandbox::is_isolated_case(CASE, TEST) {
             let child_sandbox = TestSandbox::new("guard-invalid-mode-child");
-            let cwd = std::env::var_os("BIBCODE_GUARD_ABORT_CWD")
+            let cwd = std::env::var_os("CODDY_STUDIO_GUARD_ABORT_CWD")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| child_sandbox.root().to_path_buf());
             std::env::set_current_dir(cwd).unwrap();
@@ -829,8 +833,8 @@ mod tests {
             CASE,
             TEST,
             &[
-                ("BIBCODE_HERMETIC_GUARD", OsStr::new("off")),
-                ("BIBCODE_GUARD_ABORT_CWD", sandbox.root().as_os_str()),
+                ("CODDY_STUDIO_HERMETIC_GUARD", OsStr::new("off")),
+                ("CODDY_STUDIO_GUARD_ABORT_CWD", sandbox.root().as_os_str()),
             ],
         );
         assert!(!output.status.success());
@@ -841,7 +845,7 @@ mod tests {
         }
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .contains("invalid BIBCODE_HERMETIC_GUARD value \"off\"")
+                .contains("invalid CODDY_STUDIO_HERMETIC_GUARD value \"off\"")
         );
         #[cfg(target_os = "linux")]
         if let (Some(directory), Some(before)) = (core_directory.as_ref(), cores_before.as_ref()) {
@@ -881,7 +885,7 @@ mod tests {
             TEST,
             &[
                 ("PATH", search_path.as_os_str()),
-                ("BIBCODE_HERMETIC_GUARD", OsStr::new("report")),
+                ("CODDY_STUDIO_HERMETIC_GUARD", OsStr::new("report")),
             ],
         );
         assert!(

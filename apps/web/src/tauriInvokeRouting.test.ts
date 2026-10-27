@@ -5,7 +5,7 @@ import { invokeTauriCommand } from "./tauriInvokeRouting";
 describe("invokeTauriCommand", () => {
   it("routes an E2E command through its registered mock before native Tauri", async () => {
     const args = { options: { title: "Select Folder" } };
-    const e2eMock = vi.fn(() => "/tmp/bibcode-ui-project");
+    const e2eMock = vi.fn(() => "/tmp/coddy-studio-ui-project");
     const globalInvoke = vi.fn(async () => "global");
     const importedInvoke = vi.fn(async () => "imported");
 
@@ -17,7 +17,7 @@ describe("invokeTauriCommand", () => {
         globalInvoke,
         importedInvoke,
       }),
-    ).resolves.toBe("/tmp/bibcode-ui-project");
+    ).resolves.toBe("/tmp/coddy-studio-ui-project");
 
     expect(e2eMock).toHaveBeenCalledExactlyOnceWith(args);
     expect(globalInvoke).not.toHaveBeenCalled();

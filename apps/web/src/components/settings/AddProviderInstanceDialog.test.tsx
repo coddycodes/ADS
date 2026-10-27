@@ -17,7 +17,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 const harness = vi.hoisted(() => {
   type Matcher = (initial: unknown) => boolean;

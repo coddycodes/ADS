@@ -3756,7 +3756,7 @@ impl TerminalManager {
 }
 
 /// Reports a session's process that ended by itself to the profiler. Only crash signals
-/// count: in a terminal people end processes with `exit 1`, Ctrl-C or `kill`. BiBCode's own
+/// count: in a terminal people end processes with `exit 1`, Ctrl-C or `kill`. Coddy Studio's own
 /// stops invalidate the generation first, or note the stop.
 fn report_process_exit(session: &Session) {
     let (Some(pid), Some(status)) = (
@@ -6890,7 +6890,9 @@ mod tests {
             120,
             30,
         );
-        input.env.insert("BIBCODE_TEST".to_owned(), "1".to_owned());
+        input
+            .env
+            .insert("CODDY_STUDIO_TEST".to_owned(), "1".to_owned());
         input.command = Some(crate::terminal::TerminalLaunchCommand {
             executable: "/opt/Provider CLI/codex".to_owned(),
             args: vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()],
@@ -6913,7 +6915,7 @@ mod tests {
         );
         assert_eq!(spawns[0].cwd, root.path());
         assert_eq!(
-            spawns[0].env.get("BIBCODE_TEST").map(String::as_str),
+            spawns[0].env.get("CODDY_STUDIO_TEST").map(String::as_str),
             Some("1")
         );
     }
@@ -8339,13 +8341,13 @@ mod tests {
         assert_eq!(spawns.len(), 2, "open and restart each spawn once");
         let separator = if cfg!(windows) { ';' } else { ':' };
         for (spawn, token) in spawns.iter().zip(issued.lock().unwrap().iter()) {
-            assert_eq!(spawn.env["BIBCODE_OPEN_URL_AUTH"], *token);
+            assert_eq!(spawn.env["CODDY_STUDIO_OPEN_URL_AUTH"], *token);
             assert_eq!(
-                spawn.env["BIBCODE_OPEN_URL_ENDPOINT"],
+                spawn.env["CODDY_STUDIO_OPEN_URL_ENDPOINT"],
                 "http://127.0.0.1:3773/api/preview/open-url"
             );
-            assert_eq!(spawn.env["BROWSER"], "bibcode-open-url");
-            assert_eq!(spawn.env["BRAINSTORM_OPEN_CMD"], "bibcode-open-url");
+            assert_eq!(spawn.env["BROWSER"], "coddy-studio-open-url");
+            assert_eq!(spawn.env["BRAINSTORM_OPEN_CMD"], "coddy-studio-open-url");
             assert_eq!(
                 spawn.env["PATH"],
                 format!("/state/runtime/open-url{separator}/client/bin")
@@ -8380,7 +8382,7 @@ mod tests {
             24,
         );
         input.env.insert(
-            "BIBCODE_WINDOWS_CONSOLE_THEME".to_owned(),
+            "CODDY_STUDIO_WINDOWS_CONSOLE_THEME".to_owned(),
             "light".to_owned(),
         );
 
@@ -8404,7 +8406,7 @@ mod tests {
         let mut metadata_events = metadata.events;
 
         input.env.insert(
-            "BIBCODE_WINDOWS_CONSOLE_THEME".to_owned(),
+            "CODDY_STUDIO_WINDOWS_CONSOLE_THEME".to_owned(),
             "dark".to_owned(),
         );
         let restarted = manager.restart(input).await.unwrap();
@@ -8961,7 +8963,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn terminals_bibcode_stops_are_not_reported_whatever_their_exit() {
+    async fn terminals_coddy_studio_stops_are_not_reported_whatever_their_exit() {
         let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
         let root = tempfile::tempdir().unwrap();
         let backend = Arc::new(HistoryTestBackend::default());
@@ -8983,7 +8985,7 @@ mod tests {
                 ))
                 .await
                 .expect("terminal starts");
-            // Whatever a kill leaves behind, a stop BiBCode made is not a crash.
+            // Whatever a kill leaves behind, a stop Coddy Studio made is not a crash.
             *backend.latest().exit_status.lock().unwrap() = Some(raw_status(libc::SIGSEGV));
         }
 

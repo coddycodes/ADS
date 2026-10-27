@@ -1,4 +1,4 @@
 export {
   isTransportConnectionErrorMessage,
   sanitizeThreadErrorMessage,
-} from "@bibcode/client-runtime/errors";
+} from "@coddy/client-runtime/errors";

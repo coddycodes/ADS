@@ -1,6 +1,6 @@
-import type { AdvertisedEndpoint, DesktopServerExposureState } from "@bibcode/contracts";
-import { classifyPairingEndpoint, normalizeHttpBaseUrl } from "@bibcode/shared/advertisedEndpoint";
-import { buildBrowserPairUrl, buildPairingDeepLink } from "@bibcode/shared/pairingCode";
+import type { AdvertisedEndpoint, DesktopServerExposureState } from "@coddy/contracts";
+import { classifyPairingEndpoint, normalizeHttpBaseUrl } from "@coddy/shared/advertisedEndpoint";
+import { buildBrowserPairUrl, buildPairingDeepLink } from "@coddy/shared/pairingCode";
 
 import { raceWithDeadline } from "../../../state/shareExposureReconciler.ts";
 import { shareClassForPairingEndpoint } from "./endpointClass.ts";
@@ -82,8 +82,8 @@ export function resolveShareAddressOptions(input: {
       httpBaseUrl: automaticEndpoint,
       description:
         input.exposureState?.endpointUrl === null
-          ? "BiBCode will enable remote access and choose a LAN address."
-          : "Use the LAN address selected by BiBCode.",
+          ? "Coddy Studio will enable remote access and choose a LAN address."
+          : "Use the LAN address selected by Coddy Studio.",
     });
   }
   const seen = new Set(

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_server::diagnostics::profiler::{
+use coddy_studio_server::diagnostics::profiler::{
     exits::{self, Exited, Watch},
     findings::fingerprint,
     profiler_dir,
@@ -117,7 +117,7 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
     exits::report_exit(Watch::Signals, &gh, &crashed(), false);
     exits::report_webview_terminated("ExceededMemoryLimit", None);
 
-    // Once BiBCode received a termination signal, what dies dies with it, though the profiler
+    // Once Coddy Studio received a termination signal, what dies dies with it, though the profiler
     // is on. Process-global and final, so it comes last.
     toggle.send(true).unwrap();
     eventually(|| runtime.status()["enabled"] == true).await;
@@ -187,7 +187,7 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
 async fn a_terminal_that_dies_of_a_signal_is_recorded_and_a_closed_one_is_not(
     runtime: &ProfilerRuntime,
 ) {
-    use bibcode_server::terminal::{
+    use coddy_studio_server::terminal::{
         PortablePtyBackend, TerminalLaunchCommand, TerminalManager, TerminalManagerOptions,
         TerminalOpenInput,
     };

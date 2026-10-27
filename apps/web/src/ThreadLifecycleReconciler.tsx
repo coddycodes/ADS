@@ -3,8 +3,8 @@ import {
   parseScopedThreadKey,
   scopedThreadKey,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
-import type { EnvironmentId, TerminalMetadataStreamEvent, ThreadId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/environment";
+import type { EnvironmentId, TerminalMetadataStreamEvent, ThreadId } from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

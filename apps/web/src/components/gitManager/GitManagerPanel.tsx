@@ -1,6 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import { isQueryTransportCutoff } from "@bibcode/client-runtime/state/runtime";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import { isQueryTransportCutoff } from "@coddy/client-runtime/state/runtime";
 import type {
   GitManagerInProgressOperation,
   GitManagerConflictState,
@@ -11,7 +11,7 @@ import type {
   GitManagerStashEntry,
   ScopedProjectRef,
   VcsWorktreeDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import {
   ArchiveIcon,

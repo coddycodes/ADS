@@ -210,7 +210,7 @@ async fn bounded_send(request: reqwest::RequestBuilder) -> Result<(), String> {
     }
 }
 
-/// The questions of an OpenCode 1 question request, as BiBCode shows them.
+/// The questions of an OpenCode 1 question request, as Coddy Studio shows them.
 fn v1_questions(request: &Value) -> Vec<Value> {
     request
         .get("questions")
@@ -414,10 +414,10 @@ struct V2State {
     normalizer: V2ActivityNormalizer,
     permissions: HashMap<String, (Option<String>, String)>,
     forms: HashMap<String, V2PendingForm>,
-    /// Asks BiBCode is replying to: OpenCode's own settlement of them is left to the reply, so
-    /// the resolution carries BiBCode's decision and is reported once.
+    /// Asks Coddy Studio is replying to: OpenCode's own settlement of them is left to the reply, so
+    /// the resolution carries Coddy Studio's decision and is reported once.
     answering: HashSet<String>,
-    /// Asks OpenCode settled while BiBCode's reply was in flight: the reply succeeded even if its
+    /// Asks OpenCode settled while Coddy Studio's reply was in flight: the reply succeeded even if its
     /// HTTP response was lost.
     settled_while_answering: HashSet<String>,
     synced_model: Option<(String, String, Option<String>)>,
@@ -430,10 +430,10 @@ struct V2State {
     /// Asks OpenCode was waiting on when the session resumed, shown once the event stream is
     /// connected and they are confirmed still pending.
     recovered_asks: Vec<(&'static str, String, Value)>,
-    /// Forms BiBCode cannot show that OpenCode was waiting on when the session resumed (form id,
+    /// Forms Coddy Studio cannot show that OpenCode was waiting on when the session resumed (form id,
     /// session id), cancelled once the event stream is connected, as a live one is.
     recovered_unanswerable: Vec<(String, String)>,
-    /// Forms BiBCode cannot show that it already cancelled, so a form seen both on resume and
+    /// Forms Coddy Studio cannot show that it already cancelled, so a form seen both on resume and
     /// live is cancelled, and reported, once.
     cancelled_forms: HashSet<String>,
     /// OpenCode 1 asks settled on the event stream since the session resumed, so a recovery read
@@ -450,17 +450,17 @@ struct V2State {
     /// The resume's check for a running execution has not answered conclusively, and the stream
     /// has not reported an execution starting or ending: root output gets a turn of its own.
     adopt_pending: bool,
-    /// The progress of a checkpoint rewind that has not reported success, counted from BiBCode's
+    /// The progress of a checkpoint rewind that has not reported success, counted from Coddy Studio's
     /// unchanged transcript. See `v2_rollback`.
     rewind: V2RewindProgress,
     /// The last rewind that reported success, as kept with the session: a retry of it (same key,
-    /// from a BiBCode transcript that did not record its completion) drops nothing more.
+    /// from a Coddy Studio transcript that did not record its completion) drops nothing more.
     finished_rewind: Option<V2RewindProgress>,
 }
 
 #[derive(Clone, Default, Eq, PartialEq)]
 struct V2RewindProgress {
-    /// The checkpoint revert's idempotency key: the BiBCode transcript the turns are counted
+    /// The checkpoint revert's idempotency key: the Coddy Studio transcript the turns are counted
     /// from. A rewind with another key starts afresh.
     key: Option<String>,
     /// Turns OpenCode is known to have dropped.
@@ -479,12 +479,12 @@ impl V2RewindProgress {
         }
     }
 
-    /// Turns dropped, or a revert in doubt, that BiBCode's transcript does not show yet.
+    /// Turns dropped, or a revert in doubt, that Coddy Studio's transcript does not show yet.
     fn is_unfinished(&self) -> bool {
         !self.finished && (self.dropped > 0 || self.unsettled.is_some())
     }
 
-    /// The progress as kept in the OpenCode 2 session's metadata (`bibcode.rewind`).
+    /// The progress as kept in the OpenCode 2 session's metadata (`coddy-studio.rewind`).
     fn to_json(&self) -> Value {
         let mut record = json!({ "key": self.key, "dropped": self.dropped });
         if let Some((turns, target)) = &self.unsettled {
@@ -967,10 +967,10 @@ impl OpenCodeSessionRuntime {
         self.reset_activity_root(session_id).await;
         self.emit("session.started", None, None, payload).await;
         self.emit("thread.started", None, None, json!({})).await;
-        // OpenCode does not replay asks made while BiBCode was away; they are shown once the
+        // OpenCode does not replay asks made while Coddy Studio was away; they are shown once the
         // event stream connects (see `v1_show_recovered_asks` and `v2_show_recovered_asks`).
         self.inner.v2.lock().await.recovered_asks = recovered_asks;
-        // A resumed session may still be executing (OpenCode kept working while BiBCode was away),
+        // A resumed session may still be executing (OpenCode kept working while Coddy Studio was away),
         // and reconciles its pending asks once subscribed.
         if resumed {
             let mut v2 = self.inner.v2.lock().await;
@@ -987,7 +987,7 @@ impl OpenCodeSessionRuntime {
         let model = self.inner.model.lock().await.clone();
         let variant = self.inner.selected_variant.lock().await.clone();
         let body = v2::session_create_body(
-            &format!("BiBCode {}", self.inner.thread_id),
+            &format!("Coddy Studio {}", self.inner.thread_id),
             &self.inner.directory,
             &runtime_mode,
             self.inner.agent.as_deref(),
@@ -1034,7 +1034,7 @@ impl OpenCodeSessionRuntime {
             .client
             .post(self.request_url("/session")?)
             .json(&json!({
-                "title": format!("BiBCode {}", self.inner.thread_id),
+                "title": format!("Coddy Studio {}", self.inner.thread_id),
                 "permission": permission,
             }))
             .send()
@@ -1098,7 +1098,7 @@ impl OpenCodeSessionRuntime {
             // A checkpoint rewind that had not reported success when the runtime went away
             // continues from the progress kept with the session.
             if let Some(progress) = session
-                .pointer("/data/metadata/bibcode/rewind")
+                .pointer("/data/metadata/coddy-studio/rewind")
                 .and_then(V2RewindProgress::from_json)
             {
                 let mut v2 = self.inner.v2.lock().await;
@@ -1479,7 +1479,7 @@ impl OpenCodeSessionRuntime {
         }
         if self.is_v2() {
             // OpenCode 2 takes no message id for a command, so a command's delivery cannot be
-            // looked up exactly afterwards: if BiBCode stops between OpenCode accepting the
+            // looked up exactly afterwards: if Coddy Studio stops between OpenCode accepting the
             // command and recording the delivery, restart recovery finds no message and sends
             // it again. The window is that of one database write.
             // The checks run before the turn is announced: when one fails nothing was sent.
@@ -1779,7 +1779,7 @@ impl OpenCodeSessionRuntime {
     }
 
     /// A turn OpenCode started on its own. It is marked so the supervisor projects it running:
-    /// BiBCode's own turns are announced before they are sent, and a send can still fail.
+    /// Coddy Studio's own turns are announced before they are sent, and a send can still fail.
     async fn begin_provider_started_turn(&self) -> String {
         self.begin_turn_with(json!({ "providerStarted": true }))
             .await
@@ -2032,7 +2032,7 @@ impl OpenCodeSessionRuntime {
         Ok(())
     }
 
-    /// `rewind_key` identifies the checkpoint revert (the BiBCode transcript it counts from), so
+    /// `rewind_key` identifies the checkpoint revert (the Coddy Studio transcript it counts from), so
     /// a retry is applied once. OpenCode 1 reverts in one request and does not use it.
     pub async fn rollback_thread(
         &self,
@@ -2304,7 +2304,7 @@ impl OpenCodeSessionRuntime {
                     Ok(None) => {
                         // The stream ending is how a crashed or killed opencode
                         // server presents. Saying nothing made that look like a
-                        // hung BiBCode.
+                        // hung Coddy Studio.
                         if let Some(inner) = runtime.upgrade() {
                             let runtime = OpenCodeSessionRuntime::internal(inner);
                             runtime
@@ -2978,7 +2978,7 @@ impl OpenCodeSessionRuntime {
                     form_id,
                     session_id,
                 } => {
-                    // A form BiBCode cannot show (such as a sign-in link) would block the agent;
+                    // A form Coddy Studio cannot show (such as a sign-in link) would block the agent;
                     // cancelling it tells the agent nobody answered.
                     self.spawn_v2_cancel_unanswerable_form(form_id, session_id, turn_id)
                         .await;
@@ -3010,7 +3010,7 @@ impl OpenCodeSessionRuntime {
         }
     }
 
-    /// Sends BiBCode's agent and model selection to an OpenCode 2 session when it changed, since
+    /// Sends Coddy Studio's agent and model selection to an OpenCode 2 session when it changed, since
     /// OpenCode 2 keeps them as session state rather than per prompt.
     async fn v2_sync_selection(&self, session_id: &str) -> Result<(), OpenCodeRuntimeError> {
         let model = self.inner.model.lock().await.clone();
@@ -3077,8 +3077,8 @@ impl OpenCodeSessionRuntime {
     }
 
     /// Routes replies to the permission requests and forms a resumed session and its descendants
-    /// are still waiting on: OpenCode's event stream does not replay asks made before BiBCode
-    /// connected. Those BiBCode can show are returned to be shown once the stream connects; those
+    /// are still waiting on: OpenCode's event stream does not replay asks made before Coddy Studio
+    /// connected. Those Coddy Studio can show are returned to be shown once the stream connects; those
     /// it cannot are queued for cancellation. A read that failed leaves the reconciliation after
     /// the subscription to try again.
     async fn v2_restore_pending_asks(
@@ -3175,7 +3175,7 @@ impl OpenCodeSessionRuntime {
     }
 
     /// Routes the listed asks not routed, settled or cancelled yet. Returns those to show, marked
-    /// `recovered`, and the forms BiBCode cannot show, to be cancelled.
+    /// `recovered`, and the forms Coddy Studio cannot show, to be cancelled.
     async fn v2_route_pending_asks(
         &self,
         asks: Vec<(String, &'static str, Value)>,
@@ -3210,7 +3210,7 @@ impl OpenCodeSessionRuntime {
             if v2.forms.contains_key(id) || v2.cancelled_forms.contains(id) {
                 continue;
             }
-            // One BiBCode cannot show is cancelled, as a live one is.
+            // One Coddy Studio cannot show is cancelled, as a live one is.
             let Some((questions, fields)) = v2::form_questions(&ask) else {
                 if !unanswerable.iter().any(|(form_id, _)| form_id == id) {
                     unanswerable.push((id.to_owned(), session_id.clone()));
@@ -3508,7 +3508,7 @@ impl OpenCodeSessionRuntime {
         }
     }
 
-    /// Cancels a form BiBCode cannot show, live or recovered on resume, once per form: off the
+    /// Cancels a form Coddy Studio cannot show, live or recovered on resume, once per form: off the
     /// event pump and bounded, so a cancel that never answers does not hold later events (or
     /// Stop). The chat is told either way: the agent was told nobody answered, or, when the cancel
     /// failed, it is still waiting. A form already gone (HTTP 404) was settled elsewhere.
@@ -3549,7 +3549,7 @@ impl OpenCodeSessionRuntime {
                 Ok(()) => {
                     tracing::warn!(
                         provider = "opencode",
-                        "cancelled an OpenCode form BiBCode cannot show"
+                        "cancelled an OpenCode form Coddy Studio cannot show"
                     );
                     if let Some(inner) = runtime.upgrade() {
                         OpenCodeSessionRuntime::internal(inner)
@@ -3558,7 +3558,7 @@ impl OpenCodeSessionRuntime {
                                 turn_id,
                                 None,
                                 json!({
-                                    "message": "OpenCode asked for an answer BiBCode can't show, such as free text or a sign-in link, so it was cancelled and the agent was told nobody answered.",
+                                    "message": "OpenCode asked for an answer Coddy Studio can't show, such as free text or a sign-in link, so it was cancelled and the agent was told nobody answered.",
                                 }),
                             )
                             .await;
@@ -3566,13 +3566,13 @@ impl OpenCodeSessionRuntime {
                 }
                 Err(error) if error.starts_with("HTTP 404") => tracing::debug!(
                     provider = "opencode",
-                    "an OpenCode form BiBCode cannot show was already settled"
+                    "an OpenCode form Coddy Studio cannot show was already settled"
                 ),
                 Err(error) => {
                     tracing::warn!(
                         provider = "opencode",
                         %error,
-                        "could not cancel an OpenCode form BiBCode cannot show"
+                        "could not cancel an OpenCode form Coddy Studio cannot show"
                     );
                     if let Some(inner) = runtime.upgrade() {
                         OpenCodeSessionRuntime::internal(inner)
@@ -3581,7 +3581,7 @@ impl OpenCodeSessionRuntime {
                                 turn_id,
                                 None,
                                 json!({
-                                    "message": "OpenCode is waiting for an answer BiBCode can't show. Answer it in the OpenCode terminal, or stop the turn.",
+                                    "message": "OpenCode is waiting for an answer Coddy Studio can't show. Answer it in the OpenCode terminal, or stop the turn.",
                                     "class": "provider_error",
                                 }),
                             )
@@ -3622,7 +3622,7 @@ impl OpenCodeSessionRuntime {
     /// Once subscribed, reads the pending asks again: one created between the resume's read and
     /// the subscription is listed only now (OpenCode does not replay it), and a read that failed
     /// is tried again with a backoff, each failure logged, until every read succeeds or the
-    /// attempts run out. Newly found asks are shown (or, if BiBCode cannot show them, cancelled).
+    /// attempts run out. Newly found asks are shown (or, if Coddy Studio cannot show them, cancelled).
     async fn v2_read_asks_again(&self) {
         let Ok(root_session_id) = self.session_id().await else {
             return;
@@ -3721,7 +3721,7 @@ impl OpenCodeSessionRuntime {
             if still_pending {
                 self.emit(event_type, None, Some(request_id), ask).await;
             } else if v2.permissions.remove(&request_id).is_some() {
-                // Settled before the subscription, so its settlement never arrives: one BiBCode
+                // Settled before the subscription, so its settlement never arrives: one Coddy Studio
                 // already showed is resolved here.
                 self.emit(
                     "request.resolved",
@@ -3758,7 +3758,7 @@ impl OpenCodeSessionRuntime {
         }
     }
 
-    /// A resumed session may still be executing (OpenCode kept working while BiBCode was away);
+    /// A resumed session may still be executing (OpenCode kept working while Coddy Studio was away);
     /// its start is not replayed, so report it as a turn and let its end complete it. The check
     /// runs off the event pump, bounded, so a stalled read never holds its events (or Stop). If
     /// the stream reports an execution starting or ending meanwhile, it already speaks for the
@@ -3869,14 +3869,14 @@ impl OpenCodeSessionRuntime {
     /// Once a commit lands the conversation has changed for good, so it counts even if its answer
     /// is lost (the target message is gone), and the final read is best effort. A stage that does
     /// not commit is cleared, since OpenCode would commit it with the next prompt. Until a rewind
-    /// reports success BiBCode's transcript is unchanged, so the turns already dropped (and a
+    /// reports success Coddy Studio's transcript is unchanged, so the turns already dropped (and a
     /// revert whose outcome could not be read) are remembered: a retry, or a rewind to another
     /// checkpoint, drops only the turns still missing, and prompts wait. The memory lives in this
-    /// runtime and, so a BiBCode restart finds it, in the OpenCode session's own metadata
-    /// (`bibcode.rewind`), keyed by the checkpoint revert's `rewind_key`: it is written before
+    /// runtime and, so a Coddy Studio restart finds it, in the OpenCode session's own metadata
+    /// (`coddy-studio.rewind`), keyed by the checkpoint revert's `rewind_key`: it is written before
     /// each stage and marked finished when the rewind succeeds, and a resumed session restores
     /// it. A retry with the same key continues from it, or drops nothing more once it finished,
-    /// so the rewind is applied once even if BiBCode lost its completion; a rewind with another
+    /// so the rewind is applied once even if Coddy Studio lost its completion; a rewind with another
     /// key starts afresh. The driver keeps the session from idle suspension while it is
     /// unfinished (`has_unfinished_rewind`).
     async fn v2_rollback(
@@ -3894,7 +3894,7 @@ impl OpenCodeSessionRuntime {
                 // Progress restored from a record that predates keys: this is its retry.
                 v2.rewind.key = Some(rewind_key.to_owned());
             } else if v2.rewind.key.as_deref() != Some(rewind_key) {
-                // Progress of another rewind: BiBCode's transcript moved on since. A finished
+                // Progress of another rewind: Coddy Studio's transcript moved on since. A finished
                 // rewind with this key is a retry of it.
                 let finished = v2
                     .finished_rewind
@@ -3968,7 +3968,7 @@ impl OpenCodeSessionRuntime {
                 }
             }
         }
-        // Every turn is dropped, but BiBCode's transcript shows that only once this reports
+        // Every turn is dropped, but Coddy Studio's transcript shows that only once this reports
         // success; until then the progress holds prompts and a retry drops nothing more.
         self.inner.v2.lock().await.rewind = V2RewindProgress {
             key: Some(rewind_key.to_owned()),
@@ -3978,7 +3978,7 @@ impl OpenCodeSessionRuntime {
         };
         // Success needs the record marked finished, or a later runtime would restore the progress
         // and hold prompts for a retry that never comes. A failed write may still have landed, and
-        // a later runtime would then release prompts while BiBCode's transcript still shows the
+        // a later runtime would then release prompts while Coddy Studio's transcript still shows the
         // dropped turns, so the record is read back: a finished one for this rewind succeeds.
         // Anything else fails the rewind, and its retry (same key) marks it finished without
         // dropping more.
@@ -3997,7 +3997,7 @@ impl OpenCodeSessionRuntime {
             .flatten()
             .and_then(|session| {
                 session
-                    .pointer("/data/metadata/bibcode/rewind")
+                    .pointer("/data/metadata/coddy-studio/rewind")
                     .and_then(V2RewindProgress::from_json)
             });
             if recorded.as_ref() != Some(&finished) {
@@ -4074,8 +4074,8 @@ impl OpenCodeSessionRuntime {
         Ok(())
     }
 
-    /// Keeps the rewind progress in the OpenCode 2 session's metadata (`bibcode.rewind`), so a
-    /// BiBCode restart finds it; an empty progress removes it. OpenCode replaces the metadata
+    /// Keeps the rewind progress in the OpenCode 2 session's metadata (`coddy-studio.rewind`), so a
+    /// Coddy Studio restart finds it; an empty progress removes it. OpenCode replaces the metadata
     /// whole, so the rest of it is read and written back.
     async fn v2_store_rewind(
         &self,
@@ -4094,27 +4094,32 @@ impl OpenCodeSessionRuntime {
             .filter(|metadata| metadata.is_object())
             .cloned()
             .unwrap_or_else(|| json!({}));
-        let mut bibcode = metadata
-            .get("bibcode")
-            .filter(|bibcode| bibcode.is_object())
+        let mut coddy_studio = metadata
+            .get("coddy-studio")
+            .or_else(|| metadata.get("bibcode"))
+            .filter(|coddy_studio| coddy_studio.is_object())
             .cloned()
             .unwrap_or_else(|| json!({}));
         let empty = *progress == V2RewindProgress::default();
-        if empty && bibcode.get("rewind").is_none() {
+        if empty && coddy_studio.get("rewind").is_none() {
             return Ok(());
         }
-        if let Some(bibcode) = bibcode.as_object_mut() {
+        if let Some(coddy_studio) = coddy_studio.as_object_mut() {
             if empty {
-                bibcode.remove("rewind");
+                coddy_studio.remove("rewind");
             } else {
-                bibcode.insert("rewind".to_owned(), progress.to_json());
+                coddy_studio.insert("rewind".to_owned(), progress.to_json());
             }
         }
         if let Some(entries) = metadata.as_object_mut() {
-            if bibcode.as_object().is_some_and(serde_json::Map::is_empty) {
-                entries.remove("bibcode");
+            entries.remove("bibcode");
+            if coddy_studio
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty)
+            {
+                entries.remove("coddy-studio");
             } else {
-                entries.insert("bibcode".to_owned(), bibcode);
+                entries.insert("coddy-studio".to_owned(), coddy_studio);
             }
         }
         within_rewind_deadline(
@@ -4153,7 +4158,7 @@ impl OpenCodeSessionRuntime {
     }
 
     /// A prompt waits while a checkpoint rewind is unfinished: OpenCode's conversation would no
-    /// longer match BiBCode's transcript, and a leftover stage would commit with the prompt.
+    /// longer match Coddy Studio's transcript, and a leftover stage would commit with the prompt.
     async fn v2_settle_rewind_before_prompt(
         &self,
         session_id: &str,
@@ -4279,7 +4284,7 @@ impl OpenCodeSessionRuntime {
         Ok(())
     }
 
-    /// Gives an OpenCode 2 session the permission rules of BiBCode's runtime mode.
+    /// Gives an OpenCode 2 session the permission rules of Coddy Studio's runtime mode.
     async fn v2_sync_permissions(&self, session_id: &str) -> Result<(), OpenCodeRuntimeError> {
         let runtime_mode = self.inner.runtime_mode.lock().await.clone();
         let response = self
@@ -5615,7 +5620,7 @@ pub(crate) struct OpenCodeFailure {
 /// opencode already computes the distinction this needs. Reading only
 /// `data.message` reported an aborted turn as a provider failure, and left
 /// `MessageOutputLengthError` — whose data is empty — indistinguishable from an
-/// unexplained BiBCode fault.
+/// unexplained Coddy Studio fault.
 /// Verified against the opencode SDK's generated types: the discriminant is
 /// literally `"APIError"` (all caps) even though the TypeScript alias is
 /// `ApiError`, and `ProviderAuthError`, `UnknownError`,
@@ -5677,8 +5682,8 @@ pub(crate) fn classify_opencode_error(error: &Value) -> OpenCodeFailure {
         .filter(|message| !message.is_empty())
         .unwrap_or(fallback)
         .to_owned();
-    // Detail opencode already carries and BiBCode used to drop. It is what tells
-    // the user this was the upstream API rather than BiBCode.
+    // Detail opencode already carries and Coddy Studio used to drop. It is what tells
+    // the user this was the upstream API rather than Coddy Studio.
     if let Some(provider) = error.pointer("/data/providerID").and_then(Value::as_str) {
         message.push_str(&format!(" (provider: {provider})"));
     }
@@ -5760,7 +5765,7 @@ mod error_classification_tests {
 
     #[test]
     fn an_abort_is_not_reported_as_a_provider_failure() {
-        // opencode names a user abort `MessageAbortedError`. BiBCode read only
+        // opencode names a user abort `MessageAbortedError`. Coddy Studio read only
         // `data.message` and hardcoded `stopReason: "error"`, so the user's own
         // interrupt was presented as a provider failure.
         let failure = classify_opencode_error(&json!({
@@ -6411,19 +6416,19 @@ mod tests {
     }
 
     /// Delivers a turn under a UUID delivery key to a real OpenCode 1 server and reads it back.
-    /// Set `BIBCODE_OPENCODE_V1_LIVE` (the server URL), `BIBCODE_OPENCODE_V1_PASSWORD` and
-    /// `BIBCODE_OPENCODE_V1_MODEL`, a scripted local endpoint so no provider credits are spent.
+    /// Set `CODDY_STUDIO_OPENCODE_V1_LIVE` (the server URL), `CODDY_STUDIO_OPENCODE_V1_PASSWORD` and
+    /// `CODDY_STUDIO_OPENCODE_V1_MODEL`, a scripted local endpoint so no provider credits are spent.
     #[tokio::test]
     #[ignore = "needs a live OpenCode 1 server"]
     async fn live_opencode_1_durable_delivery() {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
         let runtime =
             super::OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
-                &var("BIBCODE_OPENCODE_V1_LIVE"),
+                &var("CODDY_STUDIO_OPENCODE_V1_LIVE"),
                 "live-thread",
                 "/tmp",
-                Some(&var("BIBCODE_OPENCODE_V1_MODEL")),
-                Some(&var("BIBCODE_OPENCODE_V1_PASSWORD")),
+                Some(&var("CODDY_STUDIO_OPENCODE_V1_MODEL")),
+                Some(&var("CODDY_STUDIO_OPENCODE_V1_PASSWORD")),
                 None,
                 0,
                 false,
@@ -6454,13 +6459,13 @@ mod tests {
 
     /// OpenCode 1 runs the model again when an older accepted message id is sent after a later
     /// message, so a delivery OpenCode already has is never sent again. Set the
-    /// `BIBCODE_OPENCODE_V1_*` variables above and `BIBCODE_OPENCODE_MOCK_REQUESTS`, the scripted
+    /// `CODDY_STUDIO_OPENCODE_V1_*` variables above and `CODDY_STUDIO_OPENCODE_MOCK_REQUESTS`, the scripted
     /// model's request log, whose agent calls are counted.
     #[tokio::test]
     #[ignore = "needs a live OpenCode 1 server and the scripted model's request log"]
     async fn live_opencode_1_resent_delivery_runs_the_model_once() {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
-        let log = var("BIBCODE_OPENCODE_MOCK_REQUESTS");
+        let log = var("CODDY_STUDIO_OPENCODE_MOCK_REQUESTS");
         // Agent calls (those offering tools) whose newest user message names `marker`.
         let calls = |marker: &str| {
             std::fs::read_to_string(&log)
@@ -6478,11 +6483,11 @@ mod tests {
         };
         let runtime =
             super::OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
-                &var("BIBCODE_OPENCODE_V1_LIVE"),
+                &var("CODDY_STUDIO_OPENCODE_V1_LIVE"),
                 "live-thread",
                 "/tmp",
-                Some(&var("BIBCODE_OPENCODE_V1_MODEL")),
-                Some(&var("BIBCODE_OPENCODE_V1_PASSWORD")),
+                Some(&var("CODDY_STUDIO_OPENCODE_V1_MODEL")),
+                Some(&var("CODDY_STUDIO_OPENCODE_V1_PASSWORD")),
                 None,
                 0,
                 false,
@@ -6532,7 +6537,7 @@ mod tests {
         runtime.stop().await.expect("stop");
     }
 
-    /// A delivery sent before BiBCode derived `msg_` ids carried the raw key as its OpenCode 1
+    /// A delivery sent before Coddy Studio derived `msg_` ids carried the raw key as its OpenCode 1
     /// message id (accepted before 1.18). Reconciliation finds it under either form, so it is not
     /// sent again; OpenCode 1.18 and later refuse a raw id (HTTP 400), which means no such
     /// message exists there.

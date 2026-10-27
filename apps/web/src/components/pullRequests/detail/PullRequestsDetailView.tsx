@@ -1,9 +1,9 @@
 import {
   resolveChangeRequestPresentationForKind,
   formatChangeRequestNumber,
-} from "@bibcode/shared/sourceControl";
+} from "@coddy/shared/sourceControl";
 import { useAtomRefresh } from "@effect/atom-react";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
+import { projectKey } from "@coddy/client-runtime/state/entities";
 import type {
   EnvironmentId,
   PullRequestsChecks as PullRequestsChecksData,
@@ -13,7 +13,7 @@ import type {
   PullRequestsFiles as PullRequestsFilesData,
   PullRequestsTimeline,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   lazy,
   type ReactNode,

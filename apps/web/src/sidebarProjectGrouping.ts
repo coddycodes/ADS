@@ -1,5 +1,5 @@
-import { scopeProjectRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentId, ScopedProjectRef } from "@bibcode/contracts";
+import { scopeProjectRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentId, ScopedProjectRef } from "@coddy/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,

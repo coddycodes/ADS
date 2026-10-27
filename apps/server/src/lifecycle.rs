@@ -94,7 +94,7 @@ pub struct StartupAccess {
     pub connection_string: String,
     pub credential: String,
     pub pairing_url: String,
-    /// Full `bibcode://pair?code=…` link for the desktop Add Server dialog,
+    /// Full `coddy-studio://pair?code=…` link for the desktop Add Server dialog,
     /// present only when the bind address is routable from other devices.
     pub pairing_link: Option<String>,
 }
@@ -402,12 +402,12 @@ impl ServerRuntime {
                         match connect.restore_managed_endpoint().await {
                             Ok(Some(status)) if status["status"] != "running" => tracing::warn!(
                                 status = %status["status"],
-                                "BiBCode Connect tunnel was not restored"
+                                "Coddy Connect tunnel was not restored"
                             ),
                             Ok(_) => {}
                             Err(error) => tracing::warn!(
                                 status = %error.status(),
-                                "BiBCode Connect tunnel could not be restored"
+                                "Coddy Connect tunnel could not be restored"
                             ),
                         }
                     }
@@ -448,7 +448,7 @@ impl ServerRuntime {
         let preview_gateway = production_runtime
             .as_ref()
             .map(|runtime| runtime.preview_gateway());
-        // The main port serves BiBCode Connect previews, and its graceful shutdown waits for
+        // The main port serves Coddy Connect previews, and its graceful shutdown waits for
         // their exchanges, which only the gateway's drain ends: start the drain as soon as
         // shutdown is signaled, not after the server stops; the runtime's later call waits
         // for this same drain.
@@ -925,10 +925,10 @@ mod tests {
     #[test]
     fn open_url_shim_runs_the_appimage_only_from_inside_it() {
         let temp = tempfile::tempdir().unwrap();
-        let image = temp.path().join("BiBCode.AppImage");
+        let image = temp.path().join("Coddy Studio.AppImage");
         std::fs::write(&image, b"image").unwrap();
         let appdir = temp.path().join(".mount_BiBCod");
-        let inside = appdir.join("usr/bin/bibcode-desktop");
+        let inside = appdir.join("usr/bin/coddy-studio-desktop");
         let os = |path: &std::path::Path| Some(path.as_os_str().to_owned());
 
         assert_eq!(
@@ -938,7 +938,7 @@ mod tests {
         // A standalone server that inherited another AppImage's variables keeps its own exe.
         assert_eq!(
             appimage_entry(
-                std::path::Path::new("/usr/bin/bibcode"),
+                std::path::Path::new("/usr/bin/coddy-studio"),
                 os(&image),
                 os(&appdir)
             ),
@@ -1150,7 +1150,7 @@ mod tests {
             .as_deref()
             .expect("routable bind mints a startup offer");
         let code = link
-            .strip_prefix("bibcode://pair?code=")
+            .strip_prefix("coddy-studio://pair?code=")
             .expect("deep link shape");
         let payload = crate::auth::pairing_code::decode_pairing_code(code).expect("decodes");
         assert_eq!(payload.endpoint, format!("http://{}", handle.local_addr()));
@@ -1184,7 +1184,7 @@ mod tests {
 
     #[test]
     fn connect_descriptor_advertises_remote_update_support() {
-        let mut config = ServerConfig::new("/tmp/bibcode-connect-descriptor-test");
+        let mut config = ServerConfig::new("/tmp/coddy-connect-descriptor-test");
         config.storage_instance_id = Some(crate::persistence::StorageInstanceId::from_uuid(
             uuid::Uuid::nil(),
         ));
@@ -1215,7 +1215,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_relative_programmatic_data_roots_before_creating_state() {
-        let error = match ServerRuntime::start(ServerConfig::new("relative/.bibcode")).await {
+        let error = match ServerRuntime::start(ServerConfig::new("relative/.coddy/studio")).await {
             Ok(_) => panic!("relative data root must fail at runtime start"),
             Err(error) => error,
         };
@@ -1267,7 +1267,7 @@ mod tests {
             .clone();
         let client = reqwest::Client::new();
         let descriptor = reqwest::get(format!(
-            "http://{}/.well-known/bibcode/environment",
+            "http://{}/.well-known/coddy-studio/environment",
             production.local_addr()
         ))
         .await
@@ -1293,7 +1293,7 @@ mod tests {
                 ("subject_token", startup.credential.as_str()),
                 (
                     "subject_token_type",
-                    "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                    "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
                 ),
                 (
                     "requested_token_type",
@@ -1364,7 +1364,7 @@ mod tests {
                 ("subject_token", fallback_credential.as_str()),
                 (
                     "subject_token_type",
-                    "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                    "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
                 ),
                 (
                     "requested_token_type",

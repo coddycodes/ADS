@@ -27,9 +27,9 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import {
-  BiBCodeConnectSidebarAvatar,
-  BiBCodeConnectSidebarSignIn,
-} from "../clerk/BiBCodeConnectSidebarSignIn";
+  CoddyConnectSidebarAvatar,
+  CoddyConnectSidebarSignIn,
+} from "../clerk/CoddyConnectSidebarSignIn";
 import { readCurrentEnvironmentPresentationPolicy } from "~/connection/currentEnvironmentPresentation";
 import type { EnvironmentPresentationPolicy } from "~/connection/environmentPresentationPolicy";
 
@@ -152,7 +152,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">
-        {policy.showRemoteDeviceControls ? <BiBCodeConnectSidebarSignIn /> : null}
+        {policy.showRemoteDeviceControls ? <CoddyConnectSidebarSignIn /> : null}
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
           <SidebarMenu className="min-w-0">
             <SidebarMenuItem>
@@ -166,7 +166,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-          {policy.showRemoteDeviceControls ? <BiBCodeConnectSidebarAvatar /> : null}
+          {policy.showRemoteDeviceControls ? <CoddyConnectSidebarAvatar /> : null}
         </div>
       </SidebarFooter>
     </>

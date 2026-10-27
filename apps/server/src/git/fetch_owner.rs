@@ -1067,10 +1067,13 @@ mod tests {
             &["init", "--bare", "--initial-branch=main"],
         );
         run_git(&repository_path, &["init", "--initial-branch=main"]);
-        run_git(&repository_path, &["config", "user.name", "BiBCode Test"]);
         run_git(
             &repository_path,
-            &["config", "user.email", "bibcode@example.invalid"],
+            &["config", "user.name", "Coddy Studio Test"],
+        );
+        run_git(
+            &repository_path,
+            &["config", "user.email", "coddy-studio@example.invalid"],
         );
         run_git(&repository_path, &["config", "commit.gpgSign", "false"]);
         fs::write(repository_path.join("tracked.txt"), "base\n").expect("tracked fixture");

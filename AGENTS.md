@@ -66,7 +66,7 @@ Repository skills live in `docs/skills/<name>/`. `.agents/skills/<name>/SKILL.md
   measurements are historical evidence only; verify their paths, commands, and
   designs before reuse.
 - `.repos/` contains read-only upstream examples, not application dependencies
-  or BiBCode behavior.
+  or Coddy Studio behavior.
 
 Investigate disagreements by tracing the relevant call path and tests. Either
 align living documentation in the same change or report the unresolved
@@ -105,7 +105,7 @@ the following keeps it covered in the same change:
 - **Child processes:** spawn through `process::supervised` or the provider and
   terminal runtimes, or call `diagnostics::profiler::exits::report_exit` with
   the right `Watch`, so an unrequested death becomes a `subprocess.crash`.
-  Register BiBCode-owned processes with
+  Register Coddy Studio-owned processes with
   `ProcessAttributionRegistry::register_identity` so the sampler attributes
   their memory and CPU.
 - **RPC methods:** register them through the `rpc/session.rs` wrappers, which
@@ -127,7 +127,7 @@ the following keeps it covered in the same change:
   message, or terminal content, and keep paths and timestamps out of
   fingerprints.
 - **Documentation:** describe a new or changed event or finding in
-  `docs/skills/bibcode-profiler/references/` and the
+  `docs/skills/coddy-studio-profiler/references/` and the
   [Profiler](docs/architecture/overview.md#profiler) section.
 
 ## Architectural Decision Standards
@@ -223,7 +223,7 @@ does not replace focused coverage for changed behavior.
 
 ## Project Snapshot
 
-BiBCode is a web and Tauri desktop GUI for using coding agents like Codex and Claude.
+Coddy Studio is a web and Tauri desktop GUI for using coding agents like Codex and Claude.
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 
@@ -245,19 +245,19 @@ evolvable as the codebase grows.
 - `apps/desktop`: Tauri 2 desktop host written in Rust. Owns native windows,
   menus, dialogs, updates, WSL/SSH launch, and the `DesktopBridge`
   implementation. It starts the Rust server as an in-process runtime.
-- `apps/server`: Rust/Axum/Tokio application server and native `bibcode` CLI.
+- `apps/server`: Rust/Axum/Tokio application server and native `coddy-studio` CLI.
   Owns HTTP/WebSocket RPC, authentication, persistence, orchestration,
   providers, terminals, Git, files, diagnostics, relay integration, and process
   supervision.
 - `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
 - `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
-- `packages/shared`: Shared runtime utilities consumed by both server and client applications. Uses explicit subpath exports (e.g. `@bibcode/shared/git`) — no barrel index.
+- `packages/shared`: Shared runtime utilities consumed by both server and client applications. Uses explicit subpath exports (e.g. `@coddy/shared/git`) — no barrel index.
 - `packages/client-runtime`: Shared connection, RPC, cache, and environment runtime used by browser and Tauri clients.
 
 Node.js and TypeScript are development dependencies for the frontend and
 repository tooling only. Do not add a production Node runtime, Electron host,
 TypeScript server, or native helper sidecar. Exception: while the Profiler is
-on, the same BiBCode executable is relaunched as `--crash-monitor` to write
+on, the same Coddy Studio executable is relaunched as `--crash-monitor` to write
 minidumps (see `docs/superpowers/specs/2026-10-09-profiler-design.md`).
 
 ## Reference Repos
@@ -279,7 +279,7 @@ agents.
   configured repository. Sync requires a clean index and working tree, stages
   only the exact fetched snapshot replacement for review, treats every
   configured Git path as literal, and creates no commit. One atomic
-  `bibcode-reference-repos-sync.lock` file in the absolute Git common directory
+  `coddy-studio-reference-repos-sync.lock` file in the absolute Git common directory
   serializes sync across linked worktrees from the initial clean check through
   apply or verified rollback. A busy command exits before fetch. Success,
   pre-apply failure, and verified recovery remove the lock; a failed, timed-out,

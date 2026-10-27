@@ -1,4 +1,4 @@
-import type { DesktopEnvironmentBootstrap } from "@bibcode/contracts";
+import type { DesktopEnvironmentBootstrap } from "@coddy/contracts";
 import { useEffect, useState } from "react";
 
 import { readDesktopSecondaryBootstraps } from "./desktopLocal";

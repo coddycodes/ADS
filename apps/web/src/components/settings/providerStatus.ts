@@ -1,4 +1,4 @@
-import type { ServerProvider, ServerProviderVersionAdvisory } from "@bibcode/contracts";
+import type { ServerProvider, ServerProviderVersionAdvisory } from "@coddy/contracts";
 
 /**
  * Visual treatment for each server-reported provider status. Centralized so
@@ -41,8 +41,8 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       detail:
         provider.message ??
         (provider.installed
-          ? "This provider is installed but disabled for new sessions in BiBCode."
-          : "This provider is disabled for new sessions in BiBCode. Turn it on to check whether it is installed."),
+          ? "This provider is installed but disabled for new sessions in Coddy Studio."
+          : "This provider is disabled for new sessions in Coddy Studio. Turn it on to check whether it is installed."),
     };
   }
   if (!provider.installed) {

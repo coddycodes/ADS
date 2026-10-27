@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ThreadId } from "@coddy/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -492,7 +492,7 @@ describe("ChatHeaderActions rendering", () => {
   });
 
   it("uses the shared workspace reason for scripts, panels, editor, and Git actions", () => {
-    const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+    const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
     renderToStaticMarkup(
       <ChatHeaderActions {...props({ workspaceUnavailable: reason })} density="expanded" />,
     );

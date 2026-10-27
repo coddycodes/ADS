@@ -180,7 +180,7 @@ function dwarfFile(dsym: string): string {
 
 /** Runs dump_syms on the staged inputs and returns the stored `.sym` path. */
 export function dumpSymbols(input: DumpSymbolsInput, dumpSyms = "dump_syms"): string {
-  const work = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-dump-symbols-"));
+  const work = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-dump-symbols-"));
   try {
     // dump_syms names a module after the file it reads, so every input takes the shipped name.
     const inputs = [stage(input.binary, NodePath.join(work, "binary"), input.moduleName)];

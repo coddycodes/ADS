@@ -1,4 +1,4 @@
-import { Connection } from "@bibcode/client-runtime/connection";
+import { Connection } from "@coddy/client-runtime/connection";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/reactivity";
 

@@ -1,8 +1,8 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
-} from "@bibcode/contracts/relay";
+} from "@coddy/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -388,7 +388,7 @@ describe("createManagedRelayQueryManager", () => {
     registry.get(atom);
     await vi.waitFor(() => {
       expect(readManagedRelaySnapshotState(registry.get(atom)).error).toBe(
-        "Sign in to BiBCode Cloud before loading relay data.",
+        "Sign in to Coddy Studio Cloud before loading relay data.",
       );
     });
     manager.refreshEnvironmentStatus(registry, { accountId: "account-2", environment });
@@ -396,7 +396,7 @@ describe("createManagedRelayQueryManager", () => {
 
   it("uses a safe message for non-error snapshot failures", () => {
     expect(readManagedRelaySnapshotState(AsyncResult.failure(Cause.fail("opaque"))).error).toBe(
-      "Could not load BiBCode Cloud data.",
+      "Could not load Coddy Studio Cloud data.",
     );
   });
 

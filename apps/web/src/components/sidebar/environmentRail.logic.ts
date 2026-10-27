@@ -2,8 +2,8 @@ import type {
   CompatVerdict,
   ConnectionTarget,
   EnvironmentConnectionPhase,
-} from "@bibcode/client-runtime/connection";
-import type { EnvironmentId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/connection";
+import type { EnvironmentId } from "@coddy/contracts";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { compareSidebarDisplayText } from "../../sidebarProjectGrouping";

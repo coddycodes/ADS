@@ -16,7 +16,7 @@ import {
   type WorktreeRemovalPlan,
   type WorktreeRemovalResult,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -500,11 +500,11 @@ export function createWorktreeEnvironmentAtoms<R, E>(
       label: "environment-data:worktrees:get-removal-plan",
       execute: getRemovalPlanEffect,
     }),
-    removeFromBibCode: createRuntimeCommand(runtime, {
-      label: "environment-data:worktrees:remove-from-bibcode",
+    removeFromCoddyStudio: createRuntimeCommand(runtime, {
+      label: "environment-data:worktrees:remove-from-coddy-studio",
       execute: (target: {
         readonly environmentId: EnvironmentId;
-        readonly input: EnvironmentRpcInput<typeof WS_METHODS.worktreeRemoveFromBibCode>;
+        readonly input: EnvironmentRpcInput<typeof WS_METHODS.worktreeRemoveFromCoddyStudio>;
       }) =>
         withProjectMutationLane(
           projectKey(target),
@@ -516,7 +516,7 @@ export function createWorktreeEnvironmentAtoms<R, E>(
                 return yield* requestInSession(
                   negotiated.session,
                   negotiated.environmentId,
-                  WS_METHODS.worktreeRemoveFromBibCode,
+                  WS_METHODS.worktreeRemoveFromCoddyStudio,
                   target.input,
                 );
               }

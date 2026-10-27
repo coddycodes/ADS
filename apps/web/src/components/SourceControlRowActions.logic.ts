@@ -2,7 +2,7 @@
 // per-area inline action set and the navigation-only context menu shape are unit
 // testable in isolation. SourceControlChangesList.tsx renders these descriptors.
 
-import type { VcsStagingArea, VcsWorkingTreeFileStatus } from "@bibcode/contracts";
+import type { VcsStagingArea, VcsWorkingTreeFileStatus } from "@coddy/contracts";
 import { MinusIcon, PlusIcon, Trash2Icon, Undo2Icon, type LucideIcon } from "lucide-react";
 
 /** The three change buckets a row can sit in (Orca §2/§4 inline actions). */

@@ -5,7 +5,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { threadHasStarted } from "./components/ChatView.logic";
 import type { Thread } from "./types";
 

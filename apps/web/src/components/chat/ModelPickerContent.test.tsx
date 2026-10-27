@@ -3,7 +3,7 @@ import {
   ProviderInstanceId,
   type ResolvedKeybindingsConfig,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { Dispatch, SetStateAction } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";

@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const ACTIVITY_DOCK_STORAGE_KEY = "bibcode:activity-dock-state:v1";
+export const ACTIVITY_DOCK_STORAGE_KEY = "coddy-studio:activity-dock-state:v1";
 const ACTIVITY_DOCK_STORAGE_VERSION = 1;
 export const ACTIVITY_DOCK_MAX_PROJECTS = 256;
 const ACTIVITY_DOCK_PROJECT_KEY_PART_MAX_LENGTH = 256;

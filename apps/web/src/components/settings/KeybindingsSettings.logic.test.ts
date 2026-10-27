@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ResolvedKeybindingsConfig } from "@bibcode/contracts";
+import type { ResolvedKeybindingsConfig } from "@coddy/contracts";
 
 import {
   buildKeybindingRows,

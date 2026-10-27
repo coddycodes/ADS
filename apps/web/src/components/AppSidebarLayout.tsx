@@ -20,7 +20,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 // v2: widths stored under the retired key belong to the 256px default era.
-const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "bibcode:sidebar-width:v2";
+const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "coddy-studio:sidebar-width:v2";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16 + ENVIRONMENT_RAIL_WIDTH_PX;
 // Measured from the user's screenshot: a 370px projects panel beside the 52px
 // rail (422px total). A width the user has dragged to is stored under the

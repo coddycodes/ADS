@@ -14,14 +14,14 @@ import type {
   DesktopUpdateInstallInput,
   DesktopUpdateState,
   DesktopWslState,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   DESKTOP_DEEP_LINK_EVENT,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { invoke as importedTauriInvoke, isTauri as isImportedTauri } from "@tauri-apps/api/core";
 import { listen as importedTauriListen } from "@tauri-apps/api/event";
 
@@ -32,7 +32,7 @@ import { showContextMenuFallback } from "./contextMenuFallback";
 import { invokeTauriCommand, type TauriCommandMock } from "./tauriInvokeRouting";
 import { createTauriPreviewBridge } from "./tauriPreviewBridge";
 
-const CONNECTION_CATALOG_STORAGE_KEY = "bibcode.connectionCatalog";
+const CONNECTION_CATALOG_STORAGE_KEY = "coddy-studio.connectionCatalog";
 const BACKEND_READY_EVENT = "desktop:backend-ready";
 const PROJECT_DATA_STATUS_CHANGED_EVENT = "desktop:project-data-status-changed";
 const MENU_ACTION_EVENT = "desktop:menu-action";
@@ -89,7 +89,7 @@ function isTauriDesktopCapabilityUnsupportedPayload(
 function tauriInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const invoke = window.__TAURI__?.core?.invoke;
   const registeredMock =
-    import.meta.env.VITE_BIBCODE_DESKTOP_E2E === "1" ? window.__wdio_mocks__?.[command] : undefined;
+    import.meta.env.VITE_CODDY_STUDIO_DESKTOP_E2E === "1" ? window.__wdio_mocks__?.[command] : undefined;
   return invokeTauriCommand<T>({
     command,
     args,
@@ -259,7 +259,7 @@ async function exchangeLocalEnvironmentBearerToken(): Promise<string> {
     subject_token: credential,
     subject_token_type: AuthEnvironmentBootstrapTokenType,
     requested_token_type: AuthAccessTokenType,
-    client_label: "BiBCode Tauri Desktop",
+    client_label: "Coddy Studio Tauri Desktop",
     client_device_type: "desktop",
   });
   const response = await fetch(new URL("/oauth/token", httpBaseUrl), {
@@ -445,9 +445,9 @@ function resolveTauriAppBranding(): DesktopAppBranding {
       ? "Nightly"
       : "Latest";
   return {
-    baseName: "BiBCode",
+    baseName: "Coddy Studio",
     stageLabel,
-    displayName: formatAppDisplayName({ baseName: "BiBCode", stageLabel }),
+    displayName: formatAppDisplayName({ baseName: "Coddy Studio", stageLabel }),
   };
 }
 

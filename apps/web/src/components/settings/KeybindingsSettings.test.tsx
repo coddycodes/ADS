@@ -4,7 +4,7 @@ import type {
   KeybindingWhenNode,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -209,7 +209,7 @@ vi.mock("../../editorPreferences", () => ({
   useOpenInPreferredEditor: () => testState.openInPreferredEditor,
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { _tag: string }) => result._tag === "Interrupted",
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error,
 }));
@@ -472,7 +472,7 @@ beforeEach(() => {
   testState.toastAdd.mockReset();
   testState.primaryEnvironment = { environmentId: "environment-primary" };
   setKeybindings([defaultSidebarToggle, customTerminalSplit, projectScript]);
-  testState.atomValues.set(testState.atoms.configPath, "/home/user/.bibcode/keybindings.json");
+  testState.atomValues.set(testState.atoms.configPath, "/home/user/.coddy/studio/keybindings.json");
   testState.atomValues.set(testState.atoms.editors, []);
   vi.stubGlobal("navigator", { platform: "Win32" });
 });
@@ -980,7 +980,7 @@ describe("opening the keybindings file", () => {
     (open.onClick as () => void)();
     await flushPromises();
     expect(testState.openInPreferredEditor).toHaveBeenCalledWith(
-      "/home/user/.bibcode/keybindings.json",
+      "/home/user/.coddy/studio/keybindings.json",
     );
     expect(testState.toastAdd).not.toHaveBeenCalled();
   });

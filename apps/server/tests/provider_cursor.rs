@@ -1,4 +1,4 @@
-use bibcode_server::provider::{OptionRefusal, cursor};
+use coddy_studio_server::provider::{OptionRefusal, cursor};
 
 use std::{path::PathBuf, time::Duration};
 
@@ -108,7 +108,7 @@ fn cursor_config_updates_reject_stale_or_malformed_descriptors_before_rpc() {
         .is_ok()
     );
     // A request the session can't satisfy is refused in words naming the option by the label its
-    // descriptor shows: the session's name for it, or BiBCode's default.
+    // descriptor shows: the session's name for it, or Coddy Studio's default.
     let refusal = |options: Value, updates: Value| {
         resolve_acp_config_updates(&options, &updates)
             .expect_err("the update is refused")
@@ -135,9 +135,9 @@ fn cursor_config_updates_reject_stale_or_malformed_descriptors_before_rpc() {
         .as_deref(),
         Some("Turbo must be on or off.")
     );
-    // A session configuration BiBCode can't work with is protocol detail the user can't act on,
+    // A session configuration Coddy Studio can't work with is protocol detail the user can't act on,
     // so its refusal stays generic, with the next step the user can take.
-    const UNUSABLE_OPTIONS: &str = "BiBCode can't apply these options to the selected model. Choose another model, or turn these options off.";
+    const UNUSABLE_OPTIONS: &str = "Coddy Studio can't apply these options to the selected model. Choose another model, or turn these options off.";
     for options in [
         json!([{ "id": "fast", "category": "model", "type": "select", "options": [{ "value": "true" }] }]),
         json!([{ "id": "fast", "category": "model_config", "type": "boolean", "options": [{ "value": "true" }] }]),
@@ -170,7 +170,7 @@ async fn cursor_runtime_matches_approval_and_cancel_traces() {
             resume_session_id: None,
             mcp_servers: vec![json!({
                 "type": "http",
-                "name": "bibcode",
+                "name": "coddy-studio",
                 "url": "http://127.0.0.1:3773/mcp",
                 "headers": [{ "name": "Authorization", "value": "Bearer secret" }],
             })],
@@ -188,7 +188,7 @@ async fn cursor_runtime_matches_approval_and_cancel_traces() {
             "cwd": "/tmp/project",
             "mcpServers": [{
                 "type": "http",
-                "name": "bibcode",
+                "name": "coddy-studio",
                 "url": "http://127.0.0.1:3773/mcp",
                 "headers": [{ "name": "Authorization", "value": "Bearer secret" }],
             }],

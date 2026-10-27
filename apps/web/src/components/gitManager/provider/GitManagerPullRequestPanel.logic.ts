@@ -10,7 +10,7 @@ import type {
   PullRequestsProviderKind,
   SourceControlProviderInfo,
   VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   formatChangeRequestNumber,
   getChangeRequestTerminology,
@@ -18,7 +18,7 @@ import {
   resolveChangeRequestPresentation,
   resolveChangeRequestPresentationForKind,
   type ChangeRequestPresentation,
-} from "@bibcode/shared/sourceControl";
+} from "@coddy/shared/sourceControl";
 import { capitalize } from "effect/String";
 
 /**
@@ -232,7 +232,7 @@ export function hintedProvider(
 }
 
 export const UNIDENTIFIED_HOST_REASON =
-  "BiBCode hasn't identified this repository's host yet. Open Pull Requests for this project or run Rescan in Settings → Source Control.";
+  "Coddy Studio hasn't identified this repository's host yet. Open Pull Requests for this project or run Rescan in Settings → Source Control.";
 
 /**
  * Everything the review surface shows before anything is published: where the

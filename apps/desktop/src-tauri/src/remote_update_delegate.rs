@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use bibcode_server::remote_update::{
+use coddy_studio_server::remote_update::{
     HostUpdaterFuture, HostUpdaterStatus, RemoteUpdateDelegate, RemoteUpdateInstallKind,
     RemoteUpdateInstallMode, RemoteUpdateRequester, RemoteUpdateState, RemoteUpdateSupport,
     RemoteUpdateSupportReason,
@@ -383,16 +383,16 @@ mod tests {
     #[test]
     fn requester_becomes_a_host_notice_with_a_generic_fallback() {
         let full = remote_update_request(&RemoteUpdateRequester {
-            label: Some("BiBCode Desktop".to_owned()),
+            label: Some("Coddy Studio Desktop".to_owned()),
             os: Some("MacIntel".to_owned()),
             ip_address: Some("192.168.1.34".to_owned()),
             session_id_prefix: Some("0123abcd".to_owned()),
         });
-        assert_eq!(full.label, "BiBCode Desktop");
+        assert_eq!(full.label, "Coddy Studio Desktop");
         assert_eq!(full.detail.as_deref(), Some("MacIntel (192.168.1.34)"));
 
         let os_only = remote_update_request(&RemoteUpdateRequester {
-            label: Some("BiBCode Web".to_owned()),
+            label: Some("Coddy Studio Web".to_owned()),
             os: Some("Linux x86_64".to_owned()),
             ..RemoteUpdateRequester::default()
         });

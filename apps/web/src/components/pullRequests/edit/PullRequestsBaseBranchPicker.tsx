@@ -1,4 +1,4 @@
-import type { PullRequestsDetail, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsDetail, ScopedProjectRef } from "@coddy/contracts";
 import type { PullRequestsScope } from "../usePullRequestsAction";
 import { useState } from "react";
 import { usePullRequestsStore } from "../../../pullRequestsStore";

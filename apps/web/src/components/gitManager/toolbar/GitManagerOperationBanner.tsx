@@ -1,4 +1,4 @@
-import type { GitManagerOperationEvent } from "@bibcode/contracts";
+import type { GitManagerOperationEvent } from "@coddy/contracts";
 import { ChevronDownIcon, ChevronRightIcon, LoaderCircleIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useReducer } from "react";
 

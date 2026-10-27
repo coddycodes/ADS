@@ -4,7 +4,7 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   type DesktopBridge,
   type DesktopSshEnvironmentTarget,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vite-plus/test";
 import * as Data from "effect/Data";
@@ -22,17 +22,17 @@ import {
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
   SshEnvironmentGateway,
-} from "@bibcode/client-runtime/platform";
+} from "@coddy/client-runtime/platform";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
   Connectivity,
   Wakeups,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   EnvironmentRpcRequestObserver,
   type EnvironmentRpcRequestObservation,
-} from "@bibcode/client-runtime/rpc";
+} from "@coddy/client-runtime/rpc";
 
 // ── Controllable mock state ──────────────────────────────────────────
 const pf = vi.hoisted(() => ({
@@ -116,7 +116,7 @@ vi.mock("./storage", async () => {
   return { connectionStorageLayer: Layer.empty };
 });
 
-vi.mock("@bibcode/client-runtime/relay", async () => {
+vi.mock("@coddy/client-runtime/relay", async () => {
   const Stream = await import("effect/Stream");
   return {
     managedRelaySessionAtom: { _tag: "managedRelaySessionAtom" },
@@ -124,14 +124,14 @@ vi.mock("@bibcode/client-runtime/relay", async () => {
   };
 });
 
-vi.mock("@bibcode/client-runtime/environment", () => ({
+vi.mock("@coddy/client-runtime/environment", () => ({
   fetchRemoteEnvironmentDescriptor: (input: { httpBaseUrl: string }) => {
     pf.descriptorCalls.push(input.httpBaseUrl);
     return Effect.succeed(pf.descriptor);
   },
 }));
 
-vi.mock("@bibcode/client-runtime/authorization", () => ({
+vi.mock("@coddy/client-runtime/authorization", () => ({
   bootstrapRemoteBearerSession: (input: { httpBaseUrl: string }) => {
     pf.bearerBootstrapCalls.push(input.httpBaseUrl);
     return Effect.succeed(pf.bearerAccess);
@@ -558,7 +558,7 @@ describe("connectionPlatformLayer capabilities", () => {
     stubBrowser({ desktopBridge: makeBridge([]) });
     return Effect.gen(function* () {
       const presentation = yield* ClientPresentation;
-      expect(presentation.metadata.label).toBe("BiBCode Desktop");
+      expect(presentation.metadata.label).toBe("Coddy Studio Desktop");
       expect(yield* ClientPresentation).toBeDefined();
       expect(yield* CloudSession).toBeDefined();
       expect(yield* PrimaryEnvironmentAuth).toBeDefined();
@@ -573,7 +573,7 @@ describe("connectionPlatformLayer capabilities", () => {
     stubBrowser({ platform: "" });
     return Effect.gen(function* () {
       const presentation = yield* ClientPresentation;
-      expect(presentation.metadata.label).toBe("BiBCode Web");
+      expect(presentation.metadata.label).toBe("Coddy Studio Web");
       expect("os" in presentation.metadata).toBe(false);
     }).pipe(Effect.provide(connectionPlatformLayer));
   });
@@ -787,7 +787,7 @@ describe("connectionPlatformLayer ssh gateway", () => {
         _tag: "ConnectionTransientError",
         reason: "timeout",
         detail:
-          "The remote host did not issue a pairing credential within 30 seconds. Check the connection; BiBCode keeps trying.",
+          "The remote host did not issue a pairing credential within 30 seconds. Check the connection; Coddy Studio keeps trying.",
       },
     ],
   ] as const) {

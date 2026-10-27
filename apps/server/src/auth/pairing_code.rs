@@ -56,7 +56,7 @@ pub fn decode_pairing_code(code: &str) -> Result<RemotePairingCodePayload, Pairi
 
 #[must_use]
 pub fn pairing_deep_link(code: &str) -> String {
-    format!("bibcode://pair?code={code}")
+    format!("coddy-studio://pair?code={code}")
 }
 
 pub fn browser_pair_url(endpoint: &str, code: &str) -> Result<String, PairingCodeError> {

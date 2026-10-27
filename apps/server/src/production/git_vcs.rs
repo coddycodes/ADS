@@ -2950,7 +2950,7 @@ async fn pull_request_provider(
     Err(request_error(
         "git.runStackedAction",
         &format!(
-            "Nothing was published. BiBCode hasn't identified {host} yet. Open Pull Requests for this project or run Rescan in Settings → Source Control, then try again."
+            "Nothing was published. Coddy Studio hasn't identified {host} yet. Open Pull Requests for this project or run Rescan in Settings → Source Control, then try again."
         ),
     ))
 }
@@ -4967,13 +4967,13 @@ printf '%s\n' '[{"number":42,"title":"Fixture PR","url":"https://github.com/acme
         git(
             &sandbox,
             &repository,
-            &["config", "user.name", "BiBCode Test"],
+            &["config", "user.name", "Coddy Studio Test"],
         )
         .await;
         git(
             &sandbox,
             &repository,
-            &["config", "user.email", "bibcode@example.test"],
+            &["config", "user.email", "coddy-studio@example.test"],
         )
         .await;
 
@@ -6304,7 +6304,7 @@ esac
         assert_eq!(refused["kind"], "action_failed");
         assert_eq!(
             refused["message"],
-            "Nothing was published. BiBCode hasn't identified git.acme.example yet. Open Pull Requests for this project or run Rescan in Settings → Source Control, then try again."
+            "Nothing was published. Coddy Studio hasn't identified git.acme.example yet. Open Pull Requests for this project or run Rescan in Settings → Source Control, then try again."
         );
         assert!(!published.exists(), "the branch was not published");
         assert!(!calls.exists(), "no provider command ran");
@@ -6417,7 +6417,7 @@ esac
         .expect_err("an unidentified host is refused");
         assert_eq!(
             error.wire["detail"],
-            "Nothing was published. BiBCode hasn't identified git.acme.example yet. Open Pull Requests for this project or run Rescan in Settings → Source Control, then try again."
+            "Nothing was published. Coddy Studio hasn't identified git.acme.example yet. Open Pull Requests for this project or run Rescan in Settings → Source Control, then try again."
         );
         let heads = std::fs::read_dir(repository.join(".git/refs/heads"))
             .expect("branch refs")
@@ -6643,7 +6643,7 @@ esac
         };
         use crate::test_support::reexec;
 
-        const CAPTURE: &str = "BIBCODE_FILE_MANAGER_ENVIRONMENT_CAPTURE";
+        const CAPTURE: &str = "CODDY_STUDIO_FILE_MANAGER_ENVIRONMENT_CAPTURE";
         const TEST: &str =
             "production::git_vcs::tests::file_manager_launch_ignores_appimage_environment";
         if let Some(child) = reexec::enter(TEST, "file-manager") {
@@ -7077,8 +7077,8 @@ esac
 
     fn git(cwd: &Path, args: &[&str]) {
         let output = std::process::Command::new("git")
-            .args(["-c", "user.name=BiBCode Test"])
-            .args(["-c", "user.email=bibcode@example.test"])
+            .args(["-c", "user.name=Coddy Studio Test"])
+            .args(["-c", "user.email=coddy-studio@example.test"])
             .args(["-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(cwd)
@@ -7193,7 +7193,7 @@ esac
     }
 
     #[tokio::test]
-    async fn a_pull_request_created_through_bibcode_is_visible_on_the_next_refresh() {
+    async fn a_pull_request_created_through_coddy_studio_is_visible_on_the_next_refresh() {
         let fixture = Fixture::new("pr-lookup-create");
         git(&fixture.repository, &["switch", "-q", "-c", "feature"]);
         let before = fixture.refresh().await;
@@ -7230,7 +7230,7 @@ esac
         fixture.refresh().await;
         assert_eq!(fixture.lookups(), ["main"]);
 
-        // Any finished BiBCode Git mutation (a push from the Git Manager
+        // Any finished Coddy Studio Git mutation (a push from the Git Manager
         // included) may have changed what the forge reports for this branch.
         std::fs::write(fixture.repository.join("added.txt"), "added\n").expect("fixture file");
         fixture
@@ -7270,7 +7270,7 @@ esac
         assert!(before["pr"].is_null(), "{before}");
         assert_eq!(fixture.lookups(), ["main"]);
 
-        // `gh pr create` in a BiBCode terminal, then the command exits.
+        // `gh pr create` in a Coddy Studio terminal, then the command exits.
         fixture.set("open", "");
         fixture
             .services

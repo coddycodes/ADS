@@ -4,7 +4,7 @@ import {
   EnvironmentOperationForbiddenError,
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -152,7 +152,7 @@ describe("primary environment authentication helpers", () => {
       location: new URL("https://example.test/path"),
       history: { replaceState },
     });
-    vi.stubGlobal("document", { title: "BiBCode" });
+    vi.stubGlobal("document", { title: "Coddy Studio" });
 
     expect(takePairingTokenFromUrl()).toBeNull();
     stripPairingTokenFromUrl();

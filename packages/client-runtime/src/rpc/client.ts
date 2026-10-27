@@ -1,4 +1,4 @@
-import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@bibcode/contracts";
+import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -41,7 +41,7 @@ export class EnvironmentRpcRequestObserver extends Context.Reference<{
   readonly observe: (
     request: EnvironmentRpcRequestObservation,
   ) => Effect.Effect<EnvironmentRpcRequestObservationHandle>;
-}>("@bibcode/client-runtime/rpc/EnvironmentRpcRequestObserver", {
+}>("@coddy/client-runtime/rpc/EnvironmentRpcRequestObserver", {
   defaultValue: () => ({
     observe: () => Effect.succeed(UNOBSERVED),
   }),

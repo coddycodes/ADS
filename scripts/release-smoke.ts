@@ -25,7 +25,7 @@ export const releaseSmokeWorkspaceFiles = [
   releaseCargoLockFile,
   "apps/marketing/package.json",
   "infra/relay/package.json",
-  "oxlint-plugin-bibcode/package.json",
+  "oxlint-plugin-coddy-studio/package.json",
   "packages/client-runtime/package.json",
   "packages/shared/package.json",
   "scripts/package.json",
@@ -169,7 +169,7 @@ export function runReleaseSmoke(options: ReleaseSmokeOptions): void {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const tempRoot =
     options.tempRoot ??
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-release-smoke-"));
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-smoke-"));
   const runtime = options.runtime;
   const stdout = options.stdout ?? ((text: string) => process.stdout.write(text));
   const stderr = options.stderr ?? ((text: string) => process.stderr.write(text));
@@ -237,7 +237,7 @@ export function runReleaseSmoke(options: ReleaseSmokeOptions): void {
     );
     assertContains(
       nightlyReleaseMetadata,
-      "name=BiBCode Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
+      "name=Coddy Studio Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
       "Expected nightly metadata to include the short commit SHA in the release name.",
     );
 

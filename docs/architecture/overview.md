@@ -1,7 +1,7 @@
 # Architecture
 
-BiBCode has one React/Vite frontend and one native Rust backend. Browser mode
-connects to a running `bibcode` server. Desktop mode runs the same frontend in
+Coddy Studio has one React/Vite frontend and one native Rust backend. Browser mode
+connects to a running `coddy-studio` server. Desktop mode runs the same frontend in
 Tauri 2 and starts the primary Axum/Tokio server in-process. Native shell
 capabilities cross a narrow `DesktopBridge`; application traffic uses the same
 typed HTTP and WebSocket RPC boundaries in both modes.
@@ -11,7 +11,7 @@ flowchart TB
   Browser["Browser\nReact + Vite"]
   Desktop["Tauri 2 desktop\nRust host + system WebView"]
   Bridge["DesktopBridge\nTauri commands and events"]
-  Server["BiBCode server\nRust + Axum + Tokio"]
+  Server["Coddy Studio server\nRust + Axum + Tokio"]
   Providers["Codex / Claude / Cursor / OpenCode"]
 
   Browser -->|"HTTP + Effect RPC over WebSocket"| Server
@@ -61,7 +61,7 @@ flowchart TB
   same-host server's loopback, which `browserTargetResolver` routes
   through the gateway on the environment's own address; the bootstrap's `ui=` parameter
   names the page's origin so the gateway lets it frame the preview
-  ([Framing](remote.md#preview-gateway)). The gateway's injected `/__bibcode/frame.js` reports
+  ([Framing](remote.md#preview-gateway)). The gateway's injected `/__coddy-studio/frame.js` reports
   each page's URL, title, and history by `postMessage`, and Back, Forward, and
   Reload go back as messages. Its failures stay local to the client, and
   `previewRuntimeCapabilities` turns off picking, recording, screenshots, page
@@ -77,7 +77,7 @@ flowchart TB
   `window.desktopBridge` only when Tauri globals are present. Tauri commands and
   events implement privileged operations; browser fallbacks are limited to
   explicitly safe capabilities.
-- **Server (`apps/server`)** is both a Rust library and the native `bibcode`
+- **Server (`apps/server`)** is both a Rust library and the native `coddy-studio`
   binary. It owns HTTP/WebSocket RPC, authentication, SQLite persistence,
   orchestration, providers, terminals, Git, files, diagnostics, relay access,
   and process supervision. Its worktree catalog joins bounded live Git and
@@ -137,7 +137,7 @@ flowchart TB
   public status schemas. Stream and unary pull-request enrichment share one
   coalesced open-request lookup per worktree, provider, and branch, reused for
   10 seconds after success and never after failure, and forgotten when a
-  mutation finishes, a local change is reported, or BiBCode creates a request.
+  mutation finishes, a local change is reported, or Coddy Studio creates a request.
   Cached remote state additionally carries its producing
   ref identity; an external ref change clears it and resets branch-specific
   client remote fields before reconciliation;
@@ -170,7 +170,7 @@ flowchart TB
   watcher, reads, and lifecycle tasks before an immediate reattachment may
   create a fresh watcher generation. Server shutdown closes subscription and
   read admission and awaits owned setup, physical reads, and lifecycle tasks.
-  A completed terminal launched as a structured BiBCode command notifies the
+  A completed terminal launched as a structured Coddy Studio command notifies the
   deepest active canonical worktree ancestor after terminal exit publication;
   provider, session, and delivery events do not. Commands typed inside a
   persistent interactive shell have no structured completion boundary and
@@ -277,7 +277,7 @@ flowchart TB
   missing. Public adoption receipts bind the canonical opaque payload and an
   immutable result. Only healthy authoritative catalog observations may
   reconcile durable adopted-thread branch metadata.
-  The standalone `bibcode` binary may perform a final sweep of descendants
+  The standalone `coddy-studio` binary may perform a final sweep of descendants
   rooted at its own process after its managed owners shut down. Reusable
   in-process runtimes—including the desktop server—share their host PID and
   therefore skip that sweep: provider and terminal owners still stop their
@@ -398,7 +398,7 @@ flowchart TB
 
 ## AppImage child environments
 
-`bibcode_server::process::isolate_appimage_environment(&mut command)` is the
+`coddy_studio_server::process::isolate_appimage_environment(&mut command)` is the
 cross-platform entry point for child isolation and is a no-op off Linux.
 Standard, Tokio, and portable-pty command adapters live beside the policy in
 `apps/server/src/process/appimage.rs`. Standard and Tokio commands inherit by
@@ -416,13 +416,13 @@ Covered children include terminal PTYs, providers, their probes and helpers,
 Git and source-control helpers (including review Git commands), server-launched
 editors/file managers, and desktop-owned SSH, Tailscale, and host
 backend-shutdown `kill` commands. Isolation changes only the selected command.
-The desktop process, WebKitGTK-owned children, and BiBCode's own binaries retain
+The desktop process, WebKitGTK-owned children, and Coddy Studio's own binaries retain
 the bundled environment; desktop external-backend launches and the generic
 supervised process runner deliberately do not apply this policy. The login-shell
 PATH probe also inherits the original desktop environment: its output hydrates
 the desktop's own PATH before Tauri starts, so stripping bundled entries there
 would change the desktop's executable ordering. Before any Linux relaunch (an
-update restart or **Restart BiBCode**), the host marks every descriptor above
+update restart or **Restart Coddy Studio**), the host marks every descriptor above
 stderr close-on-exec (`apps/desktop/src-tauri/src/relaunch.rs`), so the new
 process no longer inherits the old AppImage runtime's keep-alive pipe. The old
 FUSE mount, its daemon and the replaced AppImage therefore end with the old
@@ -500,7 +500,7 @@ the desktop's AppImage environment without an environment customization API.
 A failure to start a command reaches the startup warning, but the plugin
 discards the commands' exit statuses. If a tool starts and then exits nonzero
 because of bundled libraries, registration fails silently and can leave the
-`bibcode://` handler missing.
+`coddy-studio://` handler missing.
 
 The GTK hook appends `XDG_DATA_DIRS` after a forced `/usr/share` entry.
 When the original variable is unset, stripping the AppDir leaves `/usr/share:`:
@@ -518,8 +518,8 @@ native or WSL environment from its authoritative launch plan and coordinates
 privileged multi-backend inspection, update protection, stop, recovery, and
 exact-plan restart around the server-owned persistence operations.
 
-The resolved base root defaults to the current user's `~/.bibcode`. An explicit
-CLI `--base-dir` takes precedence, followed by `BIBCODE_HOME`, followed by the
+The resolved base root defaults to the current user's `~/.coddy/studio`. An explicit
+CLI `--base-dir` takes precedence, followed by `CODDY_STUDIO_HOME`, followed by the
 desktop bootstrap root. Development and installed desktop builds use that same
 base root by default but intentionally select different state kinds: `dev` and
 `userdata`. Changing the account, home/profile, explicit root, drive, mount, or
@@ -534,13 +534,13 @@ non-null storage identity for a stable target and blocks a different identity
 before synchronization or cache consumption. That boundary cannot reconstruct
 history that predates marker deployment: the first protected release cannot
 detect that an earlier build already switched to another valid unmarked
-BiBCode database until the database receives a UUID and a client accepts it.
+Coddy Studio database until the database receives a UUID and a client accepts it.
 
 The server classifies its persistent SQLite store before opening it for normal
 read/write traffic. The absence of both `state.sqlite` and its
 `environment-id` storage-instance marker is the only automatic first-run case.
 An existing unmarked database is adopted only after a read-only integrity,
-migration-ledger, and required-table check recognizes it as a BiBCode store;
+migration-ledger, and required-table check recognizes it as a Coddy Studio store;
 missing, malformed, corrupt, or unrelated state is preserved and startup fails
 closed without creating or replacing either file. Validation opens the source
 read-only and uses SQLite's online-backup API to build a coherent in-memory
@@ -577,9 +577,9 @@ store on Windows, macOS, or Linux.
 After store preparation succeeds, the runtime copies the marker's persistent
 UUID into runtime-only server configuration. Every current-server descriptor
 surface publishes that UUID as `storageInstanceId`: the public
-`/.well-known/bibcode/environment` response, `server.getConfig`, the initial
+`/.well-known/coddy-studio/environment` response, `server.getConfig`, the initial
 `subscribeServerConfig` snapshot, lifecycle welcome and ready events, and
-BiBCode Connect descriptors. A clean restart of the same store therefore
+Coddy Connect descriptors. A clean restart of the same store therefore
 reports the same identity. New local servers always publish a UUID string;
 contract decoding maps the omitted field from an older or third-party remote
 server to `null`. Normal environment descriptors never include the requested
@@ -592,7 +592,7 @@ per language — TypeScript in `packages/contracts/src/environment.ts`
 (`REMOTE_PROTOCOL_VERSION`, `MIN_COMPATIBLE_REMOTE_PROTOCOL`) and Rust in
 `apps/server/src/http.rs` — and serialized by the well-known descriptor
 route, `server.getConfig`, the initial `subscribeServerConfig` snapshot,
-lifecycle welcome and ready events, and BiBCode Connect descriptors. Contract
+lifecycle welcome and ready events, and Coddy Connect descriptors. Contract
 decoding maps both fields to `0` for an older or third-party server, which
 clients classify as legacy limited compatibility. The window supplements —
 never replaces — the default-false capability booleans that continue to gate
@@ -616,8 +616,8 @@ Desktop discovery advertises only usable IPv4 addresses until a dual-stack
 listener exists; public candidates are labeled, never defaulted, and require an
 explicit warning acknowledgement. Plain `/ws` caps individual frames at 16 MiB
 while retaining the 64 MiB reassembled-message cap; a client that offers the
-`bibcode.rpc.chunked.v1` subprotocol receives messages over 64 KiB as binary
-records instead, and one that offers `bibcode.rpc.chunked-deflate.v1` (a remote
+`coddy-studio.rpc.chunked.v1` subprotocol receives messages over 64 KiB as binary
+records instead, and one that offers `coddy-studio.rpc.chunked-deflate.v1` (a remote
 or SSH server) also receives server messages of 16 KiB or more raw-deflate
 compressed.
 Hosted pairing rejects URL userinfo and renders and submits one normalized host;
@@ -634,7 +634,7 @@ and the final reopen to that staged filesystem object, so a competing or
 replacement final path is never configured, migrated, removed, or overwritten.
 
 Every startup acquires the effective root's cross-process
-`.bibcode-storage.lock` on a bounded blocking worker before store
+`.coddy-studio-storage.lock` on a bounded blocking worker before store
 classification. The guard remains held through validation, non-mutating
 migration inspection, any required backup, the migration transaction, and the
 normal database open. It is released when preparation returns, so established
@@ -674,15 +674,15 @@ for deletion. Newly created backup ancestors and their parents are flushed
 before the next descendant is created on platforms that support directory
 syncing.
 
-Offline recovery is explicit and state-kind scoped. `bibcode storage inspect`
+Offline recovery is explicit and state-kind scoped. `coddy-studio storage inspect`
 classifies the resolved store and inventories verified backups without changing
-database, WAL, marker, or catalog bytes. `bibcode storage restore --backup-id`
+database, WAL, marker, or catalog bytes. `coddy-studio storage restore --backup-id`
 accepts only a selected generation whose manifest, location, storage identity,
 checksum, SQLite integrity, and migration prefix verify for that same state
 kind. Restore reopens the verified database through a no-follow, read-capable
 file handle before copying it into recovery staging; on Windows, directories
 remain attributes-only while database files explicitly request generic read
-access. `bibcode storage start-empty` is the separate destructive choice. Both
+access. `coddy-studio storage start-empty` is the separate destructive choice. Both
 mutating commands first acquire an exclusive runtime lock and the storage
 operation lock, write and flush a recovery journal, and preserve every existing
 database, WAL, SHM, and marker entry in a private recovery generation before
@@ -703,10 +703,10 @@ path, executable, distro command, or shell text. Rust resolves the selected
 environment from the authoritative backend launch plan before inspecting or
 mutating its store. Native environments call the server persistence library
 directly. A WSL plan records one validated absolute Linux data root when it is
-created, sends that exact root as `bibcodeHome` in the server bootstrap, and
-reuses it for recovery. This preserves an explicit WSL `BIBCODE_HOME`; recovery
-does not guess `$HOME/.bibcode`. WSL inspection and recovery invoke the bundled
-`bibcode storage inspect|restore|start-empty` CLI with an argument vector and a
+created, sends that exact root as `coddyStudioHome` in the server bootstrap, and
+reuses it for recovery. This preserves an explicit WSL `CODDY_STUDIO_HOME`; recovery
+does not guess `$HOME/.coddy/studio`. WSL inspection and recovery invoke the bundled
+`coddy-studio storage inspect|restore|start-empty` CLI with an argument vector and a
 bounded output/time budget, never a shell command string.
 
 Inspection is read-only and happens before a backend is stopped. A selected
@@ -787,22 +787,22 @@ backends use `BackendLaunchTarget::ExternalProcess`, so not every desktop
 environment shares the host process. SSH forwarding is owned by the Tauri host;
 provider, terminal, and managed relay processes are supervised by the server.
 Neither path introduces a production Node server or packaged helper sidecar.
-The only extra BiBCode process is the [Profiler](#profiler)'s crash monitor:
+The only extra Coddy Studio process is the [Profiler](#profiler)'s crash monitor:
 the same executable, relaunched only while the profiler is on. A Windows update
-also starts a detached `cmd.exe` restart waiter, which is not a BiBCode
+also starts a detached `cmd.exe` restart waiter, which is not a Coddy Studio
 executable.
 
 While [device previews](#device-previews) are on, the server also runs tools
 from the user's own Android SDK: the `emulator` (registered helper label
 `android-emulator`), `adb`, and, through `adb shell`, the pinned scrcpy-server
-on the device (registered helper label `android-scrcpy`). BiBCode ships no
+on the device (registered helper label `android-scrcpy`). Coddy Studio ships no
 Android binary on the host; the scrcpy-server jar is embedded in the server and
 pushed to the emulator. On a macOS server it also runs `xcrun simctl` from the
 user's Xcode (`list`, `boot`, `bootstatus`, `shutdown`, `io screenshot`,
 `pbcopy`) as supervised children with timeouts, and loads Xcode's private
 CoreSimulator and SimulatorKit frameworks into the server process itself, where
-they stay until it exits. A booted simulator is not a BiBCode child: its
-`launchd_sim` belongs to CoreSimulator's launchd service, and BiBCode only
+they stay until it exits. A booted simulator is not a Coddy Studio child: its
+`launchd_sim` belongs to CoreSimulator's launchd service, and Coddy Studio only
 registers its identity (`ios-simulator`) for the profiler's sampler.
 
 The server can also open preview gateway listeners. Each one reverse-proxies
@@ -941,16 +941,16 @@ exit instead of resuming a partially quiesced runtime. The host marks those
 exits as expected, stops every backend from the captured running set, and does
 not invoke the platform installer until every included backend has committed
 and stopped. On Windows the passive NSIS package then replaces
-`bibcode-desktop.exe` and relaunches it. Its preinstall hook, only for passive
+`coddy-studio-desktop.exe` and relaunches it. Its preinstall hook, only for passive
 and silent installers and only when that installed executable is already
-present, ends a same-user `bibcode-desktop.exe` and retries deleting that file
+present, ends a same-user `coddy-studio-desktop.exe` and retries deleting that file
 for up to 15 seconds, so a brief lock after the updater exits does not become
 the template's file-in-use dialog. Interactive installers skip the hook and keep
 the template prompt and Restart Manager shutdown, which runs the normal exit
 path. A file that is still locked after that retry reaches the template dialog
 unchanged. An elevated installer relaunches through `CreateProcessWithTokenW`
 with a null environment block, which does not keep the updating process's
-`BIBCODE_HOME` or `BIBCODE_PORT`. Before the installer starts, the host writes
+`CODDY_STUDIO_HOME` or `CODDY_STUDIO_PORT`. Before the installer starts, the host writes
 those two variables to a temp handoff that stays valid for ten minutes. The
 replacement applies whichever it does not already have, before it chooses a
 data root or port, so a remote client reconnects to the same endpoint. Once
@@ -961,7 +961,7 @@ detached waiter, which receives the executable path in an environment variable
 so a non-ASCII install path survives the console code page, is stopped and the
 handoff deleted when the installer fails to start. It starts without inheriting
 any handle, so neither it nor the copy it starts keeps open a pipe that
-whatever launched BiBCode is still reading. Otherwise it starts the
+whatever launched Coddy Studio is still reading. Otherwise it starts the
 installed executable only after neither a
 `*-setup.exe` nor a `*-installer.exe` process is running and the installer has
 not relaunched it. The updater launches the downloaded NSIS bytes as
@@ -996,7 +996,7 @@ including a retry or an exposure/topology restart, clears its recovery entry;
 removing the slot also drops the entry. A failed project-data restart replaces
 an existing entry's typed failure, and an admission failure leaves it intact.
 Once every entry is cleared, **Retry installation** becomes available. A failed
-retry also offers **Restart BiBCode** through the optional `restartApp` bridge command.
+retry also offers **Restart Coddy Studio** through the optional `restartApp` bridge command.
 The host rejects that command during an install or exclusive update/project-data
 operation; otherwise it requests the normal application restart, whose exit
 path persists window state, stops backends through `stop_for_exit`, and shuts
@@ -1056,13 +1056,13 @@ failed count answers the typed `RemoteUpdateActiveWorkError`.
   flow, and the delegate fills `downloadPercent`, `targetVersion`, and `installStage`.
   A remote install stopped by a secondary environment's protection says
   "Finish the update on the host."
-- Headless `bibcode serve` and WSL/external desktop backends run in `manual`
+- Headless `coddy-studio serve` and WSL/external desktop backends run in `manual`
   mode. `updater.check` refreshes the server's own version,
   `latestVersion` remains `null` because the server has no update feed, and
   `updater.install` fails with `remote_update_manual_required`. Clients render
   copyable operator instructions instead of an install action.
   `installKind` is derived from the static asset layout: a sibling `web/` means
-  `archive`, `share/bibcode/web` means `system-package`, and an explicit
+  `archive`, `share/coddy-studio/web` means `system-package`, and an explicit
   `--static-dir` or no resolved directory means `unknown`; desktop hosts report
   `unknown`.
 
@@ -1349,9 +1349,9 @@ changes the AppDir, making upstream drift visible.
 The wrapper removes bundled `libwayland-client.so*` files and symlinks under
 `usr/lib*` and verifies their absence, keeping the system Wayland client with
 the system Mesa/EGL stack. It then rewrites the hook's export to
-`export GDK_BACKEND="${BIBCODE_GDK_BACKEND:-wayland,x11}"`. GTK tries Wayland
+`export GDK_BACKEND="${CODDY_STUDIO_GDK_BACKEND:-wayland,x11}"`. GTK tries Wayland
 first and falls back to X11; the override is evaluated when the AppImage
-launches. `BIBCODE_GDK_BACKEND=x11` restores the previous backend selection.
+launches. `CODDY_STUDIO_GDK_BACKEND=x11` restores the previous backend selection.
 Preferring native Wayland avoids oversized rendering from integer GTK scaling
 under Xwayland on fractionally scaled Hyprland/Omarchy desktops.
 
@@ -1440,7 +1440,7 @@ React client adds a collector for what the user waits on. The approved design
 is the [profiler spec](../superpowers/specs/2026-10-09-profiler-design.md); where
 the two differ, this section describes the code. Exact event and finding shapes
 are listed in the
-[`bibcode-profiler` skill references](../skills/bibcode-profiler/references/events.md).
+[`coddy-studio-profiler` skill references](../skills/coddy-studio-profiler/references/events.md).
 
 ### Toggle and lifecycle
 
@@ -1452,7 +1452,7 @@ are listed in the
   the profiler is on, the same task also runs maintenance and the crash-dump
   scan (see [Crash capture](#crash-capture)).
 - The detectors are the process sampler, the RPC latency detector, and the
-  worktree audit. A standalone `bibcode` also runs the crash monitor detector.
+  worktree audit. A standalone `coddy-studio` also runs the crash monitor detector.
   Every 5 minutes the latency detector also emits `rpc.histogram` per method
   and outcome, and `rpc.bytes` per method: the encoded reply bytes that left on
   connections that encode before queueing (E2EE and record-framed), counted in
@@ -1462,13 +1462,13 @@ are listed in the
   The device manager (`apps/server/src/device/`) likewise emits
   `device.lifecycle` (`start`, `ready`, `fail`, `stop`, with `platform`
   `android` or `ios`, and a `failureKind` that includes `busy` for a simulator
-  found running outside BiBCode as its launch began) only while the profiler
+  found running outside Coddy Studio as its launch began) only while the profiler
   is on. It reports an emulator that exits on its own as `subprocess.crash`
   labelled `android-emulator`, and a simulator shut down or deleted outside
-  BiBCode as one labelled `ios-simulator`. A simulator has no exit status, so
+  Coddy Studio as one labelled `ios-simulator`. A simulator has no exit status, so
   that report always says `exit 1`, with the `launchd_sim` pid, or pid `0` when
   that process was not found after boot. The sampler attributes a booted
-  simulator's `launchd_sim` to BiBCode as a `helper`.
+  simulator's `launchd_sim` to Coddy Studio as a `helper`.
 - `ProductionRuntime::start` starts the runtime on a blocking thread, because it
   replays `findings.ndjson`, before the orchestration engine starts.
 - **Global handle.** Hot paths reach the runtime through a process-global
@@ -1483,7 +1483,7 @@ are listed in the
   writer would destroy data. A runtime that cannot take the lock is degraded
   for the whole run: it records nothing, and `server.getProfilerStatus` reports
   `enabled: false`. Its `storage` is `"locked"` when another process holds the
-  lock (another BiBCode app or server uses the same data root), and `"failing"`
+  lock (another Coddy Studio app or server uses the same data root), and `"failing"`
   for any other lock error, such as a filesystem that refuses locks.
 - **Writer thread.** One dedicated OS thread writes every file. Senders
   `try_send` into a bounded channel of 2,048 messages. A full channel drops the
@@ -1563,7 +1563,7 @@ it.
 - `server.getProfilerStatus` returns the 20 newest findings without evidence;
   the CLI and MCP readers return the evidence too.
 - **Versions (#98).** Every event line names the build that wrote it
-  (`bibcode`), so retention and failed writes never part events from their
+  (`coddy-studio`), so retention and failed writes never part events from their
   version. Each start of recording also writes a `session.start` event with
   the version, host (`desktop` or `server`), OS and architecture. Findings
   carry `firstVersion` and `lastVersion`, which are not part of the
@@ -1605,11 +1605,11 @@ it.
   unhandled even after a dump, so Windows Error Reporting keeps its record and may
   show its dialog.
 - **Socket.** The monitor's socket lives in a new private directory,
-  `bibcode-<uid>-<random>`, under `$XDG_RUNTIME_DIR` on Linux or else the
+  `coddy-studio-<uid>-<random>`, under `$XDG_RUNTIME_DIR` on Linux or else the
   temporary directory, whose base must not let other users rename entries. The
   directory is created 0700 without following an existing path, the socket is
   0600, and a pre-existing socket path is refused; Windows uses
-  `bibcode-<random>` in the per-user `%TEMP%`. Dumps hold raw process memory, so
+  `coddy-studio-<random>` in the per-user `%TEMP%`. Dumps hold raw process memory, so
   `crashes/` is 0700 (a protected ACL on Windows) and every dump and sidecar is 0600.
 - **Capabilities.** `nativeDumps` is `available` once a monitor is armed for an
   attached hook. It is `unavailable` when no hook is attached (no monitor is
@@ -1626,14 +1626,14 @@ it.
 - **Desktop.** The host owns its process's one hook and runs the monitor for
   itself and its in-process server, which runs no monitor detector. Before Tauri
   starts, the host reads the local environment's `enableProfiler` from that data
-  root's `settings.json` (`BIBCODE_HOME` or `~/.bibcode`), so a crash during
+  root's `settings.json` (`CODDY_STUDIO_HOME` or `~/.coddy/studio`), so a crash during
   startup is captured once the toggle is on. Afterwards it follows the in-process
   server's committed setting. An AppImage host that runs directly in a systemd
   `.service` unit stops its monitor and waits for it at its last exit callback:
   the unit's stop kills the AppImage's FUSE mount with the cgroup, and a monitor
   that ignored that SIGTERM would die with SIGBUS on its next page fault, a
   false `crash.native`. WSL, SSH, and remote environments run their own
-  `bibcode` process, hook, and monitor under their own setting.
+  `coddy-studio` process, hook, and monitor under their own setting.
 - **Dumps become findings.** A dump is a `crash.native` finding (error) whose
   evidence has `source: "minidump"`, `crashId`, `crashIds` (every dump the
   finding counted, newest 64, carried over each repeat), the crash reason read
@@ -1660,14 +1660,14 @@ it.
   such as a fault the process survived. The crash ids already cited are loaded
   from the findings at start, so a dump is linked once, across restarts too. The
   server never symbolicates; the CLI and MCP readers do.
-- **Crash test.** `BIBCODE_PROFILER_CRASH_TEST=1` at startup makes the process
+- **Crash test.** `CODDY_STUDIO_PROFILER_CRASH_TEST=1` at startup makes the process
   fault on purpose 5 s after its monitor is armed, for the runbooks' crash smoke.
   Child processes inherit the variable.
 
 ### Panics and the previous run
 
 - **Panic hook.** `ProfilerRuntime::start` installs a hook that chains to the
-  previous one and never aborts, because BiBCode recovers panics at many
+  previous one and never aborts, because Coddy Studio recovers panics at many
   `catch_unwind` and `JoinError::is_panic` sites. It records a `panic` event
   with the thread name, the location, a redacted first line of the message, and
   up to 64 frames as `(module, debugId, offset)`, the addressing Breakpad uses,
@@ -1704,7 +1704,7 @@ it.
   logs that it lost the Wayland or X11 connection (GTK then calls `_exit(1)`,
   so nothing else records it), and the desktop notes `quit` on an exit request
   and `signal` on `SIGTERM`. On Windows it notes `session-end` when Windows ends
-  the session with BiBCode open (shutdown, sign-out or Restart Manager): tao
+  the session with Coddy Studio open (shutdown, sign-out or Restart Manager): tao
   destroys its event loop on `WM_ENDSESSION`, so the desktop exits at once, as
   tao 0.36 would, instead of dispatching further messages into the destroyed
   loop (#102). A run noted `session-end` is a clean ending unless a crash dump
@@ -1726,13 +1726,13 @@ it.
   Event 1000 through `wevtutil`, in both the named and positional event-data
   forms. macOS reads `~/Library/Logs/DiagnosticReports/*.ips` crash reports
   (`bug_type` 309) matched by process name and time. Frames and modules are
-  redacted, and the fingerprint prefers frames in BiBCode's own executable, so
+  redacted, and the fingerprint prefers frames in Coddy Studio's own executable, so
   aborts in different places do not collapse into one libc frame.
 
 ### Detectors and watches
 
 - **Process sampler.** Every 5 s, on a blocking thread with one long-lived
-  `sysinfo::System`, it refreshes only BiBCode's processes: the server, the
+  `sysinfo::System`, it refreshes only Coddy Studio's processes: the server, the
   processes registered in `ProcessAttributionRegistry` (providers, terminals,
   the desktop webview, helpers), and up to 128 descendants rediscovered every
   60 s. Leak rules read private memory (Linux `RssAnon + VmSwap`, Windows
@@ -1743,10 +1743,10 @@ it.
   `server`, or `desktop-host` for a server inside the desktop app;
   `provider:<driver>` for a registered provider; `terminal`; `webview`;
   `helper` for registered helpers and the crash monitor (a descendant running
-  BiBCode's own executable); `git`; and `other`. On Windows and Linux,
+  Coddy Studio's own executable); `git`; and `other`. On Windows and Linux,
   `webview` also covers preview tabs' web content, which descends from the
   desktop host like the main window's. Every kind is sampled, but
-  leak and CPU findings are raised only for BiBCode's own processes (`server`,
+  leak and CPU findings are raised only for Coddy Studio's own processes (`server`,
   `desktop-host`, `webview`, `provider:*`, and `helper`): what runs under a
   terminal, such as a build or a language server, is the user's. Once a minute
   one `process.sample` event records each process's medians and maxima and the
@@ -1775,8 +1775,8 @@ it.
   connection writes `rpc.reconnect` with the gap. Neither raises a finding. See
   [Connection ends](./rpc-and-orchestration.md#connection-ends).
 - **Subprocess exits.** The provider, terminal, and supervised-command exit
-  paths, and the BiBCode Connect tunnel connector (checked every 5 s while it
-  is the active one), report a death BiBCode did not ask for as a
+  paths, and the Coddy Connect tunnel connector (checked every 5 s while it
+  is the active one), report a death Coddy Studio did not ask for as a
   `subprocess.exit` event and
   a `subprocess.crash` finding with the signal or exit code, uptime, and the
   sampler's last memory sample. On Linux, for a signal that dumps core, a
@@ -1785,11 +1785,11 @@ it.
   supervised commands such as git only signals, and terminals only signals
   people do not type (not `Ctrl-\` or `kill -9`). SIGTERM, SIGHUP, and SIGINT (on
   Windows the Ctrl-C status), and a provider's exit codes 129, 130, and 143,
-  are deliberate and never count. A stop that BiBCode or the user requested in
+  are deliberate and never count. A stop that Coddy Studio or the user requested in
   the last minute, after the process started, is not reported; the comparison
   uses the start instant the exit path recorded, so a late report cannot move
-  it. Once BiBCode has received a termination
-  signal, nothing that dies with it is. A SIGKILL BiBCode did not send is
+  it. Once Coddy Studio has received a termination
+  signal, nothing that dies with it is. A SIGKILL Coddy Studio did not send is
   labelled likely OOM.
 - **Webview.** On desktop, the end of the main window's web content process (on
   Windows, any WebView2 process failure) is a `crash.webview` finding.
@@ -1803,13 +1803,13 @@ it.
     polls for the crash report of the remembered web content pid written within
     the next minute. The host reads that pid only while the profiler is on: after
     each page load and when the profiler turns on, and forgets it when it turns
-    off. That hook replaces Tauri's own, so BiBCode itself reloads every webview
+    off. That hook replaces Tauri's own, so Coddy Studio itself reloads every webview
     whose content process ended, queued to the event loop.
   - Windows hooks WebView2 `ProcessFailed` (except a deliberate termination)
     with its kind, reason, and exit code, and looks once for the newest
     minidump in WebView2's failure report folder or its `reports` subfolder.
 
-  Nothing is reported once BiBCode is terminating.
+  Nothing is reported once Coddy Studio is terminating.
 
 - **Worktree audit.** See [Worktree catalog: Audit](./worktree-catalog.md#audit).
 - **Git stacked actions (#158).** `git.runStackedAction` reports a failed
@@ -1847,7 +1847,7 @@ any connected environment through an environment selector that defaults to the
 primary. Its switch reads and writes that environment's `enableProfiler`, not
 `status.enabled`, so a degraded runtime keeps the switch on and explains itself
 instead of snapping back off. A degraded runtime with `storage: "locked"` reads
-**Not recording.** with "Another BiBCode app or server is already recording to
+**Not recording.** with "Another Coddy Studio app or server is already recording to
 this profiler folder. Close it, then restart this one."; any other degraded
 runtime reads **Starting...**. With `storage: "failing"` the section also says
 "Could not write profiling data. Check free disk space and folder permissions.",
@@ -1860,7 +1860,7 @@ crash dumps** (see [Observability](../operations/observability.md)). Both, and
 the checkbox, explain why when disabled. The 20 newest findings follow, each with
 its severity, title, count, and last seen. A server that does not advertise
 `capabilities.profiler` (one older than the profiler) is never asked for its
-status: the section shows only the disabled switch and "This server's BiBCode
+status: the section shows only the disabled switch and "This server's Coddy Studio
 version has no profiler. Update the server to record." (see
 [Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports)).
 While any connected environment's profiler is on, and its server advertises the
@@ -1904,14 +1904,14 @@ read-only query layer. It never takes the lock or writes a file, tolerates the
 writer rotating and cutting files back underneath it, streams events with
 bounded memory, and works while the server is stopped.
 
-- **CLI.** `bibcode [--base-dir <root>] profiler <command>`, with `status`,
+- **CLI.** `coddy-studio [--base-dir <root>] profiler <command>`, with `status`,
   `findings`, `events`, `crashes`, `symbolicate`, and `mcp`. `status` takes
   `--json`. `findings` and `events` take `--kind` (a trailing `*` matches a
   prefix) and `--json`, plus either `--since` (`30s`, `10m`, `1h`, `2d`, or
   RFC 3339) and `--limit`, or `--follow --duration` of at most 10 minutes, which
   conflicts with both. `crashes` takes `--limit` and `--json`. Desktop installs ship no separate
-  `bibcode`, so the desktop executable handles `profiler …` before Tauri starts,
-  reading the desktop data root (`BIBCODE_HOME` or `~/.bibcode`). A Windows
+  `coddy-studio`, so the desktop executable handles `profiler …` before Tauri starts,
+  reading the desktop data root (`CODDY_STUDIO_HOME` or `~/.coddy/studio`). A Windows
   release build is a GUI-subsystem program that borrows the calling console.
 - **Symbolication.**
   `profiler symbolicate <crash id | sid:seq> [--symbols <dir>]... [--download] [--json]`
@@ -1919,9 +1919,9 @@ bounded memory, and works while the server is stopped.
   event from Breakpad symbol stores. It reads the `--symbols` stores, then the
   cache `<state dir>/profiler-symbols/`. Only `--download` fetches the
   record's release archive,
-  `bibcode-{desktop,server}-symbols-<version>-<os>-<arch>.zip`, from GitHub over
+  `coddy-studio-{desktop,server}-symbols-<version>-<os>-<arch>.zip`, from GitHub over
   HTTPS, size-capped and refusing unsafe archive paths, into that cache.
-- **MCP.** `bibcode profiler mcp` serves newline-delimited JSON-RPC over stdio,
+- **MCP.** `coddy-studio profiler mcp` serves newline-delimited JSON-RPC over stdio,
   to clients of protocol 2026-07-28, 2025-11-25, or 2025-06-18, with five
   read-only tools: `profiler_status`, `profiler_findings`,
   `profiler_events`, `profiler_crash`, and `profiler_symbolicate`.
@@ -1931,8 +1931,8 @@ bounded memory, and works while the server is stopped.
   results inline. Only `profiler_symbolicate` with `download: true` uses the
   network; `profiler_crash` never downloads. Tool descriptions mark the output
   as untrusted application data. Authentication is filesystem permissions; a
-  remote host is reached as `ssh <host> bibcode profiler mcp`.
-- **Skill.** [`docs/skills/bibcode-profiler/`](../skills/bibcode-profiler/SKILL.md)
+  remote host is reached as `ssh <host> coddy-studio profiler mcp`.
+- **Skill.** [`docs/skills/coddy-studio-profiler/`](../skills/coddy-studio-profiler/SKILL.md)
   uses these readers to monitor, diagnose, and file deduplicated GitHub issues.
 
 ### Known limits
@@ -1958,10 +1958,10 @@ bounded memory, and works while the server is stopped.
   Neither the heartbeat nor Long Animation Frames can tell it apart: the
   gateway's frame is cross-origin, and frames do not attribute cross-origin
   scripts.
-- The restart waiter of a Windows update treats a `bibcode-desktop.exe` with a
+- The restart waiter of a Windows update treats a `coddy-studio-desktop.exe` with a
   window as the relaunched app, so the profiler's windowless `profiler mcp`
   server and crash monitor do not count. The passive installer's preinstall
-  hook ends every same-user `bibcode-desktop.exe`, an MCP server included.
+  hook ends every same-user `coddy-studio-desktop.exe`, an MCP server included.
 
 ## Device previews
 
@@ -2007,7 +2007,7 @@ simulator's UDID (the whole UDID if those also match).
 **Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
 allows one running device per platform; a second `device.open` on that
 platform fails with `DeviceLimitError` naming the running device's display
-name, and an image already running outside BiBCode fails with
+name, and an image already running outside Coddy Studio fails with
 `DeviceBusyError`. A device moves `starting → booting → ready →
 stopping → stopped`, or to `failed` with a reason (`exited`, `bootTimeout`,
 `spawn`, `unresponsive`, or `busy`). The four most recent ended devices stay
@@ -2019,7 +2019,7 @@ in the catalog so their reason stays visible.
   `-gpu swiftshader_indirect` on a Linux server with neither `DISPLAY` nor
   `WAYLAND_DISPLAY`. The AVD name is one argument and never meets a shell. It
   is a registered helper (`android-emulator`) in its own process group or Job.
-- BiBCode never sets `ANDROID_EMULATOR_HOME`, because that also redirects AVD
+- Coddy Studio never sets `ANDROID_EMULATOR_HOME`, because that also redirects AVD
   lookup. It reads the gRPC port and token from the emulator's discovery file,
   searching `emulator::default_discovery_dirs` in order: the OS runtime
   directory (`$XDG_RUNTIME_DIR/avd/running` on Linux,
@@ -2032,7 +2032,7 @@ in the catalog so their reason stays visible.
   `adb shell getprop sys.boot_completed` returns `1` and the first screenshot
   has given the natural panel size and the boot orientation (see Input), within
   180 s. The gRPC client connects only to `127.0.0.1`; adb uses the user's adb
-  server and BiBCode never passes `-a`.
+  server and Coddy Studio never passes `-a`.
 - A stop asks the emulator to shut down over gRPC, kills its process group
   after 10 s, and removes its discovery file. An exit nobody asked for,
   checked every second, fails the device with `exited` and raises
@@ -2118,7 +2118,7 @@ agrees; otherwise the previous orientation stays, or, when that disagrees too,
 `portrait` for the native shape and `landscape` for the other. With no scrcpy
 session (still images) the skin decides, because the gRPC screenshots are
 rotated by it. Boot reads the natural panel size and the orientation from the
-first screenshot. BiBCode does not pass `-no-snapshot-load`, so an AVD stopped
+first screenshot. Coddy Studio does not pass `-no-snapshot-load`, so an AVD stopped
 while turned comes back turned from its Quick Boot snapshot, with that
 screenshot already rotated (`ImageFormat.rotation`): a landscape rotation has
 its width and height swapped back to the natural panel. The tracker, the
@@ -2153,12 +2153,12 @@ which carries the value derived just before it is published.
 
 **H.264 video.** Device video is the only application traffic outside typed
 RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded
-scrcpy-server v4.1 jar to `/data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
+scrcpy-server v4.1 jar to `/data/local/tmp/coddy-studio-scrcpy-server-v4.1.jar`
 unless `sha256sum` on the device already matches, runs it through
 `adb shell` as a registered helper (`android-scrcpy`) with
 `max_size=1280 video_bit_rate=4000000 max_fps=30` and `cleanup=false` (scrcpy's
 cleanup helper would delete the jar as it starts, defeating the hash check, and
-restores only options BiBCode never sets), forwards a loopback port to it, and
+restores only options Coddy Studio never sets), forwards a loopback port to it, and
 reads the scrcpy v4.1 wire format:
 
 - the video socket starts with one dummy byte (forward tunnel), a 4-byte
@@ -2178,7 +2178,7 @@ mints a ticket with `device.createMediaTicket`: random, single use, valid for
 (plain or E2EE). The book holds at most 256 tickets and 8 per session,
 dropping the oldest. The client opens `GET /api/device-media` (plain) or
 `GET /api/device-media-e2ee` (Noise_NK with the pinned host key and the
-prologue `bibcode-device-media/1`) on the main listener and sends the ticket
+prologue `coddy-studio-device-media/1`) on the main listener and sends the ticket
 as the first message, never in the URL; the routes accept no cookie or bearer.
 Each binary message is a 1-byte kind (`0` config, `1` key, `2` delta), an
 8-byte big-endian PTS in microseconds, and the Annex-B payload. Kind `3` is a
@@ -2263,7 +2263,7 @@ exits 72 when only the Command Line Tools are selected) leaves the answer to
 `simctl help`, so a Mac without Xcode is `xcodeMissing`. It lists the available
 simulators of iOS runtimes with `simctl list devices available -j`, newest
 runtime first, named like `iPhone 17 Pro · iOS 26.5`. A simulator that is not
-`Shutdown` and that BiBCode did not boot is listed with `inUseElsewhere`, and
+`Shutdown` and that Coddy Studio did not boot is listed with `inUseElsewhere`, and
 `check_available` refuses it with `DeviceBusyError` before any slot exists; one
 found running when the launch begins fails the device with `busy`. The iOS
 entry's `availability` is `xcodeMissing`, `xcodeSetupIncomplete`,
@@ -2287,16 +2287,16 @@ never screen content or typed text.
 
 **Lifecycle.** `simctl boot` and `simctl bootstatus -b` together have 180 s.
 The device is `booting` from the boot until the screen is attached, then
-`ready`. BiBCode shuts down only simulators it booted (`IosBackend::booted`):
+`ready`. Coddy Studio shuts down only simulators it booted (`IosBackend::booted`):
 a failed `simctl boot` leaves the simulator alone, since it may be someone
-else's, and a simulator that was shut down outside BiBCode is not shut down
+else's, and a simulator that was shut down outside Coddy Studio is not shut down
 again, since someone may have booted it since. A stop releases input, detaches
 the screen, unregisters `launchd_sim`, and runs `simctl shutdown`. The
 simulator's state is polled every 2 s; one shut down or deleted outside
-BiBCode fails the device with `Shutdown outside BiBCode` or
-`Deleted outside BiBCode` and raises `subprocess.crash` (see
+Coddy Studio fails the device with `Shutdown outside Coddy Studio` or
+`Deleted outside Coddy Studio` and raises `subprocess.crash` (see
 [Profiler](#profiler)). Simulators left booted by a server that crashed are
-not reaped: the next start lists them as running outside BiBCode.
+not reaped: the next start lists them as running outside Coddy Studio.
 
 **Live screen.** After boot, the backend attaches to the simulator's main
 display through SimulatorKit's screen (`SimDeviceIOClient` ports, the
@@ -2563,7 +2563,7 @@ See [RPC and orchestration](./rpc-and-orchestration.md) and
   the receipt makes a stale retry a no-op even if another worktree later reuses
   that path. Compatibility cleanup of a
   previously deregistered directory is limited to a normal directory without a
-  `.git` entry whose canonical parent is exactly BiBCode's computed
+  `.git` entry whose canonical parent is exactly Coddy Studio's computed
   per-repository worktree namespace; primary checkouts and arbitrary paths are
   never pre-cleaned.
 - Configured secondary WSL planning/start failures remain desired, unavailable
@@ -2714,7 +2714,7 @@ free space at the top of a heap. A large transient allocation, such as a
 full-store snapshot load or the startup validation snapshot, otherwise stays
 resident as free heap: 64 MB arena heaps, which the kernel reports as 128 MB
 mappings when two of them are adjacent. Both executables therefore start a
-`bibcode-heap-trim` thread (`allocator::start_heap_trimmer`) that calls
+`coddy-studio-heap-trim` thread (`allocator::start_heap_trimmer`) that calls
 `malloc_trim(0)` every 30 seconds, which releases the free pages inside every
 arena. The server starts it right after the crash hook; the desktop host starts
 it after the PATH hydration, which must run before any thread exists. Other

@@ -53,9 +53,9 @@ jobs:
             bundle: dmg
             rustTarget: x86_64-apple-darwin
     env:
-      BIBCODE_E2E_PLATFORM: ${{ matrix.platform }}
-      BIBCODE_E2E_ARCH: ${{ matrix.arch }}
-      BIBCODE_E2E_BUNDLE: ${{ matrix.bundle }}
+      CODDY_STUDIO_E2E_PLATFORM: ${{ matrix.platform }}
+      CODDY_STUDIO_E2E_ARCH: ${{ matrix.arch }}
+      CODDY_STUDIO_E2E_BUNDLE: ${{ matrix.bundle }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,7 +100,7 @@ jobs:
         run: vp install --frozen-lockfile
 
       - name: Build packaged test application
-        run: vp run --filter @bibcode/desktop test:ui:build
+        run: vp run --filter @coddy/desktop test:ui:build
 
       - name: Resolve Linux AppImage
         if: matrix.platform == 'linux'
@@ -109,7 +109,7 @@ jobs:
           app_path="$(find "$GITHUB_WORKSPACE/target/${{ matrix.rustTarget }}/release/bundle/appimage" -maxdepth 1 -name '*.AppImage' -print -quit)"
           test -n "$app_path"
           chmod +x "$app_path"
-          echo "BIBCODE_E2E_APP_PATH=$app_path" >> "$GITHUB_ENV"
+          echo "CODDY_STUDIO_E2E_APP_PATH=$app_path" >> "$GITHUB_ENV"
 
       - name: Verify Linux AppImage portability
         if: matrix.platform == 'linux'
@@ -124,7 +124,7 @@ jobs:
 
           (
             cd "$extract_directory"
-            "$BIBCODE_E2E_APP_PATH" --appimage-extract >/dev/null
+            "$CODDY_STUDIO_E2E_APP_PATH" --appimage-extract >/dev/null
           )
 
           forbidden_library="$(
@@ -145,20 +145,20 @@ jobs:
         run: |
           dmg_path="$(find "target/${{ matrix.rustTarget }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -print -quit)"
           test -n "$dmg_path"
-          mount_point="$RUNNER_TEMP/bibcode-desktop-ui-dmg"
+          mount_point="$RUNNER_TEMP/coddy-studio-desktop-ui-dmg"
           mkdir -p "$mount_point"
           hdiutil attach "$dmg_path" -mountpoint "$mount_point" -nobrowse -readonly
-          echo "BIBCODE_E2E_DMG_MOUNT_POINT=$mount_point" >> "$GITHUB_ENV"
-          mounted_app="$(find "$mount_point" -maxdepth 1 -name 'BiBCode.app' -print -quit)"
+          echo "CODDY_STUDIO_E2E_DMG_MOUNT_POINT=$mount_point" >> "$GITHUB_ENV"
+          mounted_app="$(find "$mount_point" -maxdepth 1 -name 'Coddy Studio.app' -print -quit)"
           test -n "$mounted_app"
-          install_directory="$(mktemp -d "$RUNNER_TEMP/bibcode-ui-install.XXXXXX")"
-          echo "BIBCODE_E2E_INSTALL_DIRECTORY=$install_directory" >> "$GITHUB_ENV"
-          app_path="$install_directory/BiBCode.app"
+          install_directory="$(mktemp -d "$RUNNER_TEMP/coddy-studio-ui-install.XXXXXX")"
+          echo "CODDY_STUDIO_E2E_INSTALL_DIRECTORY=$install_directory" >> "$GITHUB_ENV"
+          app_path="$install_directory/Coddy Studio.app"
           ditto "$mounted_app" "$app_path"
           executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$mounted_app/Contents/Info.plist")"
           cmp "$mounted_app/Contents/MacOS/$executable" "$app_path/Contents/MacOS/$executable"
           codesign --verify --deep --strict "$app_path"
-          echo "BIBCODE_E2E_APP_PATH=$app_path" >> "$GITHUB_ENV"
+          echo "CODDY_STUDIO_E2E_APP_PATH=$app_path" >> "$GITHUB_ENV"
 
       - name: Install and resolve Windows NSIS application
         if: matrix.platform == 'win'
@@ -167,19 +167,19 @@ jobs:
           $installer = Get-ChildItem "target/${{ matrix.rustTarget }}/release/bundle/nsis/*.exe" | Select-Object -First 1
           if ($null -eq $installer) { throw "NSIS installer was not produced." }
           Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
-          $allowedNames = @("BiBCode.exe", "bibcode-desktop.exe")
+          $allowedNames = @("Coddy Studio.exe", "coddy-studio-desktop.exe")
           $app = Get-ChildItem $env:LOCALAPPDATA -File -Recurse |
             Where-Object { $allowedNames -contains $_.Name } |
             Select-Object -First 1
-          if ($null -eq $app) { throw "NSIS-installed BiBCode executable was not found." }
-          "BIBCODE_E2E_APP_PATH=$($app.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          if ($null -eq $app) { throw "NSIS-installed Coddy Studio executable was not found." }
+          "CODDY_STUDIO_E2E_APP_PATH=$($app.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Run packaged desktop UI smoke
         shell: bash
         env:
-          BIBCODE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/bibcode-desktop-ui-artifacts
+          CODDY_STUDIO_E2E_ARTIFACT_DIR: ${{ runner.temp }}/coddy-studio-desktop-ui-artifacts
         run: |
-          if [[ "$BIBCODE_E2E_PLATFORM" == "linux" ]]; then
+          if [[ "$CODDY_STUDIO_E2E_PLATFORM" == "linux" ]]; then
             xvfb-run --auto-servernum vp run test:ui:desktop
           else
             vp run test:ui:desktop
@@ -189,13 +189,13 @@ jobs:
         if: always() && matrix.platform == 'mac'
         shell: bash
         env:
-          BIBCODE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/bibcode-desktop-ui-artifacts
+          CODDY_STUDIO_E2E_ARTIFACT_DIR: ${{ runner.temp }}/coddy-studio-desktop-ui-artifacts
         run: |
           python3 - <<'PYTHON'
           import json, os
           from pathlib import Path
           directory = Path.home() / "Library/Logs/DiagnosticReports"
-          paths = sorted(set(directory.glob("bibcode-desktop*.ips")) | set(directory.glob("BiBCode*.ips")), key=lambda path: path.stat().st_mtime)[-10:]
+          paths = sorted(set(directory.glob("coddy-studio-desktop*.ips")) | set(directory.glob("Coddy Studio*.ips")), key=lambda path: path.stat().st_mtime)[-10:]
           summaries = []
           for path in paths:
               try:
@@ -224,7 +224,7 @@ jobs:
                   })
               except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
                   summaries.append({"report": path.name, "error": str(error)})
-          output = Path(os.environ["BIBCODE_E2E_ARTIFACT_DIR"])
+          output = Path(os.environ["CODDY_STUDIO_E2E_ARTIFACT_DIR"])
           output.mkdir(parents=True, exist_ok=True)
           (output / "native-crashes.log").write_text(json.dumps(summaries, indent=2) + "\n")
           print(json.dumps(summaries, indent=2))
@@ -233,7 +233,7 @@ jobs:
       - name: Unmount macOS test application
         if: always() && matrix.platform == 'mac'
         shell: bash
-        run: hdiutil detach "$BIBCODE_E2E_DMG_MOUNT_POINT"
+        run: hdiutil detach "$CODDY_STUDIO_E2E_DMG_MOUNT_POINT"
 
       - name: Upload packaged desktop application
         if: always()
@@ -252,6 +252,6 @@ jobs:
         with:
           name: desktop-ui-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            ${{ runner.temp }}/bibcode-desktop-ui-artifacts/*.png
-            ${{ runner.temp }}/bibcode-desktop-ui-artifacts/*.log
+            ${{ runner.temp }}/coddy-studio-desktop-ui-artifacts/*.png
+            ${{ runner.temp }}/coddy-studio-desktop-ui-artifacts/*.log
           if-no-files-found: warn

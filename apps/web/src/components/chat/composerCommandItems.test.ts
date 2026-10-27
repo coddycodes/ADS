@@ -4,8 +4,8 @@ import {
   type ServerProviderAgent,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
-} from "@bibcode/contracts";
-import { detectComposerTrigger, type ComposerTrigger } from "@bibcode/shared/composerTrigger";
+} from "@coddy/contracts";
+import { detectComposerTrigger, type ComposerTrigger } from "@coddy/shared/composerTrigger";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildComposerCommandItems, type ComposerCommandItemsInput } from "./composerCommandItems";
@@ -70,11 +70,11 @@ function inputFor(text: string, overrides: InputOverrides = {}): ComposerCommand
 }
 
 describe("buildComposerCommandItems", () => {
-  it("keeps BiBCode actions isolated under colon", () => {
+  it("keeps Coddy Studio actions isolated under colon", () => {
     expect(buildComposerCommandItems(inputFor(":")).items).toMatchObject([
-      { type: "bibcode-action", group: "bibcode", action: "model", replacement: null },
-      { type: "bibcode-action", group: "bibcode", action: "plan", replacement: null },
-      { type: "bibcode-action", group: "bibcode", action: "default", replacement: null },
+      { type: "coddy-studio-action", group: "coddy-studio", action: "model", replacement: null },
+      { type: "coddy-studio-action", group: "coddy-studio", action: "plan", replacement: null },
+      { type: "coddy-studio-action", group: "coddy-studio", action: "default", replacement: null },
     ]);
   });
 

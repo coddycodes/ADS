@@ -1,4 +1,4 @@
-import type { ScopedThreadRef, ThreadId } from "@bibcode/contracts";
+import type { ScopedThreadRef, ThreadId } from "@coddy/contracts";
 
 export function shouldHideCollapsedToastContent(
   visibleToastIndex: number,

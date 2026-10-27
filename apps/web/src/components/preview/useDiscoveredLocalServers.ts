@@ -1,8 +1,8 @@
-import type { DiscoveredLocalServer } from "@bibcode/contracts";
-import { isLoopbackHost } from "@bibcode/shared/preview";
+import type { DiscoveredLocalServer } from "@coddy/contracts";
+import { isLoopbackHost } from "@coddy/shared/preview";
 import { useMemo } from "react";
 
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { resolvePreviewTarget } from "~/browser/browserTargetResolver";
 import { useDiscoveredPorts } from "~/portDiscoveryState";
 

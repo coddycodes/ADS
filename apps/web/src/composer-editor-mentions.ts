@@ -5,7 +5,7 @@ import {
 import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
-} from "@bibcode/shared/composerInlineTokens";
+} from "@coddy/shared/composerInlineTokens";
 
 export type ComposerPromptSegment =
   | {

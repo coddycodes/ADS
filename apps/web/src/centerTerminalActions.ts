@@ -3,7 +3,7 @@ import type {
   TerminalCloseInput,
   TerminalLaunchCommand,
   TerminalOpenInput,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import type {
   CenterTerminalPlacement,

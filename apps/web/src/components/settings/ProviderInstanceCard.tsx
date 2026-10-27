@@ -24,7 +24,7 @@ import {
   type ProviderSessionDefault,
   type ServerProvider,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";

@@ -92,7 +92,7 @@ it("derives nightly metadata including the short commit sha in the release name"
       baseVersion: "9.9.10",
       version: "9.9.10-nightly.20260413.321",
       tag: "v9.9.10-nightly.20260413.321",
-      name: "BiBCode Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
+      name: "Coddy Studio Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
       shortSha: "abcdef123456",
     },
   );
@@ -210,7 +210,7 @@ it.layer(NodeServices.layer)("writeNightlyReleaseOutput", (it) => {
         "base_version=1.2.4",
         "version=1.2.4-nightly.20260620.42",
         "tag=v1.2.4-nightly.20260620.42",
-        "name=BiBCode Nightly 1.2.4-nightly.20260620.42 (abcdef123456)",
+        "name=Coddy Studio Nightly 1.2.4-nightly.20260620.42 (abcdef123456)",
         "short_sha=abcdef123456",
       ]);
     }).pipe(Effect.provide(TestConsole.layer)),
@@ -230,7 +230,7 @@ it.layer(NodeServices.layer)("writeNightlyReleaseOutput", (it) => {
         yield* fs.readFileString(outputPath),
         "base_version=1.2.4\nversion=1.2.4-nightly.20260620.42\n" +
           "tag=v1.2.4-nightly.20260620.42\n" +
-          "name=BiBCode Nightly 1.2.4-nightly.20260620.42 (abcdef123456)\n" +
+          "name=Coddy Studio Nightly 1.2.4-nightly.20260620.42 (abcdef123456)\n" +
           "short_sha=abcdef123456\n",
       );
     }),

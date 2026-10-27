@@ -1,4 +1,4 @@
-import { normalizeSearchQuery, scoreQueryMatch } from "@bibcode/shared/searchRanking";
+import { normalizeSearchQuery, scoreQueryMatch } from "@coddy/shared/searchRanking";
 
 type ModelPickerSearchableModel = {
   /** Driver kind — indexed so "codex" still matches a Codex Personal instance. */

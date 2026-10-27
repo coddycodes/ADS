@@ -1,5 +1,5 @@
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import type { ScopedProjectRef } from "@bibcode/contracts";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import type { ScopedProjectRef } from "@coddy/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { createJSONStorage } from "zustand/middleware";
 

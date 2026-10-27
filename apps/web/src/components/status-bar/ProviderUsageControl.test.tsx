@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { StatusBarUsageMode } from "@bibcode/contracts/settings";
+import type { StatusBarUsageMode } from "@coddy/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

@@ -2,8 +2,8 @@
 //!
 //! Passive NSIS relaunches the installed executable with `RunAsUser`. When the
 //! installer is elevated, that helper uses `CreateProcessWithTokenW` and a null
-//! environment block, so the new process does not receive `BIBCODE_HOME` or
-//! `BIBCODE_PORT` from the process that started the installer. Remote clients
+//! environment block, so the new process does not receive `CODDY_STUDIO_HOME` or
+//! `CODDY_STUDIO_PORT` from the process that started the installer. Remote clients
 //! still dial the pre-update endpoint. The updating process publishes those two
 //! variables, and the replacement applies whichever it does not already have.
 //! A detached waiter starts the installed executable if the installer exits
@@ -24,13 +24,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-const HANDOFF_FILE_NAME: &str = "bibcode-desktop-restart.json";
+const HANDOFF_FILE_NAME: &str = "coddy-studio-desktop-restart.json";
 const HANDOFF_VERSION: u32 = 1;
 /// The passive installer returns before NSIS finishes. The observed Windows
 /// remote install replaced the executable about three minutes after the request.
 const HANDOFF_TTL_MS: u64 = 10 * 60 * 1000;
 const HANDOFF_FUTURE_SKEW_MS: u64 = 60 * 1000;
-const HANDOFF_ENV_KEYS: &[&str] = &["BIBCODE_HOME", "BIBCODE_PORT"];
+const HANDOFF_ENV_KEYS: &[&str] = &["CODDY_STUDIO_HOME", "CODDY_STUDIO_PORT"];
 /// Parent stay-alive bound. The updater exits immediately after `ShellExecuteW`.
 const WAITER_PARENT_SECONDS: u32 = 240;
 /// Installer stay-alive bound. A slow NSIS run outlived a three-minute poll.
@@ -108,7 +108,7 @@ pub(crate) fn handoff_is_expired(bytes: &[u8], now_ms: u64) -> bool {
 /// `cmd.exe` reads a batch file in the console code page, so a path written
 /// into the script would lose non-ASCII characters; an environment variable
 /// stays UTF-16.
-const WAITER_APP_VAR: &str = "BIBCODE_RESTART_APP";
+const WAITER_APP_VAR: &str = "CODDY_STUDIO_RESTART_APP";
 
 /// Builds the waiter script, ASCII only. `None` when the executable path cannot
 /// be passed to `start` safely.
@@ -119,7 +119,7 @@ const WAITER_APP_VAR: &str = "BIBCODE_RESTART_APP";
 /// The published NSIS basename ends in `-setup.exe`, but `tauri-plugin-updater`
 /// writes those bytes to `{package}-{version}-installer.exe` before
 /// `ShellExecuteW`. The running image is therefore
-/// `bibcode-desktop-<version>-installer.exe`. Waiting only for `-setup.exe`
+/// `coddy-studio-desktop-<version>-installer.exe`. Waiting only for `-setup.exe`
 /// treats that install as finished and starts the app while NSIS is replacing it.
 pub(crate) fn restart_waiter_script(parent_pid: u32, executable: &str) -> Option<String> {
     if executable.is_empty()
@@ -153,7 +153,7 @@ pub(crate) fn restart_waiter_script(parent_pid: u32, executable: &str) -> Option
            ping -n 2 127.0.0.1 >nul\r\n\
            goto while_install\r\n\
          )\r\n\
-         tasklist /FI \"IMAGENAME eq bibcode-desktop.exe\" /FI \"WINDOWTITLE ne N/A\" /NH 2>nul | findstr /I /C:\"bibcode-desktop.exe\" >nul\r\n\
+         tasklist /FI \"IMAGENAME eq coddy-studio-desktop.exe\" /FI \"WINDOWTITLE ne N/A\" /NH 2>nul | findstr /I /C:\"coddy-studio-desktop.exe\" >nul\r\n\
          if not errorlevel 1 exit /b 0\r\n\
          set /a QUIET+=1\r\n\
          if %QUIET% LSS 3 (\r\n\
@@ -289,7 +289,7 @@ fn publish_restart_handoff() -> Result<Option<std::os::windows::io::OwnedHandle>
     let Some(script) = restart_waiter_script(std::process::id(), &executable) else {
         return Ok(None);
     };
-    let script_path = std::env::temp_dir().join("bibcode-desktop-restart-waiter.cmd");
+    let script_path = std::env::temp_dir().join("coddy-studio-desktop-restart-waiter.cmd");
     std::fs::write(&script_path, script)
         .map_err(|error| format!("could not write the restart waiter: {error}"))?;
     spawn_waiter(&script_path, &executable_path)
@@ -445,8 +445,8 @@ mod tests {
 
     fn sample_env() -> BTreeMap<String, String> {
         BTreeMap::from([
-            ("BIBCODE_HOME".to_owned(), r"D:\lane\data".to_owned()),
-            ("BIBCODE_PORT".to_owned(), "43123".to_owned()),
+            ("CODDY_STUDIO_HOME".to_owned(), r"D:\lane\data".to_owned()),
+            ("CODDY_STUDIO_PORT".to_owned(), "43123".to_owned()),
         ])
     }
 
@@ -454,20 +454,20 @@ mod tests {
     fn handoff_file_lives_in_the_temp_directory() {
         assert_eq!(
             handoff_path(Path::new(r"C:\Temp")),
-            Path::new(r"C:\Temp").join("bibcode-desktop-restart.json")
+            Path::new(r"C:\Temp").join("coddy-studio-desktop-restart.json")
         );
     }
 
     #[test]
     fn handoff_applies_only_missing_launch_variables_for_the_same_executable() {
-        let bytes = encode_handoff(r"D:\Apps\bibcode-desktop.exe", 1_000, sample_env());
+        let bytes = encode_handoff(r"D:\Apps\coddy-studio-desktop.exe", 1_000, sample_env());
         let assignments =
-            assignments_from_handoff(&bytes, r"D:\Apps\bibcode-desktop.exe", 1_500, |key| {
-                key == "BIBCODE_HOME"
+            assignments_from_handoff(&bytes, r"D:\Apps\coddy-studio-desktop.exe", 1_500, |key| {
+                key == "CODDY_STUDIO_HOME"
             });
         assert_eq!(
             assignments,
-            Some(vec![("BIBCODE_PORT".to_owned(), "43123".to_owned())])
+            Some(vec![("CODDY_STUDIO_PORT".to_owned(), "43123".to_owned())])
         );
     }
 
@@ -475,9 +475,9 @@ mod tests {
     /// `adopt_restart_handoff` deletes it before a later ordinary launch.
     #[test]
     fn a_matching_handoff_is_claimed_even_when_nothing_is_left_to_apply() {
-        let bytes = encode_handoff(r"D:\Apps\bibcode-desktop.exe", 1_000, sample_env());
+        let bytes = encode_handoff(r"D:\Apps\coddy-studio-desktop.exe", 1_000, sample_env());
         assert_eq!(
-            assignments_from_handoff(&bytes, r"D:\Apps\bibcode-desktop.exe", 1_500, |_| true),
+            assignments_from_handoff(&bytes, r"D:\Apps\coddy-studio-desktop.exe", 1_500, |_| true),
             Some(Vec::new())
         );
     }
@@ -486,15 +486,17 @@ mod tests {
     fn handoff_ignores_a_different_executable_an_expired_file_and_unknown_keys() {
         let mut env = sample_env();
         env.insert("OTHER".to_owned(), "secret".to_owned());
-        let bytes = encode_handoff(r"D:\Apps\bibcode-desktop.exe", 1_000, env);
+        let bytes = encode_handoff(r"D:\Apps\coddy-studio-desktop.exe", 1_000, env);
         assert!(
-            assignments_from_handoff(&bytes, r"D:\Other\bibcode-desktop.exe", 1_500, |_| false)
-                .is_none()
+            assignments_from_handoff(&bytes, r"D:\Other\coddy-studio-desktop.exe", 1_500, |_| {
+                false
+            })
+            .is_none()
         );
         assert!(
             assignments_from_handoff(
                 &bytes,
-                r"D:\Apps\bibcode-desktop.exe",
+                r"D:\Apps\coddy-studio-desktop.exe",
                 1_000 + HANDOFF_TTL_MS + 1,
                 |_| false,
             )
@@ -502,39 +504,44 @@ mod tests {
         );
         assert!(handoff_is_expired(&bytes, 1_000 + HANDOFF_TTL_MS + 1));
         let applied =
-            assignments_from_handoff(&bytes, r"D:\Apps\bibcode-desktop.exe", 1_500, |_| false)
-                .expect("a matching handoff");
+            assignments_from_handoff(&bytes, r"D:\Apps\coddy-studio-desktop.exe", 1_500, |_| {
+                false
+            })
+            .expect("a matching handoff");
         assert!(applied.iter().all(|(key, _)| key != "OTHER"));
     }
 
     #[test]
     fn capture_drops_empty_and_control_bearing_values() {
         let env = capture_handoff_env(|key| match key {
-            "BIBCODE_HOME" => Some("  D:\\lane\\data  ".to_owned()),
-            "BIBCODE_PORT" => Some("43123\nbad".to_owned()),
+            "CODDY_STUDIO_HOME" => Some("  D:\\lane\\data  ".to_owned()),
+            "CODDY_STUDIO_PORT" => Some("43123\nbad".to_owned()),
             _ => None,
         });
         assert_eq!(
-            env.get("BIBCODE_HOME").map(String::as_str),
+            env.get("CODDY_STUDIO_HOME").map(String::as_str),
             Some(r"D:\lane\data")
         );
-        assert!(!env.contains_key("BIBCODE_PORT"));
+        assert!(!env.contains_key("CODDY_STUDIO_PORT"));
     }
 
     #[test]
     fn waiter_script_names_the_parent_and_refuses_an_unsafe_path() {
-        let script = restart_waiter_script(4242, r"D:\Apps\bibcode-desktop.exe").expect("script");
+        let script =
+            restart_waiter_script(4242, r"D:\Apps\coddy-studio-desktop.exe").expect("script");
         assert!(script.contains("set \"PID=4242\""));
         // cmd.exe reads the script in the console code page: the path is not in it.
         assert!(script.is_ascii());
         assert!(!script.contains(r"D:\Apps"));
-        let unicode = restart_waiter_script(1, r"C:\Users\José\bibcode-desktop.exe");
+        let unicode = restart_waiter_script(1, r"C:\Users\José\coddy-studio-desktop.exe");
         assert!(unicode.is_some_and(|script| script.is_ascii()));
-        assert!(script.contains("start \"\" \"%BIBCODE_RESTART_APP%\""));
+        assert!(script.contains("start \"\" \"%CODDY_STUDIO_RESTART_APP%\""));
         assert!(script.contains("/C:\"-setup.exe\" /C:\"-installer.exe\""));
         assert!(script.contains("if %LEFT% LEQ 0 exit /b 0"));
         assert!(
-            script.contains("/FI \"IMAGENAME eq bibcode-desktop.exe\" /FI \"WINDOWTITLE ne N/A\"")
+            script.contains(
+                "/FI \"IMAGENAME eq coddy-studio-desktop.exe\" /FI \"WINDOWTITLE ne N/A\""
+            )
         );
         assert!(!script.contains("goto launch"));
         assert!(restart_waiter_script(1, r#"D:\Apps\bad"name.exe"#).is_none());
@@ -548,12 +555,12 @@ mod tests {
     fn waiter_command_line_quotes_both_paths_and_ends_with_nul() {
         let line = waiter_command_line(
             &wide(r"C:\Windows\system32\cmd.exe"),
-            &wide(r"C:\Users\José Á\AppData\Local\Temp\bibcode-desktop-restart-waiter.cmd"),
+            &wide(r"C:\Users\José Á\AppData\Local\Temp\coddy-studio-desktop-restart-waiter.cmd"),
         );
         assert_eq!(line.last(), Some(&0));
         assert_eq!(
             String::from_utf16(&line[..line.len() - 1]).expect("UTF-16"),
-            r#""C:\Windows\system32\cmd.exe" /d /c "C:\Users\José Á\AppData\Local\Temp\bibcode-desktop-restart-waiter.cmd""#
+            r#""C:\Windows\system32\cmd.exe" /d /c "C:\Users\José Á\AppData\Local\Temp\coddy-studio-desktop-restart-waiter.cmd""#
         );
     }
 
@@ -562,12 +569,12 @@ mod tests {
         let block = waiter_environment(
             [
                 (wide("Path"), wide(r"C:\Windows")),
-                (wide("bibcode_restart_app"), wide("stale")),
+                (wide("coddy_studio_restart_app"), wide("stale")),
                 (wide("=C:"), wide(r"C:\")),
-                (wide("BIBCODE_HOME"), wide(r"D:\lane\data")),
+                (wide("CODDY_STUDIO_HOME"), wide(r"D:\lane\data")),
             ],
             &wide(WAITER_APP_VAR),
-            wide(r"C:\Users\José\bibcode-desktop.exe"),
+            wide(r"C:\Users\José\coddy-studio-desktop.exe"),
         );
         assert_eq!(&block[block.len() - 2..], &[0, 0]);
         let entries: Vec<String> = block[..block.len() - 2]
@@ -578,8 +585,8 @@ mod tests {
             entries,
             [
                 r"=C:=C:\",
-                r"BIBCODE_HOME=D:\lane\data",
-                r"BIBCODE_RESTART_APP=C:\Users\José\bibcode-desktop.exe",
+                r"CODDY_STUDIO_HOME=D:\lane\data",
+                r"CODDY_STUDIO_RESTART_APP=C:\Users\José\coddy-studio-desktop.exe",
                 r"Path=C:\Windows",
             ]
         );

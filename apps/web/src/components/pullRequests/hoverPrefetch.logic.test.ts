@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   createPrefetchGate,

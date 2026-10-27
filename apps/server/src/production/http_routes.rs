@@ -315,13 +315,13 @@ where
         .route("/api/connect/relay-config", post(connect_relay_config))
         .route("/api/connect/link-state", get(connect_link_state))
         .route("/api/connect/unlink", post(connect_unlink))
-        .route("/api/bibcode-connect/health", post(connect_health))
+        .route("/api/coddy-connect/health", post(connect_health))
         .route(
             "/api/connect/mint-credential",
             post(connect_mint_credential),
         )
         .route(
-            "/api/bibcode-connect/mint-credential",
+            "/api/coddy-connect/mint-credential",
             post(connect_mint_credential),
         )
         .route("/api/diagnostics/logs.zip", post(diagnostic_logs))
@@ -589,7 +589,7 @@ async fn json_request(
     }
 }
 
-/// Agent-written HTML/SVG is served from the BiBCode origin; an opaque-origin
+/// Agent-written HTML/SVG is served from the Coddy Studio origin; an opaque-origin
 /// sandbox keeps its scripts away from the session cookie and `/api`.
 fn asset_content_security_policy(content_type: &str) -> Option<&'static str> {
     let essence = content_type

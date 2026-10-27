@@ -63,27 +63,27 @@ function packageScript(
       ? "dpkg-deb --field /artifacts/package.deb Package Version Architecture"
       : "rpm -qp --queryformat '%{NAME} %{VERSION}-%{RELEASE} %{ARCH}\\n' /artifacts/package.rpm";
   const remove =
-    target.format === "deb" ? "apt-get remove -y bibcode-server" : "dnf remove -y bibcode-server";
+    target.format === "deb" ? "apt-get remove -y coddy-studio-server" : "dnf remove -y coddy-studio-server";
   return [
     "set -euo pipefail",
     `test "$(uname -m)" = "${expectedArch}"`,
     inspect,
     install,
-    `bibcode --version | grep -F "${expectedVersion}"`,
-    'state_root="$(mktemp -d /tmp/bibcode-package-smoke.XXXXXX)"',
+    `coddy-studio --version | grep -F "${expectedVersion}"`,
+    'state_root="$(mktemp -d /tmp/coddy-studio-package-smoke.XXXXXX)"',
     'printf preserved > "$state_root/preserved-sentinel"',
-    'bibcode serve --host 127.0.0.1 --port 3773 --base-dir "$state_root" > /tmp/bibcode-ready.json 2> /tmp/bibcode-server.log &',
+    'coddy-studio serve --host 127.0.0.1 --port 3773 --base-dir "$state_root" > /tmp/coddy-studio-ready.json 2> /tmp/coddy-studio-server.log &',
     'server_pid="$!"',
     'cleanup() { if kill -0 "$server_pid" 2>/dev/null; then kill -TERM "$server_pid"; wait "$server_pid" || true; fi; }',
     "trap cleanup EXIT",
     "ready=0",
-    "for attempt in $(seq 1 60); do if curl -fsS http://127.0.0.1:3773/ | grep -F BiBCode >/dev/null; then ready=1; break; fi; sleep 0.5; done",
+    "for attempt in $(seq 1 60); do if curl -fsS http://127.0.0.1:3773/ | grep -F Coddy Studio >/dev/null; then ready=1; break; fi; sleep 0.5; done",
     'test "$ready" = "1"',
     'kill -TERM "$server_pid"',
     'wait "$server_pid"',
     "trap - EXIT",
     remove,
-    "test ! -e /usr/bin/bibcode",
+    "test ! -e /usr/bin/coddy-studio",
     'test -f "$state_root/preserved-sentinel"',
   ].join("\n");
 }
@@ -95,7 +95,7 @@ export function buildLinuxPackageSmokePlan(
   const packagePath = NodePath.resolve(input.packagePath);
   const imageName = target.image.replace(/[:/]+/g, "-");
   const containerName = safeName(
-    `bibcode-server-package-${input.runId}-${imageName}-${input.arch}`,
+    `coddy-studio-server-package-${input.runId}-${imageName}-${input.arch}`,
   );
   const dockerArch = input.arch === "arm64" ? "arm64" : "amd64";
   const unameArch = input.arch === "arm64" ? "aarch64" : "x86_64";

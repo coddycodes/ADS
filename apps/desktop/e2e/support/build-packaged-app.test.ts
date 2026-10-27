@@ -29,7 +29,7 @@ describe("planPackagedDesktopUiBuild", () => {
       );
       expect(plan.args).not.toContain("--");
       expect(plan.environment).toEqual({
-        VITE_BIBCODE_DESKTOP_E2E: "1",
+        VITE_CODDY_STUDIO_DESKTOP_E2E: "1",
         ...(platform === "linux" ? { NO_STRIP: "1" } : {}),
       });
     },

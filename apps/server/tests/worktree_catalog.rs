@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     git::{GitRepository, host_path_platform, normalize_worktree_path_key},
     persistence::{Database, ProjectionProject, ProjectionThread, Repositories, run_migrations},
     worktree_catalog::{
@@ -253,7 +253,7 @@ async fn pinned_project_rejects_a_replacement_repository_at_an_adopted_path() {
     };
     assert_eq!(
         error.reason,
-        bibcode_server::worktree_catalog::CatalogErrorReason::RepositoryUnavailable
+        coddy_studio_server::worktree_catalog::CatalogErrorReason::RepositoryUnavailable
     );
     assert!(restarted.latest("project-1").await.is_none());
 }
@@ -611,9 +611,9 @@ fn workspace_thread(path: &Path) -> ProjectionThread {
 }
 
 fn adopted_status<'a>(
-    snapshot: &'a bibcode_server::worktree_catalog::WorktreeCatalogSnapshot,
+    snapshot: &'a coddy_studio_server::worktree_catalog::WorktreeCatalogSnapshot,
     thread_id: &str,
-) -> &'a bibcode_server::worktree_catalog::AdoptedWorktreeStatus {
+) -> &'a coddy_studio_server::worktree_catalog::AdoptedWorktreeStatus {
     snapshot
         .adopted_workspaces
         .iter()

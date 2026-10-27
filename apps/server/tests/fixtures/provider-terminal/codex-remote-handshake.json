@@ -23,8 +23,8 @@
     "method": "initialize",
     "params": {
       "clientInfo": {
-        "name": "bibcode_desktop",
-        "title": "BiBCode Desktop",
+        "name": "coddy_studio_desktop",
+        "title": "Coddy Studio Desktop",
         "version": "$CARGO_PKG_VERSION"
       },
       "capabilities": {

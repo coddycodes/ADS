@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::git::{
+use coddy_studio_server::git::{
     CreateWorktreeInput, GitRepository, GitWorktreeRecord, OutputPolicy, ProcessError,
     ProcessRequest, ProcessRunner, ProviderKind, PullStatus, StatusBroadcaster, VcsStagingArea,
     VcsStatusStreamEvent, VcsWorkingTreeFileStatus, git_worktree_prune_impact_digest,
@@ -21,16 +21,16 @@ use tokio_util::sync::CancellationToken;
 mod isolated_git_config;
 use isolated_git_config::IsolatedGitConfig;
 
-const PROCESS_FIXTURE_MODE: &str = "BIBCODE_GIT_COVERAGE_PROCESS_MODE";
-const PROCESS_FIXTURE_ROLE: &str = "BIBCODE_GIT_COVERAGE_PROCESS_ROLE";
-const PROCESS_FIXTURE_ROOT_READY: &str = "BIBCODE_GIT_COVERAGE_ROOT_READY";
-const PROCESS_FIXTURE_CHILD_READY: &str = "BIBCODE_GIT_COVERAGE_CHILD_READY";
-const PROCESS_FIXTURE_GRANDCHILD_READY: &str = "BIBCODE_GIT_COVERAGE_GRANDCHILD_READY";
-const PROCESS_FIXTURE_ROOT_SURVIVED: &str = "BIBCODE_GIT_COVERAGE_ROOT_SURVIVED";
-const PROCESS_FIXTURE_CHILD_SURVIVED: &str = "BIBCODE_GIT_COVERAGE_CHILD_SURVIVED";
-const PROCESS_FIXTURE_GRANDCHILD_SURVIVED: &str = "BIBCODE_GIT_COVERAGE_GRANDCHILD_SURVIVED";
-const PROCESS_FIXTURE_RELEASE: &str = "BIBCODE_GIT_COVERAGE_RELEASE";
-const ISOLATED_GIT_TEST: &str = "BIBCODE_GIT_COVERAGE_ISOLATED";
+const PROCESS_FIXTURE_MODE: &str = "CODDY_STUDIO_GIT_COVERAGE_PROCESS_MODE";
+const PROCESS_FIXTURE_ROLE: &str = "CODDY_STUDIO_GIT_COVERAGE_PROCESS_ROLE";
+const PROCESS_FIXTURE_ROOT_READY: &str = "CODDY_STUDIO_GIT_COVERAGE_ROOT_READY";
+const PROCESS_FIXTURE_CHILD_READY: &str = "CODDY_STUDIO_GIT_COVERAGE_CHILD_READY";
+const PROCESS_FIXTURE_GRANDCHILD_READY: &str = "CODDY_STUDIO_GIT_COVERAGE_GRANDCHILD_READY";
+const PROCESS_FIXTURE_ROOT_SURVIVED: &str = "CODDY_STUDIO_GIT_COVERAGE_ROOT_SURVIVED";
+const PROCESS_FIXTURE_CHILD_SURVIVED: &str = "CODDY_STUDIO_GIT_COVERAGE_CHILD_SURVIVED";
+const PROCESS_FIXTURE_GRANDCHILD_SURVIVED: &str = "CODDY_STUDIO_GIT_COVERAGE_GRANDCHILD_SURVIVED";
+const PROCESS_FIXTURE_RELEASE: &str = "CODDY_STUDIO_GIT_COVERAGE_RELEASE";
+const ISOLATED_GIT_TEST: &str = "CODDY_STUDIO_GIT_COVERAGE_ISOLATED";
 static ISOLATED_GIT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
@@ -141,9 +141,9 @@ fn git(cwd: &Path, args: &[&str]) -> String {
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "BiBCode Coverage")
+        .env("GIT_AUTHOR_NAME", "Coddy Studio Coverage")
         .env("GIT_AUTHOR_EMAIL", "coverage@example.invalid")
-        .env("GIT_COMMITTER_NAME", "BiBCode Coverage")
+        .env("GIT_COMMITTER_NAME", "Coddy Studio Coverage")
         .env("GIT_COMMITTER_EMAIL", "coverage@example.invalid")
         .output()
         .expect("git must be installed for integration tests");
@@ -158,7 +158,10 @@ fn git(cwd: &Path, args: &[&str]) -> String {
 fn init_repo() -> TempDir {
     let repo = tempfile::tempdir().expect("temporary repository");
     git(repo.path(), &["init", "-b", "main"]);
-    git(repo.path(), &["config", "user.name", "BiBCode Coverage"]);
+    git(
+        repo.path(),
+        &["config", "user.name", "Coddy Studio Coverage"],
+    );
     git(
         repo.path(),
         &["config", "user.email", "coverage@example.invalid"],
@@ -177,7 +180,7 @@ fn commit_file(repo: &Path, relative: &str, contents: &str, message: &str) {
 }
 
 fn linked_worktree_record(
-    inventory: &bibcode_server::git::GitWorktreeInventory,
+    inventory: &coddy_studio_server::git::GitWorktreeInventory,
     path: &Path,
 ) -> GitWorktreeRecord {
     let identity = test_worktree_identity_key(path);
@@ -224,7 +227,7 @@ fn test_worktree_identity_key(path: &Path) -> String {
             ),
         }
     };
-    normalize_worktree_path_key(&canonical, bibcode_server::git::host_path_platform())
+    normalize_worktree_path_key(&canonical, coddy_studio_server::git::host_path_platform())
 }
 
 fn local_file_url(path: &Path) -> String {
@@ -267,7 +270,7 @@ fn git_fixtures_ignore_hostile_user_global_config() {
     fs::write(
         &config,
         format!(
-            "[commit]\n\tgpgSign = true\n[core]\n\thooksPath = {}\n[url \"file:///C:/bibcode-missing/\"]\n\tinsteadOf = file:///\n",
+            "[commit]\n\tgpgSign = true\n[core]\n\thooksPath = {}\n[url \"file:///C:/coddy-studio-missing/\"]\n\tinsteadOf = file:///\n",
             hooks.to_string_lossy().replace('\\', "/")
         ),
     )
@@ -298,7 +301,7 @@ fn git_fixtures_ignore_hostile_user_global_config() {
         r"^url\..*\.insteadOf$",
     ]);
     assert!(rewrites.contains("file:///"));
-    assert!(rewrites.contains("file:///C:/bibcode-missing/"));
+    assert!(rewrites.contains("file:///C:/coddy-studio-missing/"));
 
     let output = Command::new(std::env::current_exe().expect("current test executable"))
         .args([
@@ -845,7 +848,7 @@ async fn history_paginates_real_commits_and_preserves_metadata() {
     assert!(first_page.commits.iter().all(|commit| {
         commit.sha.len() == 40
             && !commit.short_sha.is_empty()
-            && commit.author_name == "BiBCode Coverage"
+            && commit.author_name == "Coddy Studio Coverage"
             && commit.authored_at_ms > 0
     }));
 
@@ -871,7 +874,10 @@ async fn local_clone_push_and_pull_cover_upstream_transitions() {
     let publisher = root.path().join("publisher");
     fs::create_dir(&publisher).expect("publisher directory");
     git(&publisher, &["init", "-b", "main"]);
-    git(&publisher, &["config", "user.name", "BiBCode Coverage"]);
+    git(
+        &publisher,
+        &["config", "user.name", "Coddy Studio Coverage"],
+    );
     git(
         &publisher,
         &["config", "user.email", "coverage@example.invalid"],
@@ -888,7 +894,7 @@ async fn local_clone_push_and_pull_cover_upstream_transitions() {
         .clone_repository(&remote_url, &clones, Some("consumer"), &cancellation())
         .await
         .expect("local clone");
-    git(&consumer, &["config", "user.name", "BiBCode Coverage"]);
+    git(&consumer, &["config", "user.name", "Coddy Studio Coverage"]);
     git(
         &consumer,
         &["config", "user.email", "coverage@example.invalid"],
@@ -1545,12 +1551,14 @@ async fn worktree_prune_preview_lists_every_affected_registration_in_normalized_
     let keys = impact
         .iter()
         .map(|entry| {
-            normalize_worktree_path_key(&entry.path, bibcode_server::git::host_path_platform())
+            normalize_worktree_path_key(&entry.path, coddy_studio_server::git::host_path_platform())
         })
         .collect::<Vec<_>>();
     let mut expected = vec![first_record.path, second_record.path]
         .into_iter()
-        .map(|path| normalize_worktree_path_key(&path, bibcode_server::git::host_path_platform()))
+        .map(|path| {
+            normalize_worktree_path_key(&path, coddy_studio_server::git::host_path_platform())
+        })
         .collect::<Vec<_>>();
     expected.sort();
     assert_eq!(keys, expected);
@@ -1780,16 +1788,16 @@ async fn protected_removal_recovers_a_deregistered_durable_quarantine() {
     };
     let quarantine = worktree_parent
         .path()
-        .join(format!(".recoverable.bibcode-removal-{nonce}"));
+        .join(format!(".recoverable.coddy-studio-removal-{nonce}"));
     fs::rename(&worktree, &quarantine).expect("simulate committed quarantine rename");
     fs::create_dir(&worktree).expect("simulate removal tombstone");
-    fs::write(worktree.join(".bibcode-removal-tombstone"), &nonce)
+    fs::write(worktree.join(".coddy-studio-removal-tombstone"), &nonce)
         .expect("write tombstone identity");
     fs::copy(quarantine.join(".git"), worktree.join(".git")).expect("copy tombstone Git link");
     let admin_quarantine = repository_root
         .path()
         .join(".git")
-        .join("bibcode-worktree-removals")
+        .join("coddy-studio-worktree-removals")
         .join(&nonce);
     fs::create_dir_all(admin_quarantine.parent().expect("admin quarantine parent"))
         .expect("admin quarantine parent");
@@ -1835,10 +1843,10 @@ async fn protected_removal_repairs_a_marker_only_tombstone_after_a_crash() {
         .expect("prepare durable identity");
     let quarantine = worktree_parent
         .path()
-        .join(format!(".marker-only.bibcode-removal-{nonce}"));
+        .join(format!(".marker-only.coddy-studio-removal-{nonce}"));
     fs::rename(&worktree, &quarantine).expect("simulate committed quarantine rename");
     fs::create_dir(&worktree).expect("simulate partial tombstone");
-    fs::write(worktree.join(".bibcode-removal-tombstone"), &nonce)
+    fs::write(worktree.join(".coddy-studio-removal-tombstone"), &nonce)
         .expect("write tombstone marker before simulated crash");
 
     repository
@@ -1903,23 +1911,23 @@ async fn protected_removal_preserves_an_unidentified_empty_tombstone() {
     };
     let quarantine = worktree_parent
         .path()
-        .join(format!(".empty-tombstone.bibcode-removal-{nonce}"));
+        .join(format!(".empty-tombstone.coddy-studio-removal-{nonce}"));
     fs::rename(&worktree, &quarantine).expect("simulate committed quarantine rename");
     fs::create_dir(&worktree).expect("simulate removal tombstone");
-    fs::write(worktree.join(".bibcode-removal-tombstone"), &nonce)
+    fs::write(worktree.join(".coddy-studio-removal-tombstone"), &nonce)
         .expect("write tombstone identity");
     fs::copy(quarantine.join(".git"), worktree.join(".git")).expect("copy tombstone Git link");
     let admin_quarantine = repository_root
         .path()
         .join(".git")
-        .join("bibcode-worktree-removals")
+        .join("coddy-studio-worktree-removals")
         .join(&nonce);
     fs::create_dir_all(admin_quarantine.parent().expect("admin quarantine parent"))
         .expect("admin quarantine parent");
     fs::rename(&admin_path, &admin_quarantine)
         .expect("simulate committed administrative quarantine");
     fs::remove_file(worktree.join(".git")).expect("simulate tombstone Git-link cleanup");
-    fs::remove_file(worktree.join(".bibcode-removal-tombstone"))
+    fs::remove_file(worktree.join(".coddy-studio-removal-tombstone"))
         .expect("simulate tombstone marker cleanup");
 
     repository
@@ -1973,12 +1981,12 @@ async fn protected_removal_recovers_an_empty_quarantine_after_cleanup() {
     };
     let quarantine = worktree_parent
         .path()
-        .join(format!(".empty-quarantine.bibcode-removal-{nonce}"));
+        .join(format!(".empty-quarantine.coddy-studio-removal-{nonce}"));
     fs::rename(&worktree, &quarantine).expect("simulate committed quarantine rename");
     let admin_quarantine = repository_root
         .path()
         .join(".git")
-        .join("bibcode-worktree-removals")
+        .join("coddy-studio-worktree-removals")
         .join(&nonce);
     fs::create_dir_all(admin_quarantine.parent().expect("admin quarantine parent"))
         .expect("admin quarantine parent");
@@ -2072,7 +2080,7 @@ async fn managed_orphan_cleanup_remains_supported_by_protected_removal() {
     commit_file(&repository_path, "README.md", "base\n", "initial");
     let orphan = fixture
         .path()
-        .join(".bibcode-worktrees")
+        .join(".coddy-studio-worktrees")
         .join("repository")
         .join("orphan");
     fs::create_dir_all(&orphan).expect("managed orphan directory");

@@ -126,7 +126,7 @@ impl ClaudeControlRequest {
     pub fn interrupt(sequence: u64) -> Self {
         Self {
             message_type: "control_request".to_owned(),
-            request_id: format!("bibcode-{sequence}"),
+            request_id: format!("coddy-studio-{sequence}"),
             request: ControlRequestBody::Interrupt,
         }
     }
@@ -134,7 +134,7 @@ impl ClaudeControlRequest {
     pub fn set_permission_mode(sequence: u64, mode: ClaudePermissionMode) -> Self {
         Self {
             message_type: "control_request".to_owned(),
-            request_id: format!("bibcode-{sequence}"),
+            request_id: format!("coddy-studio-{sequence}"),
             request: ControlRequestBody::SetPermissionMode { mode },
         }
     }
@@ -142,7 +142,7 @@ impl ClaudeControlRequest {
     pub fn cancel_request(sequence: u64, request_id: &str) -> Self {
         Self {
             message_type: "control_request".to_owned(),
-            request_id: format!("bibcode-{sequence}"),
+            request_id: format!("coddy-studio-{sequence}"),
             request: ControlRequestBody::CancelRequest {
                 request_id: request_id.to_owned(),
             },
@@ -152,7 +152,7 @@ impl ClaudeControlRequest {
     pub fn get_context_usage(sequence: u64) -> Self {
         Self {
             message_type: "control_request".to_owned(),
-            request_id: format!("bibcode-{sequence}"),
+            request_id: format!("coddy-studio-{sequence}"),
             request: ControlRequestBody::GetContextUsage,
         }
     }
@@ -160,7 +160,7 @@ impl ClaudeControlRequest {
     pub fn mcp_status(sequence: u64) -> Self {
         Self {
             message_type: "control_request".to_owned(),
-            request_id: format!("bibcode-{sequence}"),
+            request_id: format!("coddy-studio-{sequence}"),
             request: ControlRequestBody::McpStatus,
         }
     }
@@ -168,7 +168,7 @@ impl ClaudeControlRequest {
     pub fn stop_task(sequence: u64, task_id: &str) -> Self {
         Self {
             message_type: "control_request".to_owned(),
-            request_id: format!("bibcode-{sequence}"),
+            request_id: format!("coddy-studio-{sequence}"),
             request: ControlRequestBody::StopTask {
                 task_id: task_id.to_owned(),
             },
@@ -192,7 +192,7 @@ mod tests {
                 .expect("stop_task request"),
             json!({
                 "type": "control_request",
-                "request_id": "bibcode-41",
+                "request_id": "coddy-studio-41",
                 "request": { "subtype": "stop_task", "task_id": "task-a" }
             })
         );
@@ -1445,7 +1445,7 @@ fn usable_control_label(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
-/// The work Claude runs outside a BiBCode turn: the background tasks it reports live on its stream
+/// The work Claude runs outside a Coddy Studio turn: the background tasks it reports live on its stream
 /// (`run_in_background` Bash commands, Monitor watches, background subagents, long MCP calls), and
 /// the turn it owes a finished task. Claude writes these messages whether or not it was launched
 /// with hook events, so idle suspension can spare a working process even when activity observation
@@ -1868,7 +1868,7 @@ impl ClaudeProviderRuntime {
         output
     }
 
-    /// Claude answers a finished background task with a turn it starts itself. BiBCode did not
+    /// Claude answers a finished background task with a turn it starts itself. Coddy Studio did not
     /// deliver it, so it gets a turn of its own: the thread reads running and the turn's output and
     /// `result` belong to it. Not while a delivered message awaits its replay: on resume Claude
     /// can run that turn before it reads the message, and its `result` is ignored instead; a
@@ -2950,7 +2950,7 @@ impl ClaudeProviderRuntime {
 
     /// Claude reports a compaction with `system`/`status` frames: `status: "compacting"` while
     /// it runs (repeated for an automatic one's progress), then a different status, carrying
-    /// `compact_result` and `compact_error`, once it ends. BiBCode shows it as an item, so a
+    /// `compact_result` and `compact_error`, once it ends. Coddy Studio shows it as an item, so a
     /// long compaction does not look like a stalled turn.
     fn compaction_status_event(&mut self, value: &Value) -> Option<CanonicalEvent> {
         if value.get("status").and_then(Value::as_str) != Some("compacting") {
@@ -3358,7 +3358,7 @@ fn claude_control_fact_native_event_id(value: &Value) -> Option<String> {
         }
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"bibcode:claude-control-event:v1");
+    hasher.update(b"coddy-studio:claude-control-event:v1");
     for field in fields {
         hasher.update(u64::try_from(field.len()).ok()?.to_be_bytes());
         hasher.update(field.as_bytes());

@@ -1,4 +1,4 @@
-import type { DesktopPreviewPointerEvent } from "@bibcode/contracts";
+import type { DesktopPreviewPointerEvent } from "@coddy/contracts";
 import { create } from "zustand";
 
 interface BrowserPointerStoreState {

@@ -1,7 +1,7 @@
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
 
-use bibcode_server::{
+use coddy_studio_server::{
     cloud, preview::gateway::relay::RelayPreviewHosts,
     production::managed_endpoint::ManagedEndpointRuntime, text_generation,
 };
@@ -28,7 +28,7 @@ async fn relay_client_service_reports_status_and_streams_install_progress() {
             })
             .await?;
             Ok(RelayClientStatus::Available {
-                executable_path: "/tmp/bibcode/tools/cloudflared".to_owned(),
+                executable_path: "/tmp/coddy-studio/tools/cloudflared".to_owned(),
                 source: "managed".to_owned(),
                 version: "2026.7.0".to_owned(),
             })
@@ -55,7 +55,7 @@ async fn relay_client_service_reports_status_and_streams_install_progress() {
             },
             RelayClientInstallEvent::Complete {
                 status: RelayClientStatus::Available {
-                    executable_path: "/tmp/bibcode/tools/cloudflared".to_owned(),
+                    executable_path: "/tmp/coddy-studio/tools/cloudflared".to_owned(),
                     source: "managed".to_owned(),
                     version: "2026.7.0".to_owned(),
                 }
@@ -113,7 +113,7 @@ async fn managed_endpoint_runtime_handles_disabled_unsupported_and_missing_conne
 fn long_running_connector_fixture(directory: &std::path::Path) -> std::path::PathBuf {
     #[cfg(unix)]
     {
-        let executable = directory.join("bibcode-connect");
+        let executable = directory.join("coddy-connect");
         executable_fixture::write_executable(
             &executable,
             "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile true; do sleep 1; done\n",
@@ -122,7 +122,7 @@ fn long_running_connector_fixture(directory: &std::path::Path) -> std::path::Pat
     }
     #[cfg(windows)]
     {
-        let executable = directory.join("bibcode-connect.cmd");
+        let executable = directory.join("coddy-connect.cmd");
         executable_fixture::write_executable(
             &executable,
             "@echo off\r\n\

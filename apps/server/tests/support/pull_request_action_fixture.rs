@@ -6,7 +6,7 @@
 #[path = "executable_fixture.rs"]
 pub(crate) mod executable_fixture;
 
-use bibcode_server::pull_requests::{
+use coddy_studio_server::pull_requests::{
     github::GitHubHost,
     gitlab::GitLabHost,
     host::{HostCommandRunner, HostScope, PullRequestHost},
@@ -175,7 +175,7 @@ if [ -f "error-$slot" ]; then cat "error-$slot" >&2; exit 1; fi
     pub async fn run(
         &self,
         value: Value,
-    ) -> Result<ActionResult, bibcode_server::pull_requests::error::PullRequestsOperationError>
+    ) -> Result<ActionResult, coddy_studio_server::pull_requests::error::PullRequestsOperationError>
     {
         self.host
             .run_action(
@@ -235,7 +235,7 @@ if [ -f "error-$slot" ]; then cat "error-$slot" >&2; exit 1; fi
 
 impl Fixture {
     pub async fn rpc(&self, mut payload: Value) -> Result<Value, Value> {
-        use bibcode_server::{
+        use coddy_studio_server::{
             RequestId, RpcRequest,
             production::pull_requests_rpc::ConfiguredPullRequestsRpcServices,
             pull_requests::PullRequestsService,

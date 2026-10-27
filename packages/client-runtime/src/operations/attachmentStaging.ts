@@ -1,4 +1,4 @@
-import type { StagedUploadChatAttachment } from "@bibcode/contracts";
+import type { StagedUploadChatAttachment } from "@coddy/contracts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";

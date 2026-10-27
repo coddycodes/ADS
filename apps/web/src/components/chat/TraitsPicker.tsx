@@ -5,7 +5,7 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
@@ -16,12 +16,12 @@ import {
   isClaudeUltrathinkPrompt,
   PROVIDER_EFFORT_OPTION_IDS,
   resolvePromptInjectedEffort,
-} from "@bibcode/shared/model";
+} from "@coddy/shared/model";
 import {
   getFastModeDescriptor,
   getFastModeOffValue,
   getFastModeOnValue,
-} from "@bibcode/shared/providerSessionDefaults";
+} from "@coddy/shared/providerSessionDefaults";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, LoaderCircleIcon, ZapIcon } from "lucide-react";

@@ -1,4 +1,4 @@
-import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@bibcode/contracts";
+import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@coddy/contracts";
 import { memo, type ReactNode, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";

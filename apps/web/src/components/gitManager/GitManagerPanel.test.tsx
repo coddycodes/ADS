@@ -3,14 +3,14 @@
 import {
   AVAILABLE_CONNECTION_STATE,
   type SupervisorConnectionState,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import type {
   GitManagerRefsSnapshot,
   GitManagerStashEntry,
   ServerConfig,
   VcsStatusResult,
-} from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import * as Cause from "effect/Cause";
 import { act } from "react";
 import { createRoot } from "react-dom/client";

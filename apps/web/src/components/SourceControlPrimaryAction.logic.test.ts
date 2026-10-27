@@ -1,4 +1,4 @@
-import type { VcsStatusResult } from "@bibcode/contracts";
+import type { VcsStatusResult } from "@coddy/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildSourceControlMenuItems,
@@ -510,7 +510,7 @@ describe("buildSourceControlMenuItems — always-rendered, disabled-with-reason"
 
   it("hides push-family menu actions on generated worktree refs", () => {
     const input = makeInput({
-      status: { refName: "bibcode/deadbeef", aheadCount: 2 },
+      status: { refName: "coddy-studio/deadbeef", aheadCount: 2 },
       stagedCount: 3,
     });
     assert.deepEqual(menuIds(buildSourceControlMenuItems(input)), [
@@ -521,7 +521,7 @@ describe("buildSourceControlMenuItems — always-rendered, disabled-with-reason"
     ]);
     assert.equal(
       resolveSourceControlPrimaryAction(
-        makeInput({ status: { refName: "bibcode/deadbeef", aheadCount: 2 } }),
+        makeInput({ status: { refName: "coddy-studio/deadbeef", aheadCount: 2 } }),
       ).kind,
       "none",
     );

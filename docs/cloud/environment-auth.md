@@ -1,6 +1,6 @@
 # Environment authentication profile
 
-The environment server and the BiBCode Connect relay have separate issuers,
+The environment server and the Coddy Connect relay have separate issuers,
 credentials, and trust boundaries. Both use OAuth-shaped tokens and scopes, but
 an environment token is never valid at the relay and a relay token is never an
 environment session.
@@ -46,7 +46,7 @@ ticket requests authenticate with this cookie.
 
 The web app uses this cookie session for its own origin only on a page the
 server itself served for that host, which the server marks with
-`<meta name="bibcode-served-host">`. Every other page is a remote client that
+`<meta name="coddy-studio-served-host">`. Every other page is a remote client that
 uses bearer credentials, and so is a served page whose own server is not paired
 while other servers are. See
 [A page a server served, or a remote client](../architecture/remote.md#a-page-a-server-served-or-a-remote-client).
@@ -59,7 +59,7 @@ Non-cookie clients exchange a bootstrap at `POST /oauth/token` using an
 ```text
 grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 subject_token=<bootstrap credential>
-subject_token_type=urn:bibcode:params:oauth:token-type:environment-bootstrap
+subject_token_type=urn:coddy-studio:params:oauth:token-type:environment-bootstrap
 requested_token_type=urn:ietf:params:oauth:token-type:access_token
 scope=orchestration:read orchestration:operate terminal:operate review:write relay:read
 ```
@@ -110,7 +110,7 @@ pair again; old roles are not silently promoted to scopes.
 
 This is not a general-purpose OAuth authorization server. The environment
 bootstrap token type, browser-session adapter, and WebSocket ticket are
-product-specific, and API failures use BiBCode's typed HTTP/RPC error schemas.
+product-specific, and API failures use Coddy Studio's typed HTTP/RPC error schemas.
 
 ## Relay boundary
 
@@ -119,4 +119,4 @@ DPoP tokens for status/connect operations. It sends separately signed,
 nonce-bound requests to an environment's public health and mint endpoints. The
 environment validates those proofs and returns signed results before the relay
 passes a bootstrap to the client. See
-[BiBCode Connect auth flow](./bibcode-connect-auth-flow.md).
+[Coddy Connect auth flow](./coddy-connect-auth-flow.md).

@@ -1,5 +1,5 @@
-import type { DesktopBridge } from "@bibcode/contracts";
-import { safeErrorLogAttributes } from "@bibcode/client-runtime/errors";
+import type { DesktopBridge } from "@coddy/contracts";
+import { safeErrorLogAttributes } from "@coddy/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
@@ -12,7 +12,7 @@ type ThemeSnapshot = {
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 
-const STORAGE_KEY = "bibcode:theme";
+const STORAGE_KEY = "coddy-studio:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",

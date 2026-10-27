@@ -1,10 +1,10 @@
-import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
+import type { AtomCommandResult } from "@coddy/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   PreviewCloseInput,
   PreviewSessionSnapshot,
   ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { releasePreviewTab } from "~/browser/previewGateway";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";

@@ -3,13 +3,13 @@ import {
   type EnvironmentId,
   type RemotePairingCodePayload,
   WS_METHODS,
-} from "@bibcode/contracts";
-import { classifyPairingEndpoint } from "@bibcode/shared/advertisedEndpoint";
+} from "@coddy/contracts";
+import { classifyPairingEndpoint } from "@coddy/shared/advertisedEndpoint";
 import {
   PairingCodeParseError,
   PairingCodeUnsupportedVersionError,
   parsePairingCode,
-} from "@bibcode/shared/pairingCode";
+} from "@coddy/shared/pairingCode";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

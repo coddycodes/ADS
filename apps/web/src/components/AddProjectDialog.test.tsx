@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -265,7 +265,7 @@ describe("AddProjectDialog mounted interactions", () => {
 
     await click(buttonWithText("Create new project"));
     expect(document.body.textContent).toContain(
-      "Name it and BiBCode will create a real project with sensible defaults.",
+      "Name it and Coddy Studio will create a real project with sensible defaults.",
     );
   });
 

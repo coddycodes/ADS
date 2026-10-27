@@ -1,10 +1,10 @@
-import { scopedThreadKey, scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { CENTER_PANEL_ROOT_GROUP_ID } from "./centerPanelLayout";

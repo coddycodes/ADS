@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::cloud::{RelayClientInstallEvent, RelayClientStatus};
+use coddy_studio_server::cloud::{RelayClientInstallEvent, RelayClientStatus};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::{
@@ -12,7 +12,7 @@ use tokio::{
     net::TcpListener,
 };
 
-use bibcode_server::production::relay::{
+use coddy_studio_server::production::relay::{
     CLOUDFLARED_VERSION, RelayClientOptions, RelayReleaseArchive, RelayReleaseAsset,
     relay_client_service, relay_client_service_with_options,
 };

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, type DiscoveredLocalServer } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId, type DiscoveredLocalServer } from "@coddy/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({

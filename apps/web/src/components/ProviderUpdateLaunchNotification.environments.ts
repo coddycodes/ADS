@@ -1,5 +1,5 @@
-import type { ConnectionCatalogEntry } from "@bibcode/client-runtime/connection";
-import type { ServerConfig } from "@bibcode/contracts";
+import type { ConnectionCatalogEntry } from "@coddy/client-runtime/connection";
+import type { ServerConfig } from "@coddy/contracts";
 import { useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";

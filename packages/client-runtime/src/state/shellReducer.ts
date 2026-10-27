@@ -1,5 +1,5 @@
 import * as Arr from "effect/Array";
-import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@bibcode/contracts";
+import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@coddy/contracts";
 
 /**
  * Reduce a single shell stream event into an existing snapshot, returning a new

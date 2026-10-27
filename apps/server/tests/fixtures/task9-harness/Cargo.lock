@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "bibcode-task9-harness"
+name = "coddy-studio-task9-harness"
 version = "0.1.0"
 dependencies = [
  "rusqlite",

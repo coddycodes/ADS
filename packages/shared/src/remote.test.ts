@@ -60,7 +60,7 @@ describe("remote", () => {
     expect(
       resolveRemotePairingTarget({
         pairingUrl:
-          "https://app.bibcode.codes/pair?host=https%3A%2F%2Fdesktop.tailnet.ts.net%3A44342%2F#token=pairing-token",
+          "https://app.coddy.id/pair?host=https%3A%2F%2Fdesktop.tailnet.ts.net%3A44342%2F#token=pairing-token",
       }),
     ).toEqual({
       credential: "pairing-token",
@@ -108,7 +108,7 @@ describe("remote", () => {
     });
     expect(
       resolveRemotePairingTarget({
-        pairingUrl: "https://app.bibcode.codes/pair?host=C%3A4100%2Fhealth#token=hosted-code",
+        pairingUrl: "https://app.coddy.id/pair?host=C%3A4100%2Fhealth#token=hosted-code",
       }),
     ).toEqual({
       credential: "hosted-code",
@@ -130,7 +130,7 @@ describe("remote", () => {
         wsBaseUrl: "wss://devbox/",
       },
       {
-        host: "//server/share/bibcode",
+        host: "//server/share/coddy-studio",
         httpBaseUrl: "https://server/",
         wsBaseUrl: "wss://server/",
       },
@@ -290,19 +290,19 @@ describe("remote", () => {
 
   it("rejects Windows and POSIX local path forms as direct backend hosts", () => {
     const localPaths = [
-      "C:\\Users\\dev\\bibcode",
-      "C:/Users/dev/bibcode",
+      "C:\\Users\\dev\\coddy-studio",
+      "C:/Users/dev/coddy-studio",
       "C:folder",
-      "C:relative\\bibcode",
-      "\\\\server\\share\\bibcode",
-      "\\\\?\\C:\\Users\\dev\\bibcode",
-      "\\\\.\\pipe\\bibcode",
-      "\\Users\\dev\\bibcode",
-      "/var/run/bibcode.sock",
-      "./relative/bibcode",
-      "../relative/bibcode",
-      ".\\relative\\bibcode",
-      "..\\relative\\bibcode",
+      "C:relative\\coddy-studio",
+      "\\\\server\\share\\coddy-studio",
+      "\\\\?\\C:\\Users\\dev\\coddy-studio",
+      "\\\\.\\pipe\\coddy-studio",
+      "\\Users\\dev\\coddy-studio",
+      "/var/run/coddy-studio.sock",
+      "./relative/coddy-studio",
+      "../relative/coddy-studio",
+      ".\\relative\\coddy-studio",
+      "..\\relative\\coddy-studio",
     ];
 
     for (const host of localPaths) {
@@ -377,7 +377,7 @@ describe("remote", () => {
     let error: unknown;
     try {
       resolveRemotePairingTarget({
-        pairingUrl: "https://app.bibcode.codes/pair?host=C%3A%5CUsers%5Cdev%5Cbibcode#token=code",
+        pairingUrl: "https://app.coddy.id/pair?host=C%3A%5CUsers%5Cdev%5Cbibcode#token=code",
       });
     } catch (cause) {
       error = cause;
@@ -437,7 +437,7 @@ describe("remote", () => {
     try {
       resolveRemotePairingTarget({
         pairingUrl:
-          "https://app.bibcode.codes/pair?host=ftp%3A%2F%2Fremote.example.com#token=pairing-token",
+          "https://app.coddy.id/pair?host=ftp%3A%2F%2Fremote.example.com#token=pairing-token",
       });
     } catch (cause) {
       hostError = cause;
@@ -558,7 +558,7 @@ describe("remote", () => {
     expect(
       readHostedPairingRequest(
         new URL(
-          "https://app.bibcode.codes/pair?host=%20https%3A%2F%2Flan.example%3A444%20&label=%20Office%20#token=%20secret%20",
+          "https://app.coddy.id/pair?host=%20https%3A%2F%2Flan.example%3A444%20&label=%20Office%20#token=%20secret%20",
         ),
       ),
     ).toEqual({
@@ -568,10 +568,10 @@ describe("remote", () => {
       label: "Office",
     });
     expect(
-      readHostedPairingRequest(new URL("https://app.bibcode.codes/pair?host=example.com")),
+      readHostedPairingRequest(new URL("https://app.coddy.id/pair?host=example.com")),
     ).toBeNull();
     expect(
-      readHostedPairingRequest(new URL("https://app.bibcode.codes/pair#token=secret")),
+      readHostedPairingRequest(new URL("https://app.coddy.id/pair#token=secret")),
     ).toBeNull();
   });
 
@@ -580,12 +580,12 @@ describe("remote", () => {
       "https://trusted.example@attacker.example:8080",
       "https://user:password@example.test",
     ]) {
-      const url = new URL("https://app.bibcode.codes/pair#token=secret");
+      const url = new URL("https://app.coddy.id/pair#token=secret");
       url.searchParams.set("host", host);
       expect(readHostedPairingRequest(url), host).toBeNull();
     }
 
-    const idnUrl = new URL("https://app.bibcode.codes/pair#token=secret");
+    const idnUrl = new URL("https://app.coddy.id/pair#token=secret");
     idnUrl.searchParams.set("host", "https://аpple.com");
     expect(readHostedPairingRequest(idnUrl)).toEqual({
       httpBaseUrl: "https://xn--pple-43d.com/",

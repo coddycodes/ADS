@@ -40,10 +40,10 @@ When native process sampling or its boot initialization changes, run the focused
 sampling, attribution, and ownership checks:
 
 ```sh
-cargo test -p bibcode-server --lib diagnostics::native::tests:: -j 2
-cargo test -p bibcode-server --lib diagnostics::resource_sampler::tests:: -j 2
-cargo test -p bibcode-server --lib diagnostics::monitor::tests:: -j 2
-cargo test -p bibcode-server --lib production::server_terminal::tests::embedded_host_cleanup_preserves_unmanaged_host_descendants -j 2 -- --exact
+cargo test -p coddy-studio-server --lib diagnostics::native::tests:: -j 2
+cargo test -p coddy-studio-server --lib diagnostics::resource_sampler::tests:: -j 2
+cargo test -p coddy-studio-server --lib diagnostics::monitor::tests:: -j 2
+cargo test -p coddy-studio-server --lib production::server_terminal::tests::embedded_host_cleanup_preserves_unmanaged_host_descendants -j 2 -- --exact
 ```
 
 Construction must leave the native process table empty. The first diagnostics
@@ -69,11 +69,11 @@ For changes to provider visibility or the chat command menu, run the focused
 capability and protocol checks from the repository root:
 
 ```sh
-cargo test -p bibcode-server --lib skill -j 2
-cargo test -p bibcode-server --lib provider::cursor::capabilities -j 2
-cargo test -p bibcode-server --lib capability_shutdown -j 2
-cargo test -p bibcode-server --lib production_runtime_covers_core_routes_assets_diagnostics_and_shutdown -j 2
-cargo test -p bibcode-server --test server_settings_domain --test rpc_wire -j 2
+cargo test -p coddy-studio-server --lib skill -j 2
+cargo test -p coddy-studio-server --lib provider::cursor::capabilities -j 2
+cargo test -p coddy-studio-server --lib capability_shutdown -j 2
+cargo test -p coddy-studio-server --lib production_runtime_covers_core_routes_assets_diagnostics_and_shutdown -j 2
+cargo test -p coddy-studio-server --test server_settings_domain --test rpc_wire -j 2
 node scripts/run-local-vp.mjs test run packages/client-runtime/src/state/server.test.ts packages/client-runtime/src/state/queryTransport.test.ts apps/web/src/components/chat/ChatComposer.test.tsx apps/web/src/components/chat/ChatComposer.rerender.test.tsx apps/web/src/components/chat/ComposerCommandMenu.test.tsx apps/web/src/components/chat/composerCapabilities.test.ts packages/contracts/src/rpcRustParity.test.ts packages/contracts/scripts/export-rust-rpc-fixtures.test.ts
 ```
 
@@ -113,9 +113,9 @@ conversation rewind, and observed provider terminals all apply; an observed
 OpenCode 2 terminal runs `opencode --server … --session …` instead of
 `opencode attach`, and an unobserved one (Chat Activity off) runs
 `opencode --standalone` with the selected model. The focused checks are
-`cargo test -p bibcode-server --lib -j 2 -- opencode`, which replays responses
+`cargo test -p coddy-studio-server --lib -j 2 -- opencode`, which replays responses
 captured from a real OpenCode 2.0.29 server, and
-`cargo test -p bibcode-server --test provider_terminal_supervisor -- opencode`.
+`cargo test -p coddy-studio-server --test provider_terminal_supervisor -- opencode`.
 The opt-in `live_opencode_2` tests (in the library and in
 `provider_terminal_supervisor`) drive a real OpenCode 2 binary or server. The
 doc comments of `live_opencode_2_round_trip`, `live_opencode_2_local_inventory`
@@ -183,9 +183,9 @@ reattachment, run the contracts, shared-runtime, renderer, and Rust owner seams:
 vp test run packages/contracts/src/terminal.test.ts packages/contracts/src/environment.test.ts packages/contracts/src/rpc.test.ts packages/contracts/src/rpcRustParity.test.ts
 vp test run packages/client-runtime/src/state/terminalInput.test.ts packages/client-runtime/src/state/orderedTerminalInput.test.ts packages/client-runtime/src/state/terminalSession.test.ts packages/client-runtime/src/state/terminalCommands.test.ts packages/client-runtime/src/rpc
 vp test run apps/web/src/components/ThreadTerminalPanel apps/web/src/state/terminalSessions apps/web/src/components/status-bar
-cargo test -p bibcode-server --lib terminal:: -j 2
-cargo test -p bibcode-server --lib rpc::session::tests -j 2
-cargo test -p bibcode-server --test production_server_terminal_rpc -j 2
+cargo test -p coddy-studio-server --lib terminal:: -j 2
+cargo test -p coddy-studio-server --lib rpc::session::tests -j 2
+cargo test -p coddy-studio-server --test production_server_terminal_rpc -j 2
 ```
 
 Root runs leave these web tests uncompiled: confirm
@@ -221,8 +221,8 @@ When changing terminal attachment, sizing, or query replies, also run:
 vp test run packages/contracts/src/terminal.test.ts packages/contracts/src/environment.test.ts packages/contracts/src/rpcRustParity.test.ts packages/contracts/scripts/export-rust-rpc-fixtures.test.ts
 vp test run packages/client-runtime/src/state/terminalTranscriptRuntime.test.ts packages/client-runtime/src/state/terminalAttachAdapter.test.ts
 vp test run apps/web/src/components/ThreadTerminalPanel apps/web/src/components/terminalSizePolicy.test.ts apps/web/src/components/terminalSizing.test.ts apps/web/src/components/terminalReplyGuard.test.ts apps/web/src/components/terminalOutputSink.test.ts apps/web/src/components/ChatView.hooks.test.tsx apps/web/src/centerTerminalActions.test.ts
-cargo test -p bibcode-server --lib terminal -j 2
-cargo test -p bibcode-server --test production_server_terminal_rpc -j 2
+cargo test -p coddy-studio-server --lib terminal -j 2
+cargo test -p coddy-studio-server --test production_server_terminal_rpc -j 2
 ```
 
 Root runs leave these web tests uncompiled: confirm
@@ -317,18 +317,18 @@ separately. When admission, promotion, steering, hold, cancellation, claiming, o
 recovery changes, run the server owner and integration seams before broad gates:
 
 ```sh
-cargo test -p bibcode-server --lib production::turn_delivery:: -j 2
-cargo test -p bibcode-server --lib production::provider_runtime -j 2
-cargo test -p bibcode-server --lib production::orchestration_rpc::tests:: -j 2
-cargo test -p bibcode-server --lib queued_turn_start_records_message_without_turn_start_requested -j 2
-cargo test -p bibcode-server --test orchestration --test turn_delivery_queue --test turn_delivery_recovery --test production_orchestration_rpc -j 2
-cargo test -p bibcode-server --lib steer_ -j 2
-cargo test -p bibcode-server --test production_provider_runtime steer -j 2
-cargo test -p bibcode-server --test production_provider_runtime provider_stream_end_ -j 2
-cargo test -p bibcode-server --test production_provider_runtime provider_session_exit_ -j 2
-cargo test -p bibcode-server codex::runtime -j 2
-cargo test -p bibcode-server --test repositories -j 2
-cargo test -p bibcode-server migrations -j 2
+cargo test -p coddy-studio-server --lib production::turn_delivery:: -j 2
+cargo test -p coddy-studio-server --lib production::provider_runtime -j 2
+cargo test -p coddy-studio-server --lib production::orchestration_rpc::tests:: -j 2
+cargo test -p coddy-studio-server --lib queued_turn_start_records_message_without_turn_start_requested -j 2
+cargo test -p coddy-studio-server --test orchestration --test turn_delivery_queue --test turn_delivery_recovery --test production_orchestration_rpc -j 2
+cargo test -p coddy-studio-server --lib steer_ -j 2
+cargo test -p coddy-studio-server --test production_provider_runtime steer -j 2
+cargo test -p coddy-studio-server --test production_provider_runtime provider_stream_end_ -j 2
+cargo test -p coddy-studio-server --test production_provider_runtime provider_session_exit_ -j 2
+cargo test -p coddy-studio-server codex::runtime -j 2
+cargo test -p coddy-studio-server --test repositories -j 2
+cargo test -p coddy-studio-server migrations -j 2
 ```
 
 Deliver a queued message at completion and let its turn run past the idle timeout;
@@ -361,7 +361,7 @@ and unknown-reason decoding retain their existing behavior.
 With OpenCode, stop the server while a message is still sending, delete that
 session on the OpenCode server, and restart: the message must become uncertain
 with "The provider no longer has the conversation this message was sent to, so
-BiBCode can't tell whether it arrived. Retry sends it to a new conversation.",
+Coddy Studio can't tell whether it arrived. Retry sends it to a new conversation.",
 nothing may be resent automatically, and a further restart must leave it
 unchanged. An explicit **Retry** must deliver it once in a new conversation with
 the muted new-conversation notice.
@@ -424,12 +424,12 @@ no actual provider, account or host credential is needed. Run the closest owner
 group and adjacent provider supervisor tests before integrations:
 
 ```sh
-cargo test -p bibcode-server --lib production::provider_runtime::workspace_loss_tests:: -j 2
-cargo test -p bibcode-server --test production_provider_runtime --test turn_delivery_recovery -j 2
+cargo test -p coddy-studio-server --lib production::provider_runtime::workspace_loss_tests:: -j 2
+cargo test -p coddy-studio-server --test production_provider_runtime --test turn_delivery_recovery -j 2
 ```
 
 In light and dark themes, both restart reconciliation and workspace-loss
-settlement must show "BiBCode stopped this session" above their existing
+settlement must show "Coddy Studio stopped this session" above their existing
 actionable explanation. A genuine provider disconnect must retain the
 lost-connection title. A newer unknown error classification must decode to the
 generic banner without dropping the session or live event.
@@ -458,7 +458,7 @@ Claude's expanded replay, including multi-line arguments; an unknown command's
 raw replay must also acknowledge it, and another command's replay must not. A
 write with no recognisable replay must become uncertain at the acknowledgement
 deadline, while a steer's deadline starts only after its turn stops taking
-input. After Stop, a provider process BiBCode owns that never answers the
+input. After Stop, a provider process Coddy Studio owns that never answers the
 interrupt, or answers and never settles the turn, must be retired at the
 interrupt deadline: the session is projected interrupted with its resume cursor
 retained, and the next message starts a new provider process. An OpenCode
@@ -497,8 +497,8 @@ existing macOS desktop CI alone does not run this server integration target.
 For web queue behavior, run the focused renderer seams and then the web gates:
 
 ```sh
-vp run --filter @bibcode/web test ChatView ChatComposer MessagesTimeline QueuedMessage restoreQueuedMessage queuedMessageCache Sidebar.logic keybindings
-vp run --filter @bibcode/web test
+vp run --filter @coddy/web test ChatView ChatComposer MessagesTimeline QueuedMessage restoreQueuedMessage queuedMessageCache Sidebar.logic keybindings
+vp run --filter @coddy/web test
 vp check
 vp run typecheck
 ```
@@ -512,11 +512,11 @@ vp run test:ui:desktop:build
 vp run test:ui:desktop
 ```
 
-Follow the native runbook to select the worktree-built `BIBCODE_E2E_APP_PATH`
+Follow the native runbook to select the worktree-built `CODDY_STUDIO_E2E_APP_PATH`
 and, on Linux, for the headless `xvfb-run` invocation and its Wayland-socket
 guard.
 The default suite includes `composer-message-queue.e2e.ts`. To isolate it, set
-`BIBCODE_E2E_SPEC=./specs/composer-message-queue.e2e.ts` for the test invocation
+`CODDY_STUDIO_E2E_SPEC=./specs/composer-message-queue.e2e.ts` for the test invocation
 using the native shell's environment syntax, then clear that selection before
 the full suite. The Codex fixture keeps a `[[slow]]` prompt running until a
 turn-specific file marker releases it, with a bounded timeout for failed runs.
@@ -625,8 +625,8 @@ vp test run apps/web/src/pullRequestsStore.test.ts apps/web/src/components/pullR
 vp run check:contracts
 vp run typecheck
 vp check
-cargo test -p bibcode-server discovery -j 2
-cargo test -p bibcode-server --test git_rpc source_control_discovery_uses_structured_bounded_probes -j 2
+cargo test -p coddy-studio-server discovery -j 2
+cargo test -p coddy-studio-server --test git_rpc source_control_discovery_uses_structured_bounded_probes -j 2
 ```
 
 Root runs leave these web tests uncompiled: confirm
@@ -644,14 +644,14 @@ review/edit/merge/state mutations, checkout, or host-runner changes,
 run the owner and RPC boundaries from the repository root:
 
 ```sh
-cargo test -p bibcode-server pull_requests -j 2
-cargo test -p bibcode-server --test pull_requests_context_list -j 2
-cargo test -p bibcode-server --test pull_requests_detail_reads -j 2
-cargo test -p bibcode-server --test pull_requests_review_actions -j 2
-cargo test -p bibcode-server --test pull_requests_edit_merge_actions -j 2
-cargo test -p bibcode-server --test pull_requests_checkout -j 2
-cargo test -p bibcode-server --test rpc_wire -j 2
-cargo test -p bibcode-server registers_every -j 2
+cargo test -p coddy-studio-server pull_requests -j 2
+cargo test -p coddy-studio-server --test pull_requests_context_list -j 2
+cargo test -p coddy-studio-server --test pull_requests_detail_reads -j 2
+cargo test -p coddy-studio-server --test pull_requests_review_actions -j 2
+cargo test -p coddy-studio-server --test pull_requests_edit_merge_actions -j 2
+cargo test -p coddy-studio-server --test pull_requests_checkout -j 2
+cargo test -p coddy-studio-server --test rpc_wire -j 2
+cargo test -p coddy-studio-server registers_every -j 2
 ```
 
 For provider detection of self-hosted hosts (the recorded host observation,
@@ -659,11 +659,11 @@ remote parsing, status classification, and the create action's provider check
 before anything is published), also run:
 
 ```sh
-cargo test -p bibcode-server source_control:: -j 2
-cargo test -p bibcode-server --lib only_an_explicit_source_control_discovery_records_hosts -j 2
-cargo test -p bibcode-server status_provider -j 2
-cargo test -p bibcode-server create_pr -j 2
-cargo test -p bibcode-server commit_push_pr -j 2
+cargo test -p coddy-studio-server source_control:: -j 2
+cargo test -p coddy-studio-server --lib only_an_explicit_source_control_discovery_records_hosts -j 2
+cargo test -p coddy-studio-server status_provider -j 2
+cargo test -p coddy-studio-server create_pr -j 2
+cargo test -p coddy-studio-server commit_push_pr -j 2
 ```
 
 The inline CLI-script integration fixtures currently run on Unix. Shared
@@ -736,10 +736,10 @@ For supervised process runner changes (spawn, deadline, cancellation, drop,
 or process-tree cleanup), run the owner and the inline Git RPC boundaries:
 
 ```sh
-cargo test -p bibcode-server --lib process:: -j 2
-cargo test -p bibcode-server --test process_runner -j 2
-cargo test -p bibcode-server --test production_git_manager_rpc -j 2
-cargo test -p bibcode-server --test production_git_vcs_rpc -j 2
+cargo test -p coddy-studio-server --lib process:: -j 2
+cargo test -p coddy-studio-server --test process_runner -j 2
+cargo test -p coddy-studio-server --test production_git_manager_rpc -j 2
+cargo test -p coddy-studio-server --test production_git_vcs_rpc -j 2
 ```
 
 Keep separate evidence that a dropped, aborted, or runtime-shutdown run leaves
@@ -781,7 +781,7 @@ exercise a seeded update. The required matrix is macOS ARM64/x64, Linux ARM64/x6
 Windows ARM64/x64. A cross-compiled or emulated executable is compatibility evidence, not
 a native pass.
 
-For every standalone server target, inspect the native executable, run `bibcode
+For every standalone server target, inspect the native executable, run `coddy-studio
 --version`, start the staged distribution without `--static-dir`, fetch `/`, read the
 environment descriptor, issue and exchange pairing material, then terminate and prove
 cleanup. Linux additionally installs and removes both package formats in native
@@ -792,8 +792,8 @@ containers:
 | `.deb` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 |
 | `.rpm` | Rocky Linux 9, Fedora 44              |
 
-Package removal must delete `/usr/bin/bibcode` and package-owned documentation/web
-assets while preserving a test sentinel in the isolated BiBCode data root. Record the
+Package removal must delete `/usr/bin/coddy-studio` and package-owned documentation/web
+assets while preserving a test sentinel in the isolated Coddy Studio data root. Record the
 archive/package name, reported architecture, version, startup result, pairing result,
 shutdown result, and evidence artifact location in the execution report.
 
@@ -855,71 +855,71 @@ transport-size tests from the repository root whenever this boundary changes:
 ```sh
 vp test scripts/remote-architecture-contract.test.ts
 vp test packages/contracts/src/rpc.test.ts packages/client-runtime/src/rpc/session.test.ts packages/client-runtime/src/connection/pairingAdd.test.ts packages/client-runtime/src/connection/registry.test.ts packages/client-runtime/src/state/remoteUpdates.test.ts apps/web/src/hostedPairing.test.ts apps/web/src/routes/pair.test.tsx apps/web/src/routes/settings.remote-servers.test.tsx apps/web/src/connection/databaseHealth.test.ts apps/web/src/components/ConnectionDatabaseRecoveryDialog.test.tsx apps/web/src/state/shareExposureReconciler.test.tsx apps/web/src/components/settings/remote-servers/shareOffer.test.ts
-cargo test -p bibcode-server --test auth_http plain_websocket_connected_state_tracks_the_completed_upgrade_lifecycle -- --exact
-cargo test -p bibcode-server --test auth_http plain_websocket_rejects_a_single_frame_larger_than_16_mib -- --exact
-cargo test -p bibcode-server --test auth_http auth_routes_include_browser_cors_and_preflight_headers -- --exact
-cargo test -p bibcode-server --test e2ee_ws oversized_pre_auth_websocket_message_is_rejected -- --exact
-cargo test -p bibcode-server --test e2ee_ws preauth_peer_connection_cap_rejects_the_fifth_connection -- --exact
-cargo test -p bibcode-server --test e2ee_ws preauth_loopback_forwarder_bypasses_public_peer_cap_but_keeps_burst_limit -- --exact
-cargo test -p bibcode-server --test e2ee_ws established_capacity_is_partitioned_by_principal_and_released_on_close -- --exact
-cargo test -p bibcode-server --test e2ee_ws inbound_plaintext_capacity_backpressures_by_principal_and_releases_on_close -- --exact
-cargo test -p bibcode-server --test e2ee_ws incomplete_authenticated_message_closes_after_ten_seconds_without_progress -- --exact
-cargo test -p bibcode-server --test e2ee_ws idle_authenticated_connection_has_no_reassembly_deadline -- --exact
-cargo test -p bibcode-server --test e2ee_ws pairing_bootstrap_inside_the_channel_serves_get_config -- --exact
-cargo test -p bibcode-server --test e2ee_ws off_host_pairing_requires_confirmation_even_without_a_client_flag -- --exact
-cargo test -p bibcode-server --test e2ee_ws delivered_pairing_session_stays_pending_until_confirm_rpc -- --exact
-cargo test -p bibcode-server --test e2ee_ws closing_before_confirm_revokes_the_pending_session -- --exact
-cargo test -p bibcode-server --test e2ee_ws confirmed_pairing_session_survives_disconnect_and_restart_cleanup -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::preauth_admission_partitions_slots_and_refills_peer_tokens --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::preauth_network_keys_canonicalize_ipv4_24_and_ipv6_64 --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::one_public_subnet_cannot_consume_more_than_half_the_global_pool --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::loopback_forwarder_can_use_global_capacity_without_the_public_peer_cap --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::missing_connect_info_uses_the_strict_unspecified_bucket --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::unrelated_public_networks_still_stop_at_the_global_cap --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::idle_preauth_peer_and_network_entries_are_pruned_without_exceeding_the_map_cap --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::inbound_empty_continuations_and_excessive_fragmentation_are_rejected --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::inbound_global_pressure_waits_for_capacity_instead_of_closing_the_victim --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::inbound_global_pressure_waits_past_five_seconds_and_resumes --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::incomplete_minted_session_delivery_is_compensated --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::outbound_logical_message_accepts_progress_across_record_deadlines --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::outbound_logical_message_rejects_a_stalled_record --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::outbound_logical_message_enforces_the_size_derived_total_deadline --lib -- --exact
-cargo test -p bibcode-server rpc::e2ee::tests::completed_messages_retain_their_global_buffer_budget --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::fit_first_budget_does_not_block_small_waiters_behind_an_aged_large_waiter --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::cancelled_weighted_waiter_is_removed_and_capacity_is_refunded_once --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::outbound_connection_wait_uses_the_same_absolute_deadline_as_process_wait --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::two_tier_admission_does_not_hold_connection_bytes_while_process_bytes_are_blocked --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::two_tier_admission_observes_release_between_probe_and_notify_poll --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::inbound_guard_is_released_after_dispatch_not_handler_completion --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::slow_socket_cannot_hide_more_than_one_large_response_in_the_session_queue --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::slow_sockets_share_one_process_outbound_plaintext_budget --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::response_larger_than_the_connection_budget_fails_the_session_closed --lib -- --exact
-cargo test -p bibcode-server rpc::session::tests::byte_and_queue_admission_share_one_five_second_deadline --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::completed_pairing_offer_replays_and_cancels_after_restart --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::pending_pairing_offer_can_be_cancelled_after_restart --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::pending_pairing_offer_recovers_for_retry_after_restart --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::live_service_does_not_recover_another_services_young_pending_offer --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::remote_offer_cancellation_converges_dormant_share_state_and_access_events --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::cancelled_guard_registration_releases_bookkeeping_while_persistence_is_queued --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::cancelled_pending_session_issuance_revokes_durable_commit_before_state_publication --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::pending_pairing_sweep_only_revokes_sessions_past_the_grace_window --lib -- --exact
-cargo test -p bibcode-server --lib keeps_one_service_watcher -- --nocapture
-cargo test -p bibcode-server auth::service::tests::cross_service_authentication_starts_watcher_for_the_cached_session --lib -- --exact
-cargo test -p bibcode-server --test repositories pairing_offer_reservations_enforce_the_shared_ -- --nocapture
-cargo test -p bibcode-server --test auth_http pairing_offer_authority_is_shared_across_simultaneously_live_servers -- --exact
-cargo test -p bibcode-server --test auth_http concurrent_pairing_offer_retries_across_live_servers_return_one_result -- --exact
-cargo test -p bibcode-server --test auth_http remote_revocation_closes_an_acked_live_stream_before_later_events -- --exact
-cargo test -p bibcode-server --test repositories pending_auth_sessions_confirm_by_id_and_startup_cleanup_is_selective -- --exact
-cargo test -p bibcode-desktop firewall::tests --lib -- --nocapture
-cargo test -p bibcode-desktop server_exposure::tests --lib -- --nocapture
-cargo test -p bibcode-desktop bridge::tests::entering_wsl_only_recovers_native_exposure_before_switching_topology --lib -- --exact
-cargo test -p bibcode-desktop bridge::tests::leaving_wsl_only_restarts_the_native_topology_explicitly_local_only --lib -- --exact
-cargo test -p bibcode-desktop network_interfaces::tests::advertised_endpoint_classification_fixtures --lib -- --exact
-cargo test -p bibcode-desktop network_interfaces::tests::public_default_route_is_advertised_but_never_default --lib -- --exact
-cargo test -p bibcode-desktop backend::tests::lan_advertised_host_accepts_only_private_usable_ipv4_defaults --lib -- --exact
-cargo test -p bibcode-desktop bridge::tests::local_only_discovery_surfaces_public_only_topology_as_unavailable --lib -- --exact
-cargo test -p bibcode-desktop bridge::tests::local_only_discovery_marks_private_default_candidate_unavailable --lib -- --exact
-cargo test -p bibcode-server auth::service::tests::custom_off_host_grants_remain_externally_managed_after_exchange --lib -- --exact
+cargo test -p coddy-studio-server --test auth_http plain_websocket_connected_state_tracks_the_completed_upgrade_lifecycle -- --exact
+cargo test -p coddy-studio-server --test auth_http plain_websocket_rejects_a_single_frame_larger_than_16_mib -- --exact
+cargo test -p coddy-studio-server --test auth_http auth_routes_include_browser_cors_and_preflight_headers -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws oversized_pre_auth_websocket_message_is_rejected -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws preauth_peer_connection_cap_rejects_the_fifth_connection -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws preauth_loopback_forwarder_bypasses_public_peer_cap_but_keeps_burst_limit -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws established_capacity_is_partitioned_by_principal_and_released_on_close -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws inbound_plaintext_capacity_backpressures_by_principal_and_releases_on_close -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws incomplete_authenticated_message_closes_after_ten_seconds_without_progress -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws idle_authenticated_connection_has_no_reassembly_deadline -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws pairing_bootstrap_inside_the_channel_serves_get_config -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws off_host_pairing_requires_confirmation_even_without_a_client_flag -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws delivered_pairing_session_stays_pending_until_confirm_rpc -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws closing_before_confirm_revokes_the_pending_session -- --exact
+cargo test -p coddy-studio-server --test e2ee_ws confirmed_pairing_session_survives_disconnect_and_restart_cleanup -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::preauth_admission_partitions_slots_and_refills_peer_tokens --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::preauth_network_keys_canonicalize_ipv4_24_and_ipv6_64 --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::one_public_subnet_cannot_consume_more_than_half_the_global_pool --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::loopback_forwarder_can_use_global_capacity_without_the_public_peer_cap --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::missing_connect_info_uses_the_strict_unspecified_bucket --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::unrelated_public_networks_still_stop_at_the_global_cap --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::idle_preauth_peer_and_network_entries_are_pruned_without_exceeding_the_map_cap --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::inbound_empty_continuations_and_excessive_fragmentation_are_rejected --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::inbound_global_pressure_waits_for_capacity_instead_of_closing_the_victim --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::inbound_global_pressure_waits_past_five_seconds_and_resumes --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::incomplete_minted_session_delivery_is_compensated --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::outbound_logical_message_accepts_progress_across_record_deadlines --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::outbound_logical_message_rejects_a_stalled_record --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::outbound_logical_message_enforces_the_size_derived_total_deadline --lib -- --exact
+cargo test -p coddy-studio-server rpc::e2ee::tests::completed_messages_retain_their_global_buffer_budget --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::fit_first_budget_does_not_block_small_waiters_behind_an_aged_large_waiter --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::cancelled_weighted_waiter_is_removed_and_capacity_is_refunded_once --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::outbound_connection_wait_uses_the_same_absolute_deadline_as_process_wait --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::two_tier_admission_does_not_hold_connection_bytes_while_process_bytes_are_blocked --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::two_tier_admission_observes_release_between_probe_and_notify_poll --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::inbound_guard_is_released_after_dispatch_not_handler_completion --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::slow_socket_cannot_hide_more_than_one_large_response_in_the_session_queue --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::slow_sockets_share_one_process_outbound_plaintext_budget --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::response_larger_than_the_connection_budget_fails_the_session_closed --lib -- --exact
+cargo test -p coddy-studio-server rpc::session::tests::byte_and_queue_admission_share_one_five_second_deadline --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::completed_pairing_offer_replays_and_cancels_after_restart --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::pending_pairing_offer_can_be_cancelled_after_restart --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::pending_pairing_offer_recovers_for_retry_after_restart --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::live_service_does_not_recover_another_services_young_pending_offer --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::remote_offer_cancellation_converges_dormant_share_state_and_access_events --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::cancelled_guard_registration_releases_bookkeeping_while_persistence_is_queued --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::cancelled_pending_session_issuance_revokes_durable_commit_before_state_publication --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::pending_pairing_sweep_only_revokes_sessions_past_the_grace_window --lib -- --exact
+cargo test -p coddy-studio-server --lib keeps_one_service_watcher -- --nocapture
+cargo test -p coddy-studio-server auth::service::tests::cross_service_authentication_starts_watcher_for_the_cached_session --lib -- --exact
+cargo test -p coddy-studio-server --test repositories pairing_offer_reservations_enforce_the_shared_ -- --nocapture
+cargo test -p coddy-studio-server --test auth_http pairing_offer_authority_is_shared_across_simultaneously_live_servers -- --exact
+cargo test -p coddy-studio-server --test auth_http concurrent_pairing_offer_retries_across_live_servers_return_one_result -- --exact
+cargo test -p coddy-studio-server --test auth_http remote_revocation_closes_an_acked_live_stream_before_later_events -- --exact
+cargo test -p coddy-studio-server --test repositories pending_auth_sessions_confirm_by_id_and_startup_cleanup_is_selective -- --exact
+cargo test -p coddy-studio-desktop firewall::tests --lib -- --nocapture
+cargo test -p coddy-studio-desktop server_exposure::tests --lib -- --nocapture
+cargo test -p coddy-studio-desktop bridge::tests::entering_wsl_only_recovers_native_exposure_before_switching_topology --lib -- --exact
+cargo test -p coddy-studio-desktop bridge::tests::leaving_wsl_only_restarts_the_native_topology_explicitly_local_only --lib -- --exact
+cargo test -p coddy-studio-desktop network_interfaces::tests::advertised_endpoint_classification_fixtures --lib -- --exact
+cargo test -p coddy-studio-desktop network_interfaces::tests::public_default_route_is_advertised_but_never_default --lib -- --exact
+cargo test -p coddy-studio-desktop backend::tests::lan_advertised_host_accepts_only_private_usable_ipv4_defaults --lib -- --exact
+cargo test -p coddy-studio-desktop bridge::tests::local_only_discovery_surfaces_public_only_topology_as_unavailable --lib -- --exact
+cargo test -p coddy-studio-desktop bridge::tests::local_only_discovery_marks_private_default_candidate_unavailable --lib -- --exact
+cargo test -p coddy-studio-server auth::service::tests::custom_off_host_grants_remain_externally_managed_after_exchange --lib -- --exact
 ```
 
 The pairing-add client suite must prove that the registered supervisor is the
@@ -937,9 +937,9 @@ session preparation changes, build the current Rust server and run the opt-in
 TypeScript-to-Rust interop suite:
 
 ```sh
-cargo build -p bibcode-server
+cargo build -p coddy-studio-server
 cd packages/client-runtime
-BIBCODE_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/bibcode" vp test run src/e2ee/serverInterop.test.ts
+CODDY_STUDIO_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/coddy-studio" vp test run src/e2ee/serverInterop.test.ts
 cd ../..
 ```
 
@@ -948,7 +948,7 @@ key, authenticate the pending bootstrap channel, call `server.getConfig`, prove
 the delivered bearer cannot reconnect before confirmation, confirm through
 `auth.confirmPairing`, then reconnect with the active in-channel credential. It
 must also reassemble a fragmented request and reject a bad pairing token.
-Without `BIBCODE_E2EE_SERVER_BIN`, the same file intentionally reports skipped
+Without `CODDY_STUDIO_E2EE_SERVER_BIN`, the same file intentionally reports skipped
 so ordinary `vp test` does not depend on a prebuilt binary.
 
 When the device media socket routes, their Noise prologue, or the client in
@@ -956,7 +956,7 @@ When the device media socket routes, their Noise prologue, or the client in
 binary from `packages/client-runtime`:
 
 ```sh
-BIBCODE_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/bibcode" vp test run src/device/mediaSocketInterop.test.ts
+CODDY_STUDIO_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/coddy-studio" vp test run src/device/mediaSocketInterop.test.ts
 ```
 
 The suite starts the server with `enableDevicePreviews` on, because both media
@@ -976,7 +976,7 @@ this suite also reports skipped.
 When remote authentication, pairing, E2EE, share-state derivation, revocation,
 or remote updates change, run the opt-in smoke test with the server and client
 in distinct Linux containers. The recipe bind-mounts the host-built
-`target/debug/bibcode` into a Linux container, so it requires a Linux host with
+`target/debug/coddy-studio` into a Linux container, so it requires a Linux host with
 Docker networking: a macOS or Windows host builds a native executable the
 container cannot run, and Apple Container or a Docker Desktop proxy that
 cannot route between containers or publish ports yields no valid client/server
@@ -991,53 +991,53 @@ case "$(uname -s)" in
   Linux) ;;
   *) echo "cross-container gate unavailable: requires a Linux host binary and Docker networking ($(uname -s))" >&2; exit 2 ;;
 esac
-cargo build -p bibcode-server
+cargo build -p coddy-studio-server
 docker version
 
-cleanup_bibcode_remote_docker() {
-  docker rm -f bibcode-remote-client 2>/dev/null || true
-  docker rm -f bibcode-remote-server 2>/dev/null || true
-  docker network rm bibcode-remote-stabilization 2>/dev/null || true
-  docker volume rm bibcode-remote-stabilization-data 2>/dev/null || true
+cleanup_coddy_studio_remote_docker() {
+  docker rm -f coddy-studio-remote-client 2>/dev/null || true
+  docker rm -f coddy-studio-remote-server 2>/dev/null || true
+  docker network rm coddy-studio-remote-stabilization 2>/dev/null || true
+  docker volume rm coddy-studio-remote-stabilization-data 2>/dev/null || true
 }
-trap cleanup_bibcode_remote_docker EXIT INT TERM
-docker network create bibcode-remote-stabilization
-docker volume create bibcode-remote-stabilization-data
+trap cleanup_coddy_studio_remote_docker EXIT INT TERM
+docker network create coddy-studio-remote-stabilization
+docker volume create coddy-studio-remote-stabilization-data
 
-docker run -d --name bibcode-remote-server \
-  --network bibcode-remote-stabilization \
+docker run -d --name coddy-studio-remote-server \
+  --network coddy-studio-remote-stabilization \
   --security-opt label=disable \
   -e DEBIAN_FRONTEND=noninteractive \
-  -v "$PWD/target/debug/bibcode:/usr/local/bin/bibcode:ro" \
-  -v bibcode-remote-stabilization-data:/data \
+  -v "$PWD/target/debug/coddy-studio:/usr/local/bin/coddy-studio:ro" \
+  -v coddy-studio-remote-stabilization-data:/data \
   debian:trixie-slim \
   sh -c 'apt-get update >/dev/null && \
     apt-get install -y --no-install-recommends ca-certificates >/dev/null && \
     rm -rf /var/lib/apt/lists/* && \
-    exec /usr/local/bin/bibcode --base-dir /data --host 0.0.0.0 --port 3773 serve'
+    exec /usr/local/bin/coddy-studio --base-dir /data --host 0.0.0.0 --port 3773 serve'
 
 for attempt in $(seq 1 120); do
-  BIBCODE_DOCKER_PAIRING_JSON=$(docker exec bibcode-remote-server \
-    /usr/local/bin/bibcode --base-dir /data pairing issue --json 2>/dev/null) && break
+  CODDY_STUDIO_DOCKER_PAIRING_JSON=$(docker exec coddy-studio-remote-server \
+    /usr/local/bin/coddy-studio --base-dir /data pairing issue --json 2>/dev/null) && break
   sleep 0.25
 done
-test -n "${BIBCODE_DOCKER_PAIRING_JSON:-}"
-BIBCODE_DOCKER_ADMIN_CREDENTIAL=$(node -e \
+test -n "${CODDY_STUDIO_DOCKER_PAIRING_JSON:-}"
+CODDY_STUDIO_DOCKER_ADMIN_CREDENTIAL=$(node -e \
   'process.stdout.write(JSON.parse(process.argv[1]).credential)' \
-  "$BIBCODE_DOCKER_PAIRING_JSON")
+  "$CODDY_STUDIO_DOCKER_PAIRING_JSON")
 
-docker run --rm --name bibcode-remote-client \
-  --network bibcode-remote-stabilization \
+docker run --rm --name coddy-studio-remote-client \
+  --network coddy-studio-remote-stabilization \
   --security-opt label=disable \
   -v "$PWD:/workspace:ro" -w /workspace \
   --tmpfs /workspace/node_modules/.vite-temp:rw,mode=1777 \
-  -e BIBCODE_DOCKER_SERVER_URL=http://bibcode-remote-server:3773 \
-  -e BIBCODE_DOCKER_ADMIN_CREDENTIAL="$BIBCODE_DOCKER_ADMIN_CREDENTIAL" \
+  -e CODDY_STUDIO_DOCKER_SERVER_URL=http://coddy-studio-remote-server:3773 \
+  -e CODDY_STUDIO_DOCKER_ADMIN_CREDENTIAL="$CODDY_STUDIO_DOCKER_ADMIN_CREDENTIAL" \
   node:26-bookworm \
   ./node_modules/.bin/vp test packages/client-runtime/src/e2ee/dockerRemoteSmoke.test.ts
 
-unset BIBCODE_DOCKER_PAIRING_JSON BIBCODE_DOCKER_ADMIN_CREDENTIAL
-cleanup_bibcode_remote_docker
+unset CODDY_STUDIO_DOCKER_PAIRING_JSON CODDY_STUDIO_DOCKER_ADMIN_CREDENTIAL
+cleanup_coddy_studio_remote_docker
 trap - EXIT INT TERM
 ```
 
@@ -1070,9 +1070,9 @@ credential.
 After the run, all three commands below must print nothing:
 
 ```sh
-docker ps -a --filter name=bibcode-remote- --format '{{.Names}}'
-docker network ls --filter name=bibcode-remote-stabilization --format '{{.Name}}'
-docker volume ls --filter name=bibcode-remote-stabilization-data --format '{{.Name}}'
+docker ps -a --filter name=coddy-studio-remote- --format '{{.Names}}'
+docker network ls --filter name=coddy-studio-remote-stabilization --format '{{.Name}}'
+docker volume ls --filter name=coddy-studio-remote-stabilization-data --format '{{.Name}}'
 ```
 
 Record image IDs, architecture, exact command results, and cleanup evidence in
@@ -1087,17 +1087,17 @@ refresh scheduling changes, run the current focused owners before broad gates:
 vp run check:contracts
 vp test run apps/web/src/components/SourceControlPanel.test.tsx apps/web/src/components/files/FileBrowserPanel.test.tsx apps/web/src/components/GitActionsControl.test.tsx apps/web/src/components/Sidebar.test.tsx apps/web/src/components/ThreadStatusIndicators.test.tsx
 vp test run packages/contracts/src/gitManager.test.ts packages/contracts/src/environment.test.ts apps/web/src/gitManagerStore.test.ts apps/web/src/components/gitManager scripts/privacy-contract.test.ts
-node scripts/run-msvc.mjs cargo test -p bibcode-server git:: -- --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib git::manager:: -- --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib git::broadcaster::tests::ref_poll_is_replaced_by_watcher_and_safety_status_reads -- --exact --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib terminal::manager::tests::retained_process_exit_callback_does_not_hold_terminal_publication -- --exact --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib production::runtime::tests::structured_terminal_process_exit_immediately_invalidates_status_under_watcher_fallback -- --exact --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib production::runtime::tests::provider_lifecycle_and_delivery_events_do_not_trigger_git_status_reads -- --exact --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --test production_git_vcs_rpc -- --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --test git_manager_reads -- --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --test git_manager_commit -- --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --test production_git_manager_rpc -- --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --test git_rpc -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server git:: -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib git::manager:: -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib git::broadcaster::tests::ref_poll_is_replaced_by_watcher_and_safety_status_reads -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib terminal::manager::tests::retained_process_exit_callback_does_not_hold_terminal_publication -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib production::runtime::tests::structured_terminal_process_exit_immediately_invalidates_status_under_watcher_fallback -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib production::runtime::tests::provider_lifecycle_and_delivery_events_do_not_trigger_git_status_reads -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test production_git_vcs_rpc -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test git_manager_reads -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test git_manager_commit -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test production_git_manager_rpc -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test git_rpc -- --nocapture
 vp test run packages/client-runtime/src/state/vcs.test.ts packages/client-runtime/src/state/gitManager.test.ts packages/client-runtime/src/state/gitManagerRefresh.test.ts apps/web/src/connection/platform.test.ts apps/web/src/components/GitActionsControl.test.tsx
 ```
 
@@ -1161,7 +1161,7 @@ record that skip as unavailable coverage and run on a Git installation with
 reftable support before claiming reftable validation. In disposable file-ref
 and reftable fixtures, run commit,
 stash push and non-top `stash@{1}` pop/drop, tag,
-and fetch or update-ref commands from both a companion terminal and BiBCode's
+and fetch or update-ref commands from both a companion terminal and Coddy Studio's
 terminal while the manager stays focused. Refs, History, and the open stash pane
 should converge within about one second without pressing **Refresh**. Index-only
 `git add` must update Changes without an extra Git Manager signal read. Retain
@@ -1272,7 +1272,7 @@ When catalog fingerprint inputs, reuse timing, or inventory invalidation change,
 run the ignored native fleet test explicitly:
 
 ```powershell
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib worktree_catalog::tests::fingerprint_focus_fleet_reconciles_every_five_minutes_for_thirty_minutes -- --ignored --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib worktree_catalog::tests::fingerprint_focus_fleet_reconciles_every_five_minutes_for_thirty_minutes -- --ignored --exact --nocapture
 ```
 
 The test uses ten disposable real Git repositories, the production filesystem
@@ -1291,8 +1291,8 @@ root. Clear any smoke-sample override so the acceptance run collects exactly 30
 cold builds and 30 immediate warm hits:
 
 ```powershell
-Remove-Item Env:BIBCODE_FILE_INDEX_BENCHMARK_SAMPLES -ErrorAction SilentlyContinue
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib workspace::rpc::tests::benchmark_file_manager_index_phases -- --ignored --exact --nocapture
+Remove-Item Env:CODDY_STUDIO_FILE_INDEX_BENCHMARK_SAMPLES -ErrorAction SilentlyContinue
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib workspace::rpc::tests::benchmark_file_manager_index_phases -- --ignored --exact --nocapture
 ```
 
 The ignored test creates one unique disposable real-Git repository and completes
@@ -1332,7 +1332,7 @@ output limits, sibling settlement, and bounded filesystem fallback. Verify a
 slow successful pair inside the bound and timeout fallback beyond it with:
 
 ```powershell
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib workspace::search::tests::git_snapshot_accepts_slow_success_inside_bound_and_falls_back_beyond_it -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib workspace::search::tests::git_snapshot_accepts_slow_success_inside_bound_and_falls_back_beyond_it -- --exact --nocapture
 ```
 
 Then run `workspace_rpc` twice at its default harness width. Isolate the known
@@ -1350,7 +1350,7 @@ cargo test --workspace -j 2 -- --test-threads=2
 vp check
 vp run typecheck
 cargo fmt --all --check
-cargo clean -p bibcode-server -p bibcode-desktop -p bibcode-updater-verifier
+cargo clean -p coddy-studio-server -p coddy-studio-desktop -p coddy-studio-updater-verifier
 cargo clippy --workspace --all-targets -- -D warnings
 git diff --check
 ```
@@ -1391,13 +1391,13 @@ vp run test:ui:desktop
 ```
 
 Set only the native platform value documented by the selected platform page.
-After the build, set `BIBCODE_E2E_APP_PATH` to the exact worktree-built
+After the build, set `CODDY_STUDIO_E2E_APP_PATH` to the exact worktree-built
 application as documented by the selected platform page. Never use an installed
-BiBCode application as evidence for the worktree build.
+Coddy Studio application as evidence for the worktree build.
 
 ## Disposable external-worktree scenario
 
-Create a unique temporary Git repository outside BiBCode-managed worktree and
+Create a unique temporary Git repository outside Coddy Studio-managed worktree and
 user project locations. Configure identity locally, create an initial commit,
 then create two or more worktrees with native `git worktree add`.
 
@@ -1563,7 +1563,7 @@ node ../../scripts/run-local-vp.mjs test run src/operations/uploadStager.test.ts
 cd ../../apps/web
 vp test run --project unit src/lib/formatTransferBytes.test.ts src/components/ChatView.logic.test.ts src/components/chat/AttachmentUploadNotice.test.tsx src/components/chat/MessagesTimeline.test.tsx src/test/uiTypography.source.test.ts
 cd ../..
-cargo test -p bibcode-server --test rpc_liveness -j 2
+cargo test -p coddy-studio-server --test rpc_liveness -j 2
 ```
 
 Use the isolated server/web/proxy topology in the slow-link scenario below,
@@ -1625,15 +1625,15 @@ For transport or heartbeat changes, first run the paused-clock unit coverage
 and the real-socket liveness matrix:
 
 ```sh
-cargo test -p bibcode-server --lib rpc::transport::tests -j 2
-cargo test -p bibcode-server --test rpc_liveness -j 2
+cargo test -p coddy-studio-server --lib rpc::transport::tests -j 2
+cargo test -p coddy-studio-server --test rpc_liveness -j 2
 ```
 
 The unit coverage checks Ping cadence under timer jitter and after a stalled
 runtime. The integration matrix keeps the production silence and transfer
 deadlines, including an idle client kept alive only by its WebSocket Pongs.
 
-Run this against an isolated development server (its own `BIBCODE_HOME`) or a
+Run this against an isolated development server (its own `CODDY_STUDIO_HOME`) or a
 standalone server reached from a browser, never against user data. Create a
 disposable repository whose newest commit adds a text file of about 4 MB, below
 the 4.375 MB patch bound, so Git Manager returns the whole patch:
@@ -1646,10 +1646,10 @@ git add big.txt && git commit -q -m "big diff"
 Put `scripts/throttle-proxy.ts` between the browser and the server:
 
 1. Start the web client and note `webPort` from its `[dev-runner] mode=dev:web …`
-   line: `BIBCODE_PORT_OFFSET=81 vp run dev:web`. It targets server port
+   line: `CODDY_STUDIO_PORT_OFFSET=81 vp run dev:web`. It targets server port
    13854 (13773 + 81), where the proxy will listen.
 2. Start the server on another offset and allow the web origin:
-   `BIBCODE_PORT_OFFSET=80 BIBCODE_HOME=<disposable> vp run dev:server -- --dev-url http://localhost:<webPort>`.
+   `CODDY_STUDIO_PORT_OFFSET=80 CODDY_STUDIO_HOME=<disposable> vp run dev:server -- --dev-url http://localhost:<webPort>`.
 3. Start the proxy:
    `node scripts/throttle-proxy.ts --listen 127.0.0.1:13854 --target 127.0.0.1:13853 --control 127.0.0.1:13855`.
 4. Pair through the server's startup token (`/pair#token=…` on the web port) and
@@ -1696,7 +1696,7 @@ Then check liveness during large-diff transfers:
 1. `curl "http://127.0.0.1:13855/set?down=65536&up=65536"`, then open the big
    commit's diff in Git Manager History. The transfer takes about a minute and
    must finish without a disconnect. The socket must show
-   `Sec-WebSocket-Protocol: bibcode.rpc.chunked.v1`, and the large response must
+   `Sec-WebSocket-Protocol: coddy-studio.rpc.chunked.v1`, and the large response must
    arrive as binary frames. About 15 seconds in, the status bar shows a warning
    such as **1 slow request**; clicking it lists `gitManager.getDiff` with its
    start time. No toast covers the panel, and the warning clears when the
@@ -1735,14 +1735,14 @@ link. Build the server and the web bundle, then run the harness at no delay
 and at a 250 ms round trip (relayed VPN peers measure 236–252 ms):
 
 ```sh
-cargo build -p bibcode-server --bin bibcode
-VITE_HOSTED_APP_URL=https://hosted.invalid vp run --filter=@bibcode/web build
+cargo build -p coddy-studio-server --bin coddy-studio
+VITE_HOSTED_APP_URL=https://hosted.invalid vp run --filter=@coddy/web build
 node scripts/measure-remote-latency.ts --rtt 0,250 --out <report>.json
 ```
 
 It needs `/usr/bin/chromium` (or `--chromium <path>`) and uses only
 disposable data and fixture providers. Build the server with `cargo build`
-right before the run: a `cargo test` run rebuilds `target/debug/bibcode` with
+right before the run: a `cargo test` run rebuilds `target/debug/coddy-studio` with
 the hermetic test guard, which refuses tools on the ambient `PATH` (for
 example `hermetic-test-guard: refused jj at <ambient PATH>` in the run's
 `server.log`), and the server stops responding during the harness setup. Add `--jitter 20` for a relayed peer's
@@ -1774,8 +1774,8 @@ repository and never needs a network or real forge.
 ```sh
 set -eu
 
-GIT_MANAGER_FIXTURE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bibcode-git-manager.XXXXXX")"
-GIT_MANAGER_FIXTURE_REMOTE="https://github.com/bibcode-validation/git-manager-fixture.git"
+GIT_MANAGER_FIXTURE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/coddy-studio-git-manager.XXXXXX")"
+GIT_MANAGER_FIXTURE_REMOTE="https://github.com/coddy-studio-validation/git-manager-fixture.git"
 GIT_MANAGER_FIXTURE_ORIGIN_URL="$(node -e \
   'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' \
   "$GIT_MANAGER_FIXTURE_ROOT/origin.git")"
@@ -1784,7 +1784,7 @@ export GIT_MANAGER_FIXTURE_ROOT GIT_MANAGER_FIXTURE_REMOTE
 git init --bare --quiet "$GIT_MANAGER_FIXTURE_ROOT/origin.git"
 git init --quiet -b main "$GIT_MANAGER_FIXTURE_ROOT/main"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/main" config user.name \
-  "BiBCode Git Manager Fixture"
+  "Coddy Studio Git Manager Fixture"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/main" config user.email \
   "git-manager-fixture@example.test"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/main" config \
@@ -1935,7 +1935,7 @@ git switch --quiet main
 
 git clone --quiet "$GIT_MANAGER_FIXTURE_ORIGIN_URL" "$GIT_MANAGER_FIXTURE_ROOT/project-two"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/project-two" config user.name \
-  "BiBCode Git Manager Fixture"
+  "Coddy Studio Git Manager Fixture"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/project-two" config user.email \
   "git-manager-fixture@example.test"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/project-two" config \
@@ -1957,7 +1957,7 @@ printf '%s\n' "project two only" > \
 
 git clone --quiet "$GIT_MANAGER_FIXTURE_ORIGIN_URL" "$GIT_MANAGER_FIXTURE_ROOT/project-three"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/project-three" config user.name \
-  "BiBCode Git Manager Fixture"
+  "Coddy Studio Git Manager Fixture"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/project-three" config user.email \
   "git-manager-fixture@example.test"
 git -C "$GIT_MANAGER_FIXTURE_ROOT/project-three" config \
@@ -1997,7 +1997,7 @@ The final checks must show more than 100 reachable commits, two stash entries,
 the `occupied` linked worktree, both tag kinds, and the three intended working
 tree changes. Keep the exported root available to the companion shell for the
 procedure below. Add `main`, `project-two`, and `project-three` as three distinct
-BiBCode projects; do not add `origin.git` or the linked worktree as separate
+Coddy Studio projects; do not add `origin.git` or the linked worktree as separate
 projects. Remove only this exact temporary root during the runbook's
 [Cleanup](#cleanup).
 
@@ -2285,7 +2285,7 @@ tests do not replace it.
 2. Keep the log and WebSocket-frame view open, then choose **Refresh** in the
    pull-request pane exactly once. Confirm in decoded frames or the server
    operation log that exactly one `gitManager.listPullRequests` provider-refresh
-   invocation crosses the existing BiBCode connection and that no direct browser
+   invocation crosses the existing Coddy Studio connection and that no direct browser
    request targets the provider or any other third-party host. Server-side
    provider subcommands are permitted only as work owned by that one explicit
    invocation.
@@ -2337,7 +2337,7 @@ Run the regression tripwires without a browser:
 
 ```sh
 vp test run apps/web/src/components/pullRequests/pullRequestsTelemetry.test.tsx
-cargo test -p bibcode-server --lib pull_requests::tripwires -j 2
+cargo test -p coddy-studio-server --lib pull_requests::tripwires -j 2
 ```
 
 The root run leaves this web test uncompiled: if a change is
@@ -2552,7 +2552,7 @@ second run is required. Verify these remote deltas and no substitutes:
 ## Packaged visual validation
 
 Use Codex Computer Use to operate the exact packaged executable. Before launch,
-prove no conflicting BiBCode instance is running. Use disposable application
+prove no conflicting Coddy Studio instance is running. Use disposable application
 data and platform-specific renderer isolation without overwriting a user
 profile.
 
@@ -2575,7 +2575,7 @@ sizes. Cover relevant:
   rail to that row's environment;
 - the **Environments | Repositories** switch: open one repository as a project
   on Local and on a remote environment. Switch the left panel to
-  **Repositories**: the environment rail disappears, the BiBCode brand stays where it was
+  **Repositories**: the environment rail disappears, the Coddy Studio brand stays where it was
   beside the sidebar toggle (not under it), and one card named after the
   repository lists both environments with their state and path; an offline
   environment's entry is dimmed. Its `…` menu shows the normal project menu for
@@ -2686,15 +2686,15 @@ sizes. Cover relevant:
   selector with a remote environment connected; the switch off (**Off. Turn on
   to start recording. Crash checks for the previous run still happen.**),
   **Starting...**, and recording (**Recording since … · … MB · … events**, plus
-  **… dropped** when any were); **Not recording.** with "Another BiBCode app or
+  **… dropped** when any were); **Not recording.** with "Another Coddy Studio app or
   server is already recording to this profiler folder. Close it, then restart
-  this one." when a headless `bibcode --base-dir <root> serve` on the same
+  this one." when a headless `coddy-studio --base-dir <root> serve` on the same
   disposable data root started first and holds the folder; **Open folder** enabled only for the primary
   environment on desktop and **Export bundle** only for the primary
   environment, each otherwise disabled with its stated reason; **Include crash
   dumps** and its warning, disabled with Export bundle's reason when it is;
-  where an environment runs a BiBCode older than the profiler, only
-  the disabled switch with "This server's BiBCode version has no profiler.
+  where an environment runs a Coddy Studio older than the profiler, only
+  the disabled switch with "This server's Coddy Studio version has no profiler.
   Update the server to record."; and the findings list, empty (**No findings yet.**)
   and after the [Profiler crash smoke](#profiler-crash-smoke), with each
   finding's severity icon, title, count, and last seen. While an environment records,
@@ -2747,7 +2747,7 @@ diff card, partial stage and unstage controls, editable-file input, and undo
 history after switching to another right-panel tab and back. It is part of the
 default suite. To rerun only this scenario against the exact package selected
 by the native platform page, set
-`BIBCODE_E2E_SPEC=./specs/pierre-diffs.e2e.ts` for the
+`CODDY_STUDIO_E2E_SPEC=./specs/pierre-diffs.e2e.ts` for the
 `vp run test:ui:desktop` invocation. Retain its named `pierre-*.png` screenshots
 with the other bounded UI artifacts; do not put fixture state or screenshots in
 the repository.
@@ -2769,14 +2769,14 @@ native host has no suitable credentials. Never copy secrets into evidence.
 
 Run on the packaged desktop app (macOS 14+, Windows, Linux) with a disposable
 thread whose workspace contains `index.html`, a `.pdf`, and a `.txt`. Repeat
-each row with **Settings → General → Open links in** set to **BiBCode browser**
+each row with **Settings → General → Open links in** set to **Coddy Studio browser**
 and **System browser**; the modifier must always select the other target.
-Record, per row, where the link landed (BiBCode browser tab, system browser,
+Record, per row, where the link landed (Coddy Studio browser tab, system browser,
 editor, or notice). In a browser tab (web mode), **Open links in** is not shown.
 
 - Chat `http(s)` link: plain click, Ctrl/Cmd-click, Shift-click, Alt-click, and
-  middle-click. Right-click offers **Open in BiBCode browser**, **Open in
-  system browser**, and **Copy link**; other link types show no custom menu. An `.html` or `.pdf` file chip opens in the BiBCode browser, and
+  middle-click. Right-click offers **Open in Coddy Studio browser**, **Open in
+  system browser**, and **Copy link**; other link types show no custom menu. An `.html` or `.pdf` file chip opens in the Coddy Studio browser, and
   any modifier-click opens the editor. A file outside the workspace shows the
   notice with **Open in editor**.
 - Terminal URL: plain click does nothing; Ctrl/Cmd-click opens the setting's
@@ -2786,7 +2786,7 @@ editor, or notice). In a browser tab (web mode), **Open links in** is not shown.
   `printf '\e]8;;https://example.com\e\\docs\e]8;;\e\\\n'` a menu shows
   **Open …** and **Copy link**; plain click does nothing.
 - Terminal paths: `index.html`, an absolute `.html` path, a `file:///…/x.pdf`
-  URL, and a `.txt` path. HTML and PDF open in the BiBCode browser and with
+  URL, and a `.txt` path. HTML and PDF open in the Coddy Studio browser and with
   Ctrl/Cmd+Shift in the editor; `.txt` opens in the editor. On any platform,
   `\\server\share\x.html`, `//server/share/x.html`, and `\\.\C:\x.html` print
   "Network paths can't be opened from the terminal." and open nothing;
@@ -2804,7 +2804,7 @@ editor, or notice). In a browser tab (web mode), **Open links in** is not shown.
   `app.localhost`): from a local thread they open locally. From a LAN,
   tailnet, WSL, host-name (`devbox`), or desktop SSH thread they open through
   the preview gateway (see [Preview gateway](#preview-gateway)), never this
-  computer's localhost. From a BiBCode Connect or public-IP thread, or an SSH
+  computer's localhost. From a Coddy Connect or public-IP thread, or an SSH
   thread in a browser tab, they show "Can't open this address here" with "This
   address is on <environment>, not this computer. Opening its ports from here
   isn't supported yet.", the address, and **Copy link** for both targets. A
@@ -2815,7 +2815,7 @@ editor, or notice). In a browser tab (web mode), **Open links in** is not shown.
   HTML file shows a `content-security-policy` header of
   `sandbox allow-scripts allow-forms allow-popups`; for SVG, XML, and any other `+xml` type, of
   `default-src 'none'; style-src 'unsafe-inline'; sandbox`; a `.txt` or raster
-  image asset has none. In the BiBCode browser, a script
+  image asset has none. In the Coddy Studio browser, a script
   in the HTML reads `localStorage` and `document.cookie` as unavailable.
 - Port attribution: start `python3 -m http.server 8123` in a thread's terminal;
   the port appears in that thread's and terminal's discovered ports (port
@@ -2843,7 +2843,7 @@ the thread's terminal, run `python3 -m http.server 8123 --bind 127.0.0.1` and
 browser tab), the environment's address, and each gateway port.
 
 - **LAN preview.** On desktop, clicking `http://localhost:8123/` in the chat
-  opens a BiBCode browser tab that shows the listing at
+  opens a Coddy Studio browser tab that shows the listing at
   `http://localhost:8123/`. With **System browser**, the system browser lands on
   `http://<server address>:<gateway port>/`. `https://localhost:8123/` shows
   the HTTPS notice, and a port with nothing listening shows "Nothing is
@@ -2853,23 +2853,23 @@ browser tab), the environment's address, and each gateway port.
   `netstat -an` elsewhere), not on `0.0.0.0`. Reach the same server through a
   reverse proxy on its host, or through Tailscale Serve, and click the link
   again: the preview is refused as a proxied address and no gateway port opens.
-- **Browser-mode cross-site bootstrap.** Open the BiBCode UI in a browser from
+- **Browser-mode cross-site bootstrap.** Open the Coddy Studio UI in a browser from
   a different host than the environment's address, so the UI and the gateway
   are different sites (for example, the UI served by this computer and the
   environment on a LAN server). Click the 8123 link: a blank tab opens at once,
-  passes through `/__bibcode/bootstrap`, and ends on
+  passes through `/__coddy-studio/bootstrap`, and ends on
   `http://<server address>:<gateway port>/` with the listing. The browser's
-  developer tools list a `bibcode-gw-<gateway port>` cookie for that origin
+  developer tools list a `coddy-studio-gw-<gateway port>` cookie for that origin
   that is `HttpOnly`, `SameSite=Lax`, and `Path=/`. A plain reload of the
   tab still shows the listing, which proves the cookie survived the
   `location.replace` hop.
-- **Browser-mode panel preview.** Open the BiBCode UI over plain HTTP on the
+- **Browser-mode panel preview.** Open the Coddy Studio UI over plain HTTP on the
   environment's own address (`http://<server address>:<server port>`). Click
   the 8123 link: it opens in the Browser surface, not a new tab, and the address
   bar shows `http://localhost:8123/`. Open a directory in the listing: the
   address bar follows it. In a browser with the Navigation API (record the
   browser and version), Back and Forward move inside the frame and leave the
-  BiBCode tab where it is; without it they stay disabled. The frame's document
+  Coddy Studio tab where it is; without it they stay disabled. The frame's document
   response in the developer tools carries
   `Content-Security-Policy: frame-ancestors 'self' http://<server address>:<server port>`
   and no `X-Frame-Options`. Serve a Vite app on the environment and preview it:
@@ -2882,7 +2882,7 @@ browser tab), the environment's address, and each gateway port.
   On a framed page, a plain click on a link to another site (add one to the
   served directory, for example an `index.html` linking `https://example.com/`)
   opens that site in a new tab and leaves the frame on the page; a link to
-  `http://localhost:8124/` opens as a new BiBCode browser tab showing the 8124
+  `http://localhost:8124/` opens as a new Coddy Studio browser tab showing the 8124
   listing. With the address bar focused, Ctrl/Cmd `+` zooms the browser tab.
   Narrow the window to 980 px or less: the preview shows inside the right-panel
   sheet, and the more menu opens above it.
@@ -2912,54 +2912,54 @@ browser tab), the environment's address, and each gateway port.
   server, or the brainstorming companion run on this environment), revoke the
   client's session or device on the host's **Settings → Remote Servers →
   Share** tab. Within 30 s the WebSocket closes; reloading the tab shows "This
-  preview link expired. Go back to BiBCode and open it again." After the
-  client pairs again, opening the link again from BiBCode works.
+  preview link expired. Go back to Coddy Studio and open it again." After the
+  client pairs again, opening the link again from Coddy Studio works.
 - **Commands that open a browser.** In the thread's terminal, `BROWSER` and
-  `BRAINSTORM_OPEN_CMD` are `bibcode-open-url`. Looking it up
-  (`command -v bibcode-open-url`, or `where.exe bibcode-open-url` on Windows)
+  `BRAINSTORM_OPEN_CMD` are `coddy-studio-open-url`. Looking it up
+  (`command -v coddy-studio-open-url`, or `where.exe coddy-studio-open-url` on Windows)
   names `runtime/open-url/` under the server's state directory; on Windows
-  that directory holds `bibcode-open-url.exe` and no `.cmd` or extensionless
+  that directory holds `coddy-studio-open-url.exe` and no `.cmd` or extensionless
   shim. `"$BROWSER" http://localhost:8123/` prints nothing and exits 0; on
   desktop the address opens like a clicked link, and in a browser tab the "A
   command wants to open <address>" bar appears. With two clients showing the thread, only one opens it; a client
   in a hidden window loses to a visible one. With every client on another
   thread, after 2 seconds one visible client shows "A command in “<thread title>”
   wants to open <address>", and **Show thread and open** switches to that thread and opens it. With the token unset
-  (`env -u BIBCODE_OPEN_URL_AUTH "$BROWSER" http://localhost:8123/`), it prints
-  the address and exits 0. With no BiBCode client connected to the server, it
+  (`env -u CODDY_STUDIO_OPEN_URL_AUTH "$BROWSER" http://localhost:8123/`), it prints
+  the address and exits 0. With no Coddy Studio client connected to the server, it
   also prints the address and exits 0. `"$BROWSER" file:///etc/hosts` writes
-  `bibcode open-url: expected an http(s) URL` and exits 2.
+  `coddy-studio open-url: expected an http(s) URL` and exits 2.
 - **Agent open in a browser tab.** With only a browser-mode client on the
   thread, ask the agent to call `preview_open` for `http://localhost:8123/`:
   the "Agent wants to open <address>" bar appears and the agent's result is
   `pending-user`. On a UI served over plain HTTP on the environment's own host,
   **Open** shows the page in the Browser surface.
 
-- **Relay preview (BiBCode Connect).** Needs a deployed relay stage with this
+- **Relay preview (Coddy Connect).** Needs a deployed relay stage with this
   change and an environment linked to it (re-link an existing one, or open
-  BiBCode on it signed in so the background re-link runs; its **Share** tab's
+  Coddy Studio on it signed in so the background re-link runs; its **Share** tab's
   link state then reports preview hostnames). From a relay-connected desktop
-  client, click `http://localhost:8123/` in the thread's chat: the BiBCode
+  client, click `http://localhost:8123/` in the thread's chat: the Coddy Studio
   browser shows the listing, its address bar shows `http://localhost:8123/`,
   and the developer tools (or a `curl -sI` of the bootstrap URL) show the page
-  on `https://<environment hostname>-p1.<zone>` with a `bibcode-gw-<port>`
+  on `https://<environment hostname>-p1.<zone>` with a `coddy-studio-gw-<port>`
   cookie that is `Secure`, `HttpOnly`, and `SameSite=Lax`. Serve a Vite app and
   preview it: an edit hot-reloads (the WebSocket passes through the relay).
   Reload re-bootstraps. Close the tab and reopen the link: it loads again. From
   a browser-mode client connected through the relay, clicking the link opens a
   new tab on the preview hostname; typing the address into the Browser panel
-  shows "<environment> is reached through BiBCode Connect, so its previews
+  shows "<environment> is reached through Coddy Connect, so its previews
   can't show inside this page." Keep four previews open and open a fifth
   port: "Too many previews of <environment> are open over
-  BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up." With the Profiler on, end the `bibcode-connect` process with `kill -SEGV` (a plain `kill` is a deliberate stop and never counts): within 5 s a `subprocess.crash` finding labelled by the connector's executable appears, and a relay preview open fails with the "aren't set up" notice. Restart the environment's server
+  Coddy Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up." With the Profiler on, end the `coddy-connect` process with `kill -SEGV` (a plain `kill` is a deliberate stop and never counts): within 5 s a `subprocess.crash` finding labelled by the connector's executable appears, and a relay preview open fails with the "aren't set up" notice. Restart the environment's server
   without re-linking: the relay connection comes back on its own. Record the
   relay stage, environment, and preview hostnames, never cookie values.
 
-Pending native checks: Windows `bibcode-open-url.exe` started from `cmd` and
+Pending native checks: Windows `coddy-studio-open-url.exe` started from `cmd` and
 PowerShell (the desktop build attaches to the parent console; record whether
 the prompt waits and the exit code is visible); whether a Codex agent's
-commands receive `BIBCODE_OPEN_URL_AUTH` (from a Codex tool call,
-`[ -n "$BIBCODE_OPEN_URL_AUTH" ] && echo present || echo missing`; never print
+commands receive `CODDY_STUDIO_OPEN_URL_AUTH` (from a Codex tool call,
+`[ -n "$CODDY_STUDIO_OPEN_URL_AUTH" ] && echo present || echo missing`; never print
 the value); whether Codex's `workspace-write` sandbox makes `"$BROWSER"` print
 the address instead of opening it; a session older than 8 hours falls back to
 printing.
@@ -2976,9 +2976,9 @@ command, the executable, the crash trigger, and its manual checks.
 Run the focused profiler coverage first:
 
 ```sh
-cargo test -p bibcode-server --lib profiler:: -j 2
-cargo test -p bibcode-server --test profiler_runtime --test profiler_sentinel --test profiler_exits --test profiler_worktree_audit --test profiler_cli --test crash_smoke -j 2
-cargo test -p bibcode-desktop -j 2
+cargo test -p coddy-studio-server --lib profiler:: -j 2
+cargo test -p coddy-studio-server --test profiler_runtime --test profiler_sentinel --test profiler_exits --test profiler_worktree_audit --test profiler_cli --test crash_smoke -j 2
+cargo test -p coddy-studio-desktop -j 2
 vp test run packages/contracts/src/profiler.test.ts apps/web/src/profiler apps/web/src/components/settings/ProfilerSection.test.tsx apps/web/src/components/status-bar/ProfilerRecordingSegment.test.tsx
 ```
 
@@ -2988,10 +2988,10 @@ prefix, as for the other
 [compiler-sensitive](./README.md#web-unit-tests-and-the-react-compiler) files.
 
 Use a fresh data root for every process in the procedure, by setting
-`BIBCODE_HOME` to an absolute test-owned directory, together with the
+`CODDY_STUDIO_HOME` to an absolute test-owned directory, together with the
 platform's renderer isolation. The profiler directory is then
-`$BIBCODE_HOME/userdata/profiler`. Run `profiler` commands with the same
-executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
+`$CODDY_STUDIO_HOME/userdata/profiler`. Run `profiler` commands with the same
+executable and the same `CODDY_STUDIO_HOME`: `<executable> profiler status --json`.
 
 1. **Enable.** Launch the app, open **Settings → Diagnostics →
    Profiler**, keep
@@ -3007,10 +3007,10 @@ executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
    cause. Where the platform page names another crash trigger, use it to cover
    the OS crash record in step 5.
 3. **Crash.** Quit the app normally, then start it again with
-   `BIBCODE_PROFILER_CRASH_TEST=1` set for that launch only. The setting is
+   `CODDY_STUDIO_PROFILER_CRASH_TEST=1` set for that launch only. The setting is
    already on, so the monitor arms during startup and the process faults about
-   5 s later. Child processes inherit the variable: a BiBCode executable
-   started from the app, such as `bibcode` in an integrated terminal, with its
+   5 s later. Child processes inherit the variable: a Coddy Studio executable
+   started from the app, such as `coddy-studio` in an integrated terminal, with its
    own profiler on would fault too. Never set it in a shell profile, and start
    every later launch without it.
 4. **Dump.** `crashes/` holds one new `<id>.dmp` and its `<id>.json` sidecar,
@@ -3031,7 +3031,7 @@ executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
    that the platform page's `--symbols` build wrote. The crash reason is the
    write to an invalid address (`SIGSEGV`, `EXC_BAD_ACCESS`, or an access
    violation on Windows), and the stack names
-   `bibcode_server::diagnostics::profiler::crash::crash_test_fault`. For a
+   `coddy_studio_server::diagnostics::profiler::crash::crash_test_fault`. For a
    published release, run it with `--download` instead and record the download
    time. A build that was never released answers "the release publishes no
    symbols at <url>"; record that and use the local store.
@@ -3062,14 +3062,14 @@ for the other
 [compiler-sensitive](./README.md#web-unit-tests-and-the-react-compiler) files:
 
 ```sh
-cargo test -p bibcode-server --lib device:: -j 2
-cargo test -p bibcode-server --lib connect_mcp -j 2
-cargo test -p bibcode-server --test device_rpc --test device_media_socket --test e2ee_ws --test production_connect_mcp -j 2
+cargo test -p coddy-studio-server --lib device:: -j 2
+cargo test -p coddy-studio-server --lib connect_mcp -j 2
+cargo test -p coddy-studio-server --test device_rpc --test device_media_socket --test e2ee_ws --test production_connect_mcp -j 2
 vp test run packages/contracts/src/device.test.ts packages/client-runtime/src/device apps/web/src/components/device apps/web/src/components/settings/DevicePreviewsSection.test.tsx
 ```
 
 The fakes stand in for `emulator`, `adb`, the emulator gRPC service, and
-scrcpy-server, so these tests prove BiBCode's side of each boundary but not the
+scrcpy-server, so these tests prove Coddy Studio's side of each boundary but not the
 real tools.
 
 Run the
@@ -3087,7 +3087,7 @@ default to `no`. On macOS, `-no-window` falls back to a software GPU
 (lavapipe), which wedged or crashed the guest in the first native run; record
 it if the guest stops answering. Start the server with `ANDROID_HOME` set in
 its own environment (a service manager does not read a login shell), on an
-address a second machine reaches. Use a fresh `BIBCODE_HOME` and enable the
+address a second machine reaches. Use a fresh `CODDY_STUDIO_HOME` and enable the
 [Profiler](../architecture/overview.md#profiler) so `device.lifecycle` and any
 `subprocess.crash` are recorded. Clients: the desktop app on another machine
 with a pinned (E2EE) profile, and a browser on that machine opening
@@ -3184,7 +3184,7 @@ Record each client's OS, app or browser version, and profile type.
    and height, and the pointer location of one centre tap, which must land at
    the panel's centre.
 7. **scrcpy session (native item 4).** After the first video session, record
-   `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
+   `adb -s <serial> shell sha256sum /data/local/tmp/coddy-studio-scrcpy-server-v4.1.jar`
    (it equals `SCRCPY_SERVER_SHA256` in `device/android/scrcpy.rs`) and
    `adb -s <serial> shell stat -c %Y` of the same file. Close every Device
    panel showing the device and wait 5 s: `adb forward --list` has no
@@ -3205,7 +3205,7 @@ Record each client's OS, app or browser version, and profile type.
 10. **Stop and cleanup.** **Stop** the device. Within 10 s the pill shows
     **Stopped**, the platform page's process check finds no `emulator` or
     `qemu-system` process, its discovery file is gone, and
-    `adb forward --list` is empty (BiBCode leaves a stopping device's
+    `adb forward --list` is empty (Coddy Studio leaves a stopping device's
     scrcpy forward to adb, which drops it with the device, so this checks
     that adb does). Start the device again, then turn the
     setting off: the confirmation names the running device, and after it
@@ -3250,16 +3250,16 @@ Safari's address bar, and rotate Safari to each orientation, checking the
 reported orientation and size, and that `landscape` matches `simctl`'s own
 upright screenshot. They shut the simulator down from outside and expect the
 device `failed` within 5 s and the media stream closed with `stopped`. Each
-test shuts its simulator down again (`BIBCODE_IOS_SIM_UDID` picks the
-simulator; `BIBCODE_IOS_SIM_FRAMES_DIR` keeps the frames and screenshots):
+test shuts its simulator down again (`CODDY_STUDIO_IOS_SIM_UDID` picks the
+simulator; `CODDY_STUDIO_IOS_SIM_FRAMES_DIR` keeps the frames and screenshots):
 
 ```sh
-BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
+CODDY_STUDIO_IOS_SIM_TESTS=1 cargo test -p coddy-studio-server --test ios_simulator -- --nocapture
 xcrun simctl list devices | grep Booted   # nothing the test booted is left running
 ```
 
 The tests are not in CI. Never run them while the same simulator is open in
-BiBCode or Simulator: they find it busy. They fail at once with "Xcode's first
+Coddy Studio or Simulator: they find it busy. They fail at once with "Xcode's first
 launch is pending" when `xcodebuild -checkFirstLaunchStatus` exits non-zero,
 as after an Xcode update whose CoreSimulator is not installed yet; open Xcode
 once or run `sudo xcodebuild -runFirstLaunch`, then run them again.
@@ -3269,8 +3269,8 @@ Then run the packaged-app procedure in
 Record the Xcode version (`xcodebuild -version`), the simulator's device type
 and runtime, whether simulators opened live or view-only (and the reason), and
 the results in the execution report's device previews section. A simulator
-BiBCode booted that is still `Booted` after a stop, a setting change, or a
-quit, a simulator BiBCode did not boot that it shut down, a stuck touch, or a
+Coddy Studio booted that is still `Booted` after a stop, a setting change, or a
+quit, a simulator Coddy Studio did not boot that it shut down, a stuck touch, or a
 blank screen without a fallback fails the run.
 
 ## Non-native compatibility audit

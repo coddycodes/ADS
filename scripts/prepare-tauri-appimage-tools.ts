@@ -95,7 +95,7 @@ async function downloadBytes(url: string): Promise<Uint8Array> {
 export async function prepareTauriAppImageTools(
   options: PrepareTauriAppImageToolsOptions = {},
 ): Promise<PrepareTauriAppImageToolsResult> {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- Standalone CLI samples the actual host platform when not injected.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- Standalone CLI samples the actual host platform when not injected.
   const platform = options.platform ?? process.platform;
   if (platform !== "linux") {
     return { status: "skipped", platform };
@@ -105,7 +105,7 @@ export async function prepareTauriAppImageTools(
     options.repositoryRoot ??
     NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
   const toolsDirectory = NodePath.join(repositoryRoot, "target/.tauri");
-  const upstreamPath = NodePath.join(toolsDirectory, "bibcode-linuxdeploy-gtk-upstream.sh");
+  const upstreamPath = NodePath.join(toolsDirectory, "coddy-studio-linuxdeploy-gtk-upstream.sh");
   const legacyUpstreamPath = NodePath.join(toolsDirectory, "linuxdeploy-plugin-gtk-upstream.sh");
   const wrapperPath = NodePath.join(toolsDirectory, "linuxdeploy-plugin-gtk.sh");
   const wrapperSourcePath = NodePath.join(

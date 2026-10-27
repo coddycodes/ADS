@@ -1,5 +1,5 @@
 import { useDroppable } from "@dnd-kit/core";
-import { getTerminalLabel } from "@bibcode/shared/terminalLabels";
+import { getTerminalLabel } from "@coddy/shared/terminalLabels";
 import { MoreHorizontal } from "lucide-react";
 import {
   type FocusEvent,

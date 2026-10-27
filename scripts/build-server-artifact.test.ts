@@ -17,7 +17,7 @@ import {
 const temporaryRoots: string[] = [];
 
 function temporaryRoot(): string {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-server-artifact-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-server-artifact-"));
   temporaryRoots.push(root);
   return root;
 }
@@ -46,7 +46,7 @@ describe("server artifact builder", () => {
       "utf8",
     );
     expect(
-      config.match(/- src: \$\{BIBCODE_SERVER_PACKAGE_ROOT\}[^\n]*\n\s+expand: true/g),
+      config.match(/- src: \$\{CODDY_STUDIO_SERVER_PACKAGE_ROOT\}[^\n]*\n\s+expand: true/g),
     ).toHaveLength(4);
   });
 
@@ -75,7 +75,7 @@ describe("server artifact builder", () => {
         version: "0.4.3",
         outputDir: NodePath.join(root, "out"),
         skipBuild: true,
-        binaryPath: NodePath.join(root, "bibcode"),
+        binaryPath: NodePath.join(root, "coddy-studio"),
         webDir: NodePath.join(root, "web"),
       },
       { platform: "linux", arch: "arm64" },
@@ -83,21 +83,21 @@ describe("server artifact builder", () => {
     );
 
     expect(plan.target.rustTarget).toBe("aarch64-unknown-linux-gnu");
-    expect(plan.archiveName).toBe("bibcode-server-v0.4.3-linux-aarch64.tar.gz");
-    expect(plan.distributionRootName).toBe("bibcode-server-v0.4.3-linux-aarch64");
+    expect(plan.archiveName).toBe("coddy-studio-server-v0.4.3-linux-aarch64.tar.gz");
+    expect(plan.distributionRootName).toBe("coddy-studio-server-v0.4.3-linux-aarch64");
     expect(plan.archiveCommand).toEqual({
       command: "tar",
       args: [
         "-czf",
-        "bibcode-server-v0.4.3-linux-aarch64.tar.gz",
+        "coddy-studio-server-v0.4.3-linux-aarch64.tar.gz",
         "-C",
         "staging",
-        "bibcode-server-v0.4.3-linux-aarch64",
+        "coddy-studio-server-v0.4.3-linux-aarch64",
       ],
     });
     expect(plan.packageArtifacts).toEqual([
-      NodePath.join(root, "out", "bibcode-server_0.4.3_arm64.deb"),
-      NodePath.join(root, "out", "bibcode-server-0.4.3-1.aarch64.rpm"),
+      NodePath.join(root, "out", "coddy-studio-server_0.4.3_arm64.deb"),
+      NodePath.join(root, "out", "coddy-studio-server-0.4.3-1.aarch64.rpm"),
     ]);
   });
 
@@ -110,7 +110,7 @@ describe("server artifact builder", () => {
         version: "0.4.3",
         outputDir: NodePath.join(root, "out"),
         skipBuild: true,
-        binaryPath: NodePath.join(root, "bibcode.exe"),
+        binaryPath: NodePath.join(root, "coddy-studio.exe"),
         webDir: NodePath.join(root, "web"),
       },
       { platform: "win32", arch: "x64" },
@@ -126,14 +126,14 @@ describe("server artifact builder", () => {
         "-File",
         NodePath.join(root, "scripts/create-portable-zip.ps1"),
         "-Source",
-        "staging\\bibcode-server-v0.4.3-windows-x86_64",
+        "staging\\coddy-studio-server-v0.4.3-windows-x86_64",
         "-Destination",
-        "bibcode-server-v0.4.3-windows-x86_64.zip",
+        "coddy-studio-server-v0.4.3-windows-x86_64.zip",
       ],
     });
     expect(plan.archiveListCommand.command).toBe("powershell.exe");
     expect(plan.archiveListCommand.env).toEqual({
-      BIBCODE_SERVER_ARCHIVE_DESTINATION: "bibcode-server-v0.4.3-windows-x86_64.zip",
+      CODDY_STUDIO_SERVER_ARCHIVE_DESTINATION: "coddy-studio-server-v0.4.3-windows-x86_64.zip",
     });
   });
 
@@ -148,25 +148,25 @@ describe("server artifact builder", () => {
   });
 
   it("rejects non-portable Windows separators inside ZIP entries", () => {
-    const root = "bibcode-server-v0.4.3-windows-x86_64";
-    expect(() => validateServerArchiveEntries([`${root}\\bibcode.exe`], root)).toThrow(
+    const root = "coddy-studio-server-v0.4.3-windows-x86_64";
+    expect(() => validateServerArchiveEntries([`${root}\\coddy-studio.exe`], root)).toThrow(
       "Unsafe archive entry",
     );
     expect(() =>
-      validateServerArchiveEntries([`${root}/bibcode.exe`, `${root}/web/index.html`], root),
+      validateServerArchiveEntries([`${root}/coddy-studio.exe`, `${root}/web/index.html`], root),
     ).not.toThrow();
   });
 
   it("stages the executable, web client, guide, and license under one versioned root", async () => {
     const root = temporaryRoot();
-    const binary = NodePath.join(root, "bibcode");
+    const binary = NodePath.join(root, "coddy-studio");
     const web = NodePath.join(root, "web");
     const guide = NodePath.join(root, "server-installation.md");
     const license = NodePath.join(root, "LICENSE");
     NodeFS.mkdirSync(web);
     NodeFS.writeFileSync(binary, "binary");
-    NodeFS.writeFileSync(NodePath.join(web, "index.html"), "<main>BiBCode</main>");
-    NodeFS.writeFileSync(NodePath.join(web, "app.js"), "console.log('BiBCode')");
+    NodeFS.writeFileSync(NodePath.join(web, "index.html"), "<main>Coddy Studio</main>");
+    NodeFS.writeFileSync(NodePath.join(web, "app.js"), "console.log('Coddy Studio')");
     NodeFS.writeFileSync(guide, "# Server installation\n");
     NodeFS.writeFileSync(license, "MIT\n");
     const plan = planServerArtifact(
@@ -186,7 +186,7 @@ describe("server artifact builder", () => {
 
     const staged = await stageServerDistribution(plan);
 
-    expect(staged).toEqual(["LICENSE", "README.md", "bibcode", "web/app.js", "web/index.html"]);
+    expect(staged).toEqual(["LICENSE", "README.md", "coddy-studio", "web/app.js", "web/index.html"]);
     expect(NodeFS.readFileSync(NodePath.join(plan.stagingDir, "README.md"), "utf8")).toBe(
       "# Server installation\n",
     );
@@ -194,7 +194,7 @@ describe("server artifact builder", () => {
 
   it("rejects incomplete web assets and overlapping source/output trees", async () => {
     const root = temporaryRoot();
-    const binary = NodePath.join(root, "bibcode");
+    const binary = NodePath.join(root, "coddy-studio");
     const web = NodePath.join(root, "web");
     const output = NodePath.join(root, "out");
     NodeFS.mkdirSync(web);
@@ -216,7 +216,7 @@ describe("server artifact builder", () => {
     await expect(stageServerDistribution(plan)).rejects.toThrow("web/index.html");
     expect(() =>
       planServerArtifact(
-        { ...base, binaryPath: NodePath.join(output, "bibcode") },
+        { ...base, binaryPath: NodePath.join(output, "coddy-studio") },
         { platform: "linux", arch: "arm64" },
         root,
       ),

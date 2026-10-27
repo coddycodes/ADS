@@ -12,14 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { ReactNode } from "react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import type {
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
   VcsDiscoveryItem,
-} from "@bibcode/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@coddy/contracts/settings";
 
 const harness = vi.hoisted(() => {
   type Matcher = (initial: unknown) => boolean;

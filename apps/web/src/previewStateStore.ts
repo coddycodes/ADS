@@ -6,12 +6,12 @@
  * is the one place that must enumerate every live preview tab.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { parseScopedThreadKey, scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { parseScopedThreadKey, scopedThreadKey } from "@coddy/client-runtime/environment";
 import {
   type PreviewEvent,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { Atom } from "effect/reactivity";
 
 import { canFrameGatewayPreviews } from "./components/preview/previewBridge";
@@ -31,7 +31,7 @@ export interface DesktopPreviewOverlay {
 /**
  * A page this client couldn't load although other clients may: its own SSH
  * forward, session or network reach failed. `code` 0 means `description` is a
- * full sentence from BiBCode rather than a network error name.
+ * full sentence from Coddy Studio rather than a network error name.
  */
 export interface PreviewLocalFailure {
   readonly url: string;
@@ -491,7 +491,7 @@ export function isPreviewSupportedInRuntime(): boolean {
 
 /**
  * The panel can show any address, including file previews. Browser mode frames
- * only gateway previews: other pages would share BiBCode's own origin or refuse
+ * only gateway previews: other pages would share Coddy Studio's own origin or refuse
  * to be framed.
  */
 export function canPreviewAnyUrlInRuntime(): boolean {

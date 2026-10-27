@@ -1,4 +1,4 @@
-import type { PullRequestsVocabularyInput } from "@bibcode/contracts";
+import type { PullRequestsVocabularyInput } from "@coddy/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { pullRequestsEnvironment } from "../../../state/pullRequests";
 import { usePullRequestsQuery } from "../shared/usePullRequestsQuery";

@@ -2,12 +2,12 @@ import {
   DESKTOP_LOCAL_CONNECTION_ID_PREFIX,
   isDesktopLocalConnectionId,
   type ConnectionTarget,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 /**
  * Desktop-local secondary backends (e.g. a parallel WSL backend) are registered
@@ -21,7 +21,7 @@ import {
  * via {@link isDesktopLocalConnectionTarget}, so the convention can never drift
  * between the two.
  */
-export { DESKTOP_LOCAL_CONNECTION_ID_PREFIX } from "@bibcode/client-runtime/connection";
+export { DESKTOP_LOCAL_CONNECTION_ID_PREFIX } from "@coddy/client-runtime/connection";
 
 export function desktopLocalConnectionId(backendId: string): string {
   return `${DESKTOP_LOCAL_CONNECTION_ID_PREFIX}${backendId}`;

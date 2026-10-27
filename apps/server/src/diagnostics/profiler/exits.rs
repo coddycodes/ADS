@@ -1,4 +1,4 @@
-//! Unrequested deaths of the processes BiBCode runs (shells, provider CLIs, git) and of the
+//! Unrequested deaths of the processes Coddy Studio runs (shells, provider CLIs, git) and of the
 //! app window's web content process.
 //!
 //! Exit paths check [`watching`] before building anything, so with the profiler off an exit
@@ -39,11 +39,11 @@ const REPORT_LEAD: Duration = Duration::from_secs(5);
 const STOP_REQUEST_MEMORY: Duration = Duration::from_secs(60);
 const STOP_REQUESTS_KEPT: usize = 64;
 
-/// Processes someone is stopping on purpose: BiBCode itself, or the user from the process
+/// Processes someone is stopping on purpose: Coddy Studio itself, or the user from the process
 /// list.
 static STOP_REQUESTS: Mutex<StopRequests> = Mutex::new(StopRequests::new());
 
-/// Set once BiBCode received a termination signal: what dies from then on dies with it.
+/// Set once Coddy Studio received a termination signal: what dies from then on dies with it.
 static TERMINATING: AtomicBool = AtomicBool::new(false);
 
 /// A delayed lookup (a core dump harvest, a crash report poll or a minidump listing), started
@@ -172,7 +172,7 @@ pub enum ExitClass {
 }
 
 /// Which unrequested exits count as crashes where a process is watched. A deliberate signal
-/// (SIGTERM, SIGHUP, SIGINT, Windows' Ctrl-C) never does: BiBCode sends none of them itself
+/// (SIGTERM, SIGHUP, SIGINT, Windows' Ctrl-C) never does: Coddy Studio sends none of them itself
 /// except an interrupt it notes, so one comes from a logout, a service stop or someone's
 /// `kill`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,7 +195,7 @@ pub struct Exited<'a> {
     /// Its executable; OS crash records are matched by its file name.
     pub exe: &'a str,
     pub pid: u32,
-    /// When it started, or when BiBCode began watching it; its uptime ends at the report.
+    /// When it started, or when Coddy Studio began watching it; its uptime ends at the report.
     pub started: Instant,
 }
 
@@ -206,7 +206,7 @@ pub struct WebProcess<'a> {
     pub exe: &'a str,
 }
 
-/// How `status` came about. `requested` is true when BiBCode or the user asked the process
+/// How `status` came about. `requested` is true when Coddy Studio or the user asked the process
 /// to stop: whatever its status, it did not die on its own.
 pub fn classify_exit(status: &ExitStatus, requested: bool) -> ExitClass {
     if requested {
@@ -250,7 +250,7 @@ pub fn watching() -> bool {
     }
 }
 
-/// Records that BiBCode received a termination signal. Processes that die from then on die
+/// Records that Coddy Studio received a termination signal. Processes that die from then on die
 /// with it, so none of their deaths is reported.
 pub fn note_terminating() {
     #[cfg(test)]
@@ -270,7 +270,7 @@ fn terminating() -> bool {
 
 /// Reports a watched process's exit when `watch` counts it as a crash: a `subprocess.exit`
 /// event and a `subprocess.crash` finding. Does nothing while the profiler is off, or once
-/// BiBCode is terminating.
+/// Coddy Studio is terminating.
 pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requested: bool) {
     if terminating() || !watching() {
         return;
@@ -301,7 +301,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
             Severity::Error,
             format!("{label} was killed, likely for using too much memory"),
             format!(
-                "The {kind} process {label} got SIGKILL after {uptime}. BiBCode did not send it; \
+                "The {kind} process {label} got SIGKILL after {uptime}. Coddy Studio did not send it; \
                  the kernel's OOM killer or systemd-oomd usually does."
             ),
         ),
@@ -313,7 +313,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
                 Severity::Error,
                 format!("{label} died with {name}"),
                 format!(
-                    "The {kind} process {label} died with {name} after {uptime}; BiBCode did \
+                    "The {kind} process {label} died with {name} after {uptime}; Coddy Studio did \
                      not stop it."
                 ),
             )
@@ -324,7 +324,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
             Severity::Warn,
             format!("{label} exited with code {code}"),
             format!(
-                "The {kind} process {label} exited with code {code} after {uptime}; BiBCode did \
+                "The {kind} process {label} exited with code {code} after {uptime}; Coddy Studio did \
                  not stop it."
             ),
         ),
@@ -374,7 +374,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
     let _ = occurrence;
 }
 
-/// Records that `pid` is about to be stopped on purpose, by BiBCode or by the user from the
+/// Records that `pid` is about to be stopped on purpose, by Coddy Studio or by the user from the
 /// process list, so the exit that follows within a minute is not reported. Call it before
 /// the stop: the exit can be observed before the stopping call returns.
 pub fn note_stop_requested(pid: u32) {
@@ -449,7 +449,7 @@ pub fn report_webview_failed(
     run_lookup(occurrence.id.clone(), move |claim| {
         // Not on the UI thread that reports the failure: the folder may sit on a slow disk.
         let lookup = std::thread::Builder::new()
-            .name("bibcode-webview-dump".into())
+            .name("coddy-studio-webview-dump".into())
             .spawn(move || {
                 let _claim = claim;
                 if let Some(dump) = newest_dump(&dir, at) {
@@ -500,7 +500,7 @@ fn webview_failure(kind: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// Records a `crash.webview` finding, unless BiBCode is terminating and its webview with it.
+/// Records a `crash.webview` finding, unless Coddy Studio is terminating and its webview with it.
 fn record_webview(
     reason: &str,
     title: &str,
@@ -774,7 +774,7 @@ fn attach_coredump(occurrence: Occurrence, pid: u32, exe: &str, started_at: time
 #[cfg(target_os = "linux")]
 fn spawn_lookup(lookup: impl std::future::Future<Output = ()> + Send + 'static) {
     let thread = std::thread::Builder::new()
-        .name("bibcode-crash-record".into())
+        .name("coddy-studio-crash-record".into())
         .spawn(move || {
             match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -807,7 +807,7 @@ fn attach_web_content_report(occurrence: Occurrence, pid: Option<u32>) {
     let deadline = Instant::now() + REPORT_WINDOW;
     run_lookup(occurrence.id.clone(), move |claim| {
         let lookup = std::thread::Builder::new()
-            .name("bibcode-webview-report".into())
+            .name("coddy-studio-webview-report".into())
             .spawn(move || {
                 let _claim = claim;
                 loop {
@@ -1034,7 +1034,7 @@ mod tests {
             classify_exit(&ExitStatus::from_raw(0xC000_0005), true),
             ExitClass::Requested
         ));
-        // TerminateProcess(…, 1), as BiBCode and the process list stop processes.
+        // TerminateProcess(…, 1), as Coddy Studio and the process list stop processes.
         assert!(matches!(
             classify_exit(&ExitStatus::from_raw(1), false),
             ExitClass::NonZero(1)
@@ -1189,7 +1189,7 @@ mod tests {
             ..git(4_000_000_103)
         };
         report_exit(Watch::Signals, &stopped, &crashed(), false);
-        assert!(captured.take().is_empty(), "BiBCode stopped it");
+        assert!(captured.take().is_empty(), "Coddy Studio stopped it");
     }
 
     #[cfg(unix)]
@@ -1211,9 +1211,9 @@ mod tests {
         assert_eq!(captured.take(), [["provider", "codex", "SIGSEGV"]]);
     }
 
-    /// A node CLI exits 143 or 1 when the SIGTERM that stops BiBCode reaches it too.
+    /// A node CLI exits 143 or 1 when the SIGTERM that stops Coddy Studio reaches it too.
     #[test]
-    fn nothing_is_reported_once_bibcode_is_terminating() {
+    fn nothing_is_reported_once_coddy_studio_is_terminating() {
         let captured = CapturedExits::start();
         let claude = Exited {
             kind: "provider",

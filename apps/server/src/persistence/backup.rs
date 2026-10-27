@@ -305,7 +305,7 @@ pub struct StoreRuntimeGuard {
 
 impl StoreRuntimeGuard {
     pub async fn acquire(effective_root: &Path) -> Result<Self, BackupError> {
-        let lock_path = effective_root.join(".bibcode-runtime.lock");
+        let lock_path = effective_root.join(".coddy-studio-runtime.lock");
         let cancellation = CancellationToken::new();
         let _cancel_on_drop = CancelOnDrop(cancellation.clone());
         let deadline = Instant::now()
@@ -378,7 +378,7 @@ impl StoreOperationGuard {
         cancellation: CancellationToken,
         timeout: Duration,
     ) -> Result<Self, BackupError> {
-        let lock_path = effective_root.join(".bibcode-storage.lock");
+        let lock_path = effective_root.join(".coddy-studio-storage.lock");
         let deadline =
             Instant::now()
                 .checked_add(timeout)

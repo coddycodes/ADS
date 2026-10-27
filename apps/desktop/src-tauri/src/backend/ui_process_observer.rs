@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use bibcode_server::diagnostics::DesktopUiProcessObserver;
+use coddy_studio_server::diagnostics::DesktopUiProcessObserver;
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-use bibcode_server::diagnostics::UnavailableDesktopUiProcessObserver;
+use coddy_studio_server::diagnostics::UnavailableDesktopUiProcessObserver;
 #[cfg(windows)]
-use bibcode_server::diagnostics::WebView2DesktopUiProcessObserver;
+use coddy_studio_server::diagnostics::WebView2DesktopUiProcessObserver;
 use tauri::{AppHandle, Runtime};
 
 #[cfg(target_os = "linux")]

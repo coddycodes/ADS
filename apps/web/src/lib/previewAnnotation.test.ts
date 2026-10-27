@@ -1,4 +1,4 @@
-import type { PreviewAnnotationPayload } from "@bibcode/contracts";
+import type { PreviewAnnotationPayload } from "@coddy/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {

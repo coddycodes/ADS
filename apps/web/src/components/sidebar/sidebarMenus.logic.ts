@@ -3,7 +3,7 @@ import type {
   ContextMenuEntry,
   ContextMenuItem,
   ContextMenuSeparator,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { getDiscoveryVisibilityMenuLabel } from "../WorktreeDiscoverySection.logic";
 
@@ -101,7 +101,7 @@ export function describeUnavailableWorkspace(
 ): string {
   return availability === "removing"
     ? "This worktree is being removed."
-    : "The worktree directory is missing. Use Retry detection or Remove from BiBCode on its card.";
+    : "The worktree directory is missing. Use Retry detection or Remove from Coddy Studio on its card.";
 }
 
 function openInEntry(

@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import type { ExecutionEnvironmentDescriptor } from "@bibcode/contracts";
+import type { ExecutionEnvironmentDescriptor } from "@coddy/contracts";
 
 import * as Persistence from "../platform/persistence.ts";
 import {

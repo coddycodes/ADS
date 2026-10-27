@@ -3,7 +3,7 @@ import type {
   DevicePlatform,
   DevicePlatformCatalog,
   DeviceSnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   ChevronLeftIcon,
   CircleIcon,

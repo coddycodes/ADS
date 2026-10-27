@@ -1,4 +1,4 @@
-import type { PreviewAnnotationPayload } from "@bibcode/contracts";
+import type { PreviewAnnotationPayload } from "@coddy/contracts";
 import { buildElementContextBlock, normalizeElementContextSelection } from "./elementContext";
 
 const TRAILING_PREVIEW_ANNOTATION_BLOCK_PATTERN =

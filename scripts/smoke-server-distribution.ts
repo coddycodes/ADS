@@ -21,7 +21,7 @@ export interface ServerDistributionSmokeResult {
   readonly version: string;
   readonly environmentId: string;
   readonly tokenType: string;
-  readonly webContainsBiBCode: boolean;
+  readonly webContainsCoddyStudio: boolean;
   readonly exitCode: number;
 }
 
@@ -126,7 +126,7 @@ export async function smokeServerDistribution(
   }
 
   const stateRoot = await NodeFS.promises.mkdtemp(
-    NodePath.join(NodeOS.tmpdir(), "bibcode-distribution-smoke-"),
+    NodePath.join(NodeOS.tmpdir(), "coddy-studio-distribution-smoke-"),
   );
   const child = NodeChildProcess.spawn(
     binary,
@@ -168,7 +168,7 @@ export async function smokeServerDistribution(
       throw new ServerDistributionSmokeError(`Packaged web request returned ${web.status}.`);
     }
     const descriptorResponse = await withTimeout(
-      request(`${httpBaseUrl}/.well-known/bibcode/environment`),
+      request(`${httpBaseUrl}/.well-known/coddy-studio/environment`),
       timeoutMs,
       "Environment descriptor request",
     );
@@ -198,7 +198,7 @@ export async function smokeServerDistribution(
     const form = new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       subject_token: pairing.credential,
-      subject_token_type: "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+      subject_token_type: "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
       requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
       client_label: "Distribution smoke",
       client_device_type: "desktop",
@@ -236,7 +236,7 @@ export async function smokeServerDistribution(
       timeoutMs,
       "Server shutdown",
     );
-    // oxlint-disable-next-line bibcode/no-global-process-runtime -- This native smoke validates the host process it just terminated.
+    // oxlint-disable-next-line coddy/no-global-process-runtime -- This native smoke validates the host process it just terminated.
     if (!isExpectedServerShutdownExit(NodeOS.platform(), exitCode)) {
       throw new ServerDistributionSmokeError(`Server shutdown exited with ${exitCode}.`);
     }
@@ -244,7 +244,7 @@ export async function smokeServerDistribution(
       version,
       environmentId: descriptor.environmentId,
       tokenType: token.token_type,
-      webContainsBiBCode: web.body.includes("BiBCode"),
+      webContainsCoddyStudio: web.body.includes("Coddy Studio"),
       exitCode,
     };
   } finally {

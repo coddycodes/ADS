@@ -1,4 +1,4 @@
-import type { PullRequestsPermission, PullRequestsTimelineItem } from "@bibcode/contracts";
+import type { PullRequestsPermission, PullRequestsTimelineItem } from "@coddy/contracts";
 import { createContext, memo, useContext, useRef, useState } from "react";
 import { writeTextToClipboard } from "../../../hooks/useCopyToClipboard";
 import { Button } from "../../ui/button";

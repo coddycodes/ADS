@@ -1,4 +1,4 @@
-use bibcode_server::provider::grok;
+use coddy_studio_server::provider::grok;
 
 use std::{path::PathBuf, time::Duration};
 
@@ -43,7 +43,7 @@ async fn grok_runtime_matches_user_input_and_cancel_traces() {
             cwd: "/tmp/project".to_owned(),
             mcp_servers: vec![json!({
                 "type": "http",
-                "name": "bibcode",
+                "name": "coddy-studio",
                 "url": "http://127.0.0.1:3773/mcp",
                 "headers": [{ "name": "Authorization", "value": "Bearer secret" }],
             })],
@@ -63,7 +63,7 @@ async fn grok_runtime_matches_user_input_and_cancel_traces() {
             "cwd": "/tmp/project",
             "mcpServers": [{
                 "type": "http",
-                "name": "bibcode",
+                "name": "coddy-studio",
                 "url": "http://127.0.0.1:3773/mcp",
                 "headers": [{ "name": "Authorization", "value": "Bearer secret" }],
             }],

@@ -5,7 +5,7 @@
       "method": "POST",
       "path": "/api/session",
       "body": {
-        "title": "BiBCode capture",
+        "title": "Coddy Studio capture",
         "location": {
           "directory": "/work/project"
         },
@@ -47,7 +47,7 @@
             "created": 1792094875203,
             "updated": 1792094875203
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -65,13 +65,13 @@
       "method": "POST",
       "path": "/api/session/ses_ebed251beffer8XQn09FmyAgfo/prompt",
       "body": {
-        "id": "msg_bibcodechildren1792094875",
+        "id": "msg_coddystudiochildren1792094875",
         "text": "SPAWN_BACKGROUND please"
       },
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodechildren1792094875",
+          "id": "msg_coddystudiochildren1792094875",
           "sessionID": "ses_ebed251beffer8XQn09FmyAgfo",
           "time": {
             "created": 1792094875207

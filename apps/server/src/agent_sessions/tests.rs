@@ -373,7 +373,7 @@ fn scan_lists_recent_sessions_of_this_folder_newest_first() {
             ),
         ]
     );
-    // Sessions a BiBCode thread already runs are not offered.
+    // Sessions a Coddy Studio thread already runs are not offered.
     let owned = HashSet::from([CODEX_ID.to_owned()]);
     let result = scan(
         &sources(&homes),

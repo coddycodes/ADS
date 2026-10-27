@@ -12,7 +12,7 @@ import {
 describe("resolveTerminalFontFamily", () => {
   it("uses the bundled monospaced Nerd Font by default", () => {
     expect(resolveTerminalFontFamily({ mode: "bundled" })).toBe(
-      '"BiBCode JetBrainsMono Nerd Font Mono", monospace',
+      '"Coddy Studio JetBrainsMono Nerd Font Mono", monospace',
     );
   });
 

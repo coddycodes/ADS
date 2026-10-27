@@ -732,13 +732,13 @@ impl PullRequestHost for GitLabHost {
 
 fn gitlab_read_timing() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("BIBCODE_PULL_REQUESTS_TIMING").is_some())
+    *ENABLED.get_or_init(|| std::env::var_os("CODDY_STUDIO_PULL_REQUESTS_TIMING").is_some())
 }
 
 fn trace_gitlab_read(operation: &str, call: &str, started: std::time::Instant) {
     if gitlab_read_timing() {
         eprintln!(
-            "bibcode_pull_requests operation={operation} call={call} elapsed_ms={}",
+            "coddy_studio_pull_requests operation={operation} call={call} elapsed_ms={}",
             started.elapsed().as_millis()
         );
     }

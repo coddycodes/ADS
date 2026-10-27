@@ -10,9 +10,9 @@ import {
   setDesktopUiWindowSize,
 } from "../support/ui-state.ts";
 
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
-const projectPath = process.env.BIBCODE_E2E_PROJECT_PATH;
-const stateRoot = process.env.BIBCODE_HOME;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
+const projectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH;
+const stateRoot = process.env.CODDY_STUDIO_HOME;
 if (!artifactDirectory || !projectPath || !stateRoot) {
   throw new Error("The packaged desktop UI fixture environment was not prepared.");
 }
@@ -93,12 +93,12 @@ describe("packaged terminal font support", () => {
 
     const fontProbe = await browser.executeAsync((probe, done) => {
       void document.fonts
-        .load('12px "BiBCode JetBrainsMono Nerd Font Mono"', probe)
+        .load('12px "Coddy Studio JetBrainsMono Nerd Font Mono"', probe)
         .then(() => {
           done({
-            loaded: document.fonts.check('12px "BiBCode JetBrainsMono Nerd Font Mono"', probe),
+            loaded: document.fonts.check('12px "Coddy Studio JetBrainsMono Nerd Font Mono"', probe),
             familyRegistered: [...document.fonts].some(
-              (face) => face.family === "BiBCode JetBrainsMono Nerd Font Mono",
+              (face) => face.family === "Coddy Studio JetBrainsMono Nerd Font Mono",
             ),
           });
         })

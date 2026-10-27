@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerConfig } from "@bibcode/contracts";
+import type { EnvironmentId, ServerConfig } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";

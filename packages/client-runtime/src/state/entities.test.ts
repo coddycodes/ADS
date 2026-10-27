@@ -9,7 +9,7 @@ import {
   TurnId,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";

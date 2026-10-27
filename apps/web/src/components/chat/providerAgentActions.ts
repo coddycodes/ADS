@@ -1,4 +1,4 @@
-import type { DefaultAgentSelection, ServerProvider, ServerSettings } from "@bibcode/contracts";
+import type { DefaultAgentSelection, ServerProvider, ServerSettings } from "@coddy/contracts";
 
 import {
   applyProviderInstanceSettings,

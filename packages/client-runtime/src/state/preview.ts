@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@bibcode/contracts";
+import { WS_METHODS } from "@coddy/contracts";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
 

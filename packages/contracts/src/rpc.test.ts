@@ -39,7 +39,7 @@ import {
   WsWorktreeCreatePanelRpc,
   WsWorktreeRetargetRpc,
   WsWorktreeGetRemovalPlanRpc,
-  WsWorktreeRemoveFromBibCodeRpc,
+  WsWorktreeRemoveFromCoddyStudioRpc,
   WsWorktreeRemoveRpc,
 } from "./rpc.ts";
 
@@ -64,7 +64,7 @@ const decodeWorktreeRemovalPlan = Schema.decodeUnknownSync(
   WsWorktreeGetRemovalPlanRpc.successSchema,
 );
 const decodeWorktreeRemovalResult = Schema.decodeUnknownSync(
-  WsWorktreeRemoveFromBibCodeRpc.successSchema,
+  WsWorktreeRemoveFromCoddyStudioRpc.successSchema,
 );
 const decodeWorktreeRemovalError = Schema.decodeUnknownSync(WsWorktreeRemoveRpc.errorSchema);
 const decodeRefreshProviderUsageError = Schema.decodeUnknownSync(
@@ -120,7 +120,7 @@ describe("WS_METHODS", () => {
     expect(WS_METHODS.worktreeCreatePanel).toBe("worktree.createPanel");
     expect(WS_METHODS.worktreeRetarget).toBe("worktree.retarget");
     expect(WS_METHODS.worktreeGetRemovalPlan).toBe("worktree.getRemovalPlan");
-    expect(WS_METHODS.worktreeRemoveFromBibCode).toBe("worktree.removeFromBibCode");
+    expect(WS_METHODS.worktreeRemoveFromCoddyStudio).toBe("worktree.removeFromCoddyStudio");
     expect(WS_METHODS.worktreeRemove).toBe("worktree.remove");
   });
 });
@@ -198,7 +198,7 @@ describe("individual RPC definitions", () => {
       WsVcsPullRpc,
       WsProjectsReadFileRpc,
       WsReviewGetDiffPreviewRpc,
-      WsWorktreeRemoveFromBibCodeRpc,
+      WsWorktreeRemoveFromCoddyStudioRpc,
       WsWorktreeRemoveRpc,
     ]) {
       expect(() => Schema.decodeUnknownSync(rpc.errorSchema)(identity)).not.toThrow();
@@ -225,7 +225,7 @@ describe("individual RPC definitions", () => {
         WsWorktreeCreatePanelRpc,
         WsWorktreeRetargetRpc,
         WsWorktreeGetRemovalPlanRpc,
-        WsWorktreeRemoveFromBibCodeRpc,
+        WsWorktreeRemoveFromCoddyStudioRpc,
         WsWorktreeRemoveRpc,
       ]) {
         expect(() => Schema.decodeUnknownSync(rpc.errorSchema)(failure)).not.toThrow();
@@ -268,7 +268,7 @@ describe("individual RPC definitions", () => {
     expect(WsWorktreeCreatePanelRpc._tag).toBe(WS_METHODS.worktreeCreatePanel);
     expect(WsWorktreeRetargetRpc._tag).toBe(WS_METHODS.worktreeRetarget);
     expect(WsWorktreeGetRemovalPlanRpc._tag).toBe(WS_METHODS.worktreeGetRemovalPlan);
-    expect(WsWorktreeRemoveFromBibCodeRpc._tag).toBe(WS_METHODS.worktreeRemoveFromBibCode);
+    expect(WsWorktreeRemoveFromCoddyStudioRpc._tag).toBe(WS_METHODS.worktreeRemoveFromCoddyStudio);
     expect(WsWorktreeRemoveRpc._tag).toBe(WS_METHODS.worktreeRemove);
   });
 
@@ -338,7 +338,7 @@ describe("WsRpcGroup", () => {
       WsWorktreeCreatePanelRpc,
       WsWorktreeRetargetRpc,
       WsWorktreeGetRemovalPlanRpc,
-      WsWorktreeRemoveFromBibCodeRpc,
+      WsWorktreeRemoveFromCoddyStudioRpc,
       WsWorktreeRemoveRpc,
     ];
     for (const rpc of members) {
@@ -500,8 +500,8 @@ describe("WsRpcGroup", () => {
     expect(WsRpcGroup.requests.get(WS_METHODS.worktreeGetRemovalPlan)).toBe(
       WsWorktreeGetRemovalPlanRpc,
     );
-    expect(WsRpcGroup.requests.get(WS_METHODS.worktreeRemoveFromBibCode)).toBe(
-      WsWorktreeRemoveFromBibCodeRpc,
+    expect(WsRpcGroup.requests.get(WS_METHODS.worktreeRemoveFromCoddyStudio)).toBe(
+      WsWorktreeRemoveFromCoddyStudioRpc,
     );
     expect(WsRpcGroup.requests.get(WS_METHODS.worktreeRemove)).toBe(WsWorktreeRemoveRpc);
   });

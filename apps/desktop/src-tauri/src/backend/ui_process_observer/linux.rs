@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use bibcode_server::diagnostics::{
+use coddy_studio_server::diagnostics::{
     DesktopUiObservation, DesktopUiProcessObserver, NativeProcessRecord, NativeProcessSampler,
     ProcessIdentity, ProcessRow, UiCoverage, UiCoverageStatus,
 };
@@ -297,7 +297,7 @@ mod tests {
         sync::Arc,
     };
 
-    use bibcode_server::diagnostics::{
+    use coddy_studio_server::diagnostics::{
         NativeProcessRecord, NativeProcessSampler, ProcessIdentity, ProcessRow, UiCoverageStatus,
     };
 
@@ -348,7 +348,7 @@ mod tests {
         rows: Arc<[ProcessRow]>,
         records: HashMap<u32, NativeProcessRecord>,
         executables: HashMap<u32, PathBuf>,
-    ) -> bibcode_server::diagnostics::DesktopUiObservation {
+    ) -> coddy_studio_server::diagnostics::DesktopUiObservation {
         build_observation_with(
             &rows,
             server_identity(),
@@ -386,7 +386,7 @@ mod tests {
         // Mutation caught: accepting only one role, traversing input order, or returning
         // non-snapshot identities loses or misorders a validated WebKitGTK helper.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(
                 501,
                 SERVER_PID,
@@ -435,7 +435,7 @@ mod tests {
         // Mutation caught: validating duplicate snapshot hints repeatedly or collecting into a
         // Vec can perform unbounded duplicate work and return the same stable identity twice.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(503, SERVER_PID, 203, "/usr/lib/WebKitGPUProcess"),
             row(501, SERVER_PID, 201, "/usr/lib/WebKitWebProcess"),
             row(503, SERVER_PID, 203, "/usr/lib/WebKitGPUProcess --shared"),
@@ -485,7 +485,7 @@ mod tests {
             SERVER_PID,
             1,
             SERVER_STARTED_AT,
-            "/app/bin/bibcode-desktop",
+            "/app/bin/coddy-studio-desktop",
         )];
         for pid in (500..=565).rev() {
             rows.push(row(
@@ -541,7 +541,7 @@ mod tests {
             SERVER_PID,
             1,
             SERVER_STARTED_AT,
-            "/app/bin/bibcode-desktop",
+            "/app/bin/coddy-studio-desktop",
         )];
         for started_at in (200..=207).rev() {
             rows.push(row(
@@ -582,7 +582,12 @@ mod tests {
     fn linux_ui_classifies_duplicate_hints_independently_of_row_order() {
         // Mutation caught: deduplicating before hint classification lets an ordinary duplicate
         // suppress a later valid WebKit hint for the same snapshot identity.
-        let server = row(SERVER_PID, 1, SERVER_STARTED_AT, "/app/bin/bibcode-desktop");
+        let server = row(
+            SERVER_PID,
+            1,
+            SERVER_STARTED_AT,
+            "/app/bin/coddy-studio-desktop",
+        );
         let ordinary = row(501, SERVER_PID, 200, "/usr/bin/ordinary-helper");
         let web = row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess");
 
@@ -629,7 +634,12 @@ mod tests {
     fn linux_ui_rejects_conflicting_duplicate_hints_in_either_order() {
         // Mutation caught: first-row-wins deduplication validates one of two conflicting role
         // hints, making coverage depend on equal-identity snapshot row order.
-        let server = row(SERVER_PID, 1, SERVER_STARTED_AT, "/app/bin/bibcode-desktop");
+        let server = row(
+            SERVER_PID,
+            1,
+            SERVER_STARTED_AT,
+            "/app/bin/coddy-studio-desktop",
+        );
         let web = row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess");
         let gpu = row(501, SERVER_PID, 200, "/usr/lib/WebKitGPUProcess");
 
@@ -675,7 +685,12 @@ mod tests {
     fn linux_ui_rejects_supported_and_unsupported_duplicate_hints_in_either_order() {
         // Mutation caught: merging a supported and unsupported WebKit-like hint by first-row
         // precedence can validate an ambiguous identity or vary with snapshot order.
-        let server = row(SERVER_PID, 1, SERVER_STARTED_AT, "/app/bin/bibcode-desktop");
+        let server = row(
+            SERVER_PID,
+            1,
+            SERVER_STARTED_AT,
+            "/app/bin/coddy-studio-desktop",
+        );
         let web = row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess");
         let model = row(501, SERVER_PID, 200, "/usr/lib/WebKitModelProcess");
 
@@ -722,7 +737,7 @@ mod tests {
         // Mutation caught: machine-wide executable-name discovery claims another application's
         // exact WebKitGTK helper even though it is not an immediate server child.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(700, 1, 120, "/opt/another-app"),
             row(701, 700, 200, "/usr/lib/WebKitWebProcess"),
         ]);
@@ -753,7 +768,7 @@ mod tests {
         // Mutation caught: arbitrary descendant traversal crosses provider and terminal roots
         // and misattributes their WebKit helpers to Core UI.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(600, SERVER_PID, 150, "/opt/provider"),
             row(601, 600, 201, "/usr/lib/WebKitNetworkProcess"),
             row(700, SERVER_PID, 151, "/usr/bin/terminal"),
@@ -786,7 +801,7 @@ mod tests {
         // Mutation caught: matching only the server PID allows a reused process snapshot to
         // authorize child inspection for a different server lifetime.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 99, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 99, "/app/bin/coddy-studio-desktop"),
             row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess"),
         ]);
         let record_queries = RefCell::new(Vec::new());
@@ -823,7 +838,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
         // Mutation caught: trusting PPID alone accepts a child snapshot older than its current
         // parent, which is impossible without identity reuse or stale snapshot data.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(501, SERVER_PID, 99, "/usr/lib/WebKitWebProcess"),
         ]);
         let record_queries = RefCell::new(Vec::new());
@@ -864,7 +879,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
             ("changed start", record(501, SERVER_PID, 201)),
         ] {
             let rows: Arc<[ProcessRow]> = Arc::from([
-                row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+                row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
                 row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess"),
             ]);
             let executable_queries = RefCell::new(Vec::new());
@@ -894,7 +909,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
         // Mutation caught: omitting the second process-record read accepts an executable after
         // the candidate PID changes identity during path resolution.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess"),
         ]);
         let mut records = VecDeque::from([
@@ -919,7 +934,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
         // Mutation caught: accepting any supported executable allows a Web command hint to
         // claim a GPU process after PID reuse or malformed snapshot data.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(
                 501,
                 SERVER_PID,
@@ -965,7 +980,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
             ("permission-denial", Failure::PermissionDenial),
         ] {
             let rows: Arc<[ProcessRow]> = Arc::from([
-                row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+                row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
                 row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess"),
             ]);
             let expected = record(501, SERVER_PID, 200);
@@ -1007,7 +1022,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
         // Mutation caught: one candidate failure must not discard a separately validated helper
         // or incorrectly report complete coverage.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess"),
             row(502, SERVER_PID, 201, "/usr/lib/WebKitNetworkProcess"),
         ]);
@@ -1043,7 +1058,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
         // Mutation caught: prefix/suffix recognition without the strict role allowlist claims a
         // newly introduced WebKit role whose ownership contract has not been approved.
         let rows_with_peer: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(501, SERVER_PID, 200, "/usr/lib/WebKitWebProcess"),
             row(504, SERVER_PID, 204, "/usr/lib/WebKitModelProcess"),
         ]);
@@ -1075,7 +1090,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
         );
 
         let unknown_only: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(504, SERVER_PID, 204, "/usr/lib/WebKitModelProcess"),
         ]);
         let observation = build_observation_with(
@@ -1102,7 +1117,7 @@ usage is included, but local UI/WebView usage could not be associated reliably."
         // Mutation caught: treating an empty candidate set as complete produces a healthy-looking
         // zero instead of explicitly unavailable local UI coverage.
         let rows: Arc<[ProcessRow]> = Arc::from([
-            row(SERVER_PID, 1, 100, "/app/bin/bibcode-desktop"),
+            row(SERVER_PID, 1, 100, "/app/bin/coddy-studio-desktop"),
             row(
                 501,
                 SERVER_PID,

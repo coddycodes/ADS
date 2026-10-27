@@ -3,9 +3,9 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use bibcode_server::terminal::{PortablePtyBackend, PtyBackend, PtySpawnInput};
+use coddy_studio_server::terminal::{PortablePtyBackend, PtyBackend, PtySpawnInput};
 
-const OUTPUT_MARKER: &str = "BIBCODE_GUI_PTY_OUTPUT";
+const OUTPUT_MARKER: &str = "CODDY_STUDIO_GUI_PTY_OUTPUT";
 
 #[tokio::test]
 async fn gui_desktop_keeps_batch_terminal_attached_to_embedded_pty() {

@@ -1,4 +1,4 @@
-import type { GitManagerMergePreview, GitManagerRefEntry } from "@bibcode/contracts";
+import type { GitManagerMergePreview, GitManagerRefEntry } from "@coddy/contracts";
 
 /** Display name for a merge ref: drops `refs/heads/` and `refs/remotes/`. */
 export function shortRefName(ref: string): string {

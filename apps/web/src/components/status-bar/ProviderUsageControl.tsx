@@ -1,4 +1,4 @@
-import type { StatusBarUsageMode } from "@bibcode/contracts/settings";
+import type { StatusBarUsageMode } from "@coddy/contracts/settings";
 import { useState } from "react";
 
 import { ClaudeAI, OpenAI } from "../Icons";

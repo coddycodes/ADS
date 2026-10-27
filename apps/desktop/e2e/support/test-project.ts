@@ -6,16 +6,16 @@ import * as NodePath from "node:path";
 
 import { desktopActivityFixture, desktopActivityMarkerFileName } from "./activity-events.ts";
 
-const FIXTURE_PROJECT_NAME = "BiBCode UI Fixture";
-const STREAMED_RESPONSE = "BiBCode deterministic streamed fixture response.";
-const SLOW_TURN_RELEASE_FILE_NAME = ".bibcode-e2e-slow-turn-release";
+const FIXTURE_PROJECT_NAME = "Coddy Studio UI Fixture";
+const STREAMED_RESPONSE = "Coddy Studio deterministic streamed fixture response.";
+const SLOW_TURN_RELEASE_FILE_NAME = ".coddy-studio-e2e-slow-turn-release";
 
 const nativeActionLogFixtureSource = String.raw`
 import fs from "node:fs";
 
-const path = process.env.BIBCODE_E2E_NATIVE_ACTION_LOG;
+const path = process.env.CODDY_STUDIO_E2E_NATIVE_ACTION_LOG;
 if (!path) {
-  throw new Error("BIBCODE_E2E_NATIVE_ACTION_LOG is required.");
+  throw new Error("CODDY_STUDIO_E2E_NATIVE_ACTION_LOG is required.");
 }
 fs.appendFileSync(path, JSON.stringify({
   action: "openInEditor",
@@ -136,7 +136,7 @@ const composerActivityActor = (revision) => ({
   updatedAt: activityObservedAt(),
   status: { type: "active", activeFlags: [] },
 });
-const fixtureProjectPath = process.env.BIBCODE_E2E_PROJECT_PATH ?? process.cwd();
+const fixtureProjectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH ?? process.cwd();
 const activityMarker = fixtureProjectPath + "/" + ${JSON.stringify(desktopActivityMarkerFileName)};
 const activityMarkerRevision = () => {
   try {
@@ -269,8 +269,8 @@ if (process.argv.includes("app-server") && listenArgumentIndex >= 0) {
       let result = activityResult(message.method, message.params);
       if (message.method === "initialize") {
         result = {
-          userAgent: "bibcode-ui-fixture",
-          codexHome: "/tmp/bibcode-ui-codex",
+          userAgent: "coddy-studio-ui-fixture",
+          codexHome: "/tmp/coddy-studio-ui-codex",
           platformFamily: process.platform === "win32" ? "windows" : "unix",
           platformOs: process.platform,
         };
@@ -303,7 +303,7 @@ if (process.argv.includes("app-server") && listenArgumentIndex >= 0) {
       params: {
         threadId: activity.actor.id,
         turn: {
-          id: "bibcode-ui-reviewer-followup-turn",
+          id: "coddy-studio-ui-reviewer-followup-turn",
           status: "completed",
           startedAt: activityStartedAt,
           completedAt: activityObservedAt(),
@@ -325,9 +325,9 @@ const reader = readline.createInterface({ input: process.stdin, crlfDelay: Infin
 const slowTurnReleasePath = fixtureProjectPath + "/" + ${JSON.stringify(SLOW_TURN_RELEASE_FILE_NAME)};
 // The marker releases a specific turn after reload assertions; the watchdog
 // prevents a failed scenario from leaving its fixture working indefinitely.
-const slowTurnTimeoutMs = Number(process.env.BIBCODE_E2E_SLOW_TURN_MS ?? 60000);
+const slowTurnTimeoutMs = Number(process.env.CODDY_STUDIO_E2E_SLOW_TURN_MS ?? 60000);
 if (!Number.isSafeInteger(slowTurnTimeoutMs) || slowTurnTimeoutMs <= 0) {
-  throw new Error("BIBCODE_E2E_SLOW_TURN_MS must be a positive integer.");
+  throw new Error("CODDY_STUDIO_E2E_SLOW_TURN_MS must be a positive integer.");
 }
 let activeTurnId = null;
 let slowTurnTimer;
@@ -342,7 +342,7 @@ const completeTurn = (status = "completed") => {
   activeTurnId = null;
   if (turnId === null) return;
   send({ method: "turn/completed", params: {
-    threadId: "bibcode-ui-provider-thread",
+    threadId: "coddy-studio-ui-provider-thread",
     turn: { id: turnId, status }
   } });
 };
@@ -354,8 +354,8 @@ reader.on("line", (line) => {
   switch (message.method) {
     case "initialize":
       send({ id, result: {
-        userAgent: "bibcode-ui-fixture",
-        codexHome: "/tmp/bibcode-ui-codex",
+        userAgent: "coddy-studio-ui-fixture",
+        codexHome: "/tmp/coddy-studio-ui-codex",
         platformFamily: process.platform === "win32" ? "windows" : "unix",
         platformOs: process.platform
       } });
@@ -399,7 +399,7 @@ reader.on("line", (line) => {
       send({ id, result: {
         cwd: message.params?.cwd ?? process.cwd(),
         model: "gpt-5.4",
-        thread: { id: "bibcode-ui-provider-thread" }
+        thread: { id: "coddy-studio-ui-provider-thread" }
       } });
       break;
     case "thread/resume":
@@ -407,7 +407,7 @@ reader.on("line", (line) => {
       send({ id, result: {
         cwd: message.params?.cwd ?? process.cwd(),
         model: "gpt-5.4",
-        thread: { id: "bibcode-ui-provider-thread" }
+        thread: { id: "coddy-studio-ui-provider-thread" }
       } });
       break;
     case "thread/goal/set":
@@ -446,18 +446,18 @@ reader.on("line", (line) => {
         activityRevision = 3;
         if (activityMarker) fs.writeFileSync(activityMarker, "3");
       }
-      const turnId = "bibcode-ui-turn-" + crypto.randomUUID();
+      const turnId = "coddy-studio-ui-turn-" + crypto.randomUUID();
       activeTurnId = turnId;
       appendProviderInput("codex", prompt, "start", turnId);
       send({ id, result: { turn: { id: turnId } } });
       send({ method: "turn/started", params: {
-        threadId: "bibcode-ui-provider-thread",
+        threadId: "coddy-studio-ui-provider-thread",
         turn: { id: turnId }
       } });
       send({ method: "item/agentMessage/delta", params: {
-        threadId: "bibcode-ui-provider-thread",
+        threadId: "coddy-studio-ui-provider-thread",
         turnId,
-        itemId: "bibcode-ui-message-" + turnId,
+        itemId: "coddy-studio-ui-message-" + turnId,
         delta: streamResponse
       } });
       if (prompt.includes("[[slow]]")) {
@@ -511,9 +511,9 @@ export function promptTextFromParts(parts) {
 }
 
 export function appendProviderInput(provider, prompt, kind = "start", turnId) {
-  const path = process.env.BIBCODE_E2E_PROVIDER_INPUT_LOG;
+  const path = process.env.CODDY_STUDIO_E2E_PROVIDER_INPUT_LOG;
   if (!path) {
-    throw new Error("BIBCODE_E2E_PROVIDER_INPUT_LOG is required.");
+    throw new Error("CODDY_STUDIO_E2E_PROVIDER_INPUT_LOG is required.");
   }
   NodeFS.appendFileSync(path, JSON.stringify({
     provider,
@@ -609,13 +609,13 @@ reader.on("line", (line) => {
   if (message.type !== "user") {
     return;
   }
-  const sessionId = message.session_id ?? "bibcode-ui-claude-session";
+  const sessionId = message.session_id ?? "coddy-studio-ui-claude-session";
   appendProviderInput("claudeAgent", promptTextFromParts(message.message?.content));
   send(message);
   send({
     type: "stream_event",
     session_id: sessionId,
-    uuid: "bibcode-ui-claude-stream",
+    uuid: "coddy-studio-ui-claude-stream",
     parent_tool_use_id: null,
     event: {
       type: "content_block_delta",
@@ -630,7 +630,7 @@ reader.on("line", (line) => {
     errors: [],
     stop_reason: "end_turn",
     session_id: sessionId,
-    uuid: "bibcode-ui-claude-result"
+    uuid: "coddy-studio-ui-claude-result"
   });
 });
 `.trimStart();
@@ -679,7 +679,7 @@ reader.on("line", (line) => {
     case "session/new":
     case "session/load":
       send(message.id, {
-        sessionId: message.params?.sessionId ?? "bibcode-ui-cursor-session",
+        sessionId: message.params?.sessionId ?? "coddy-studio-ui-cursor-session",
         configOptions: [{
           id: "model",
           name: "Model",
@@ -743,7 +743,7 @@ reader.on("line", (line) => {
     case "session/create":
     case "session/load":
       send(message.id, {
-        sessionId: message.params?.sessionId ?? "bibcode-ui-grok-session",
+        sessionId: message.params?.sessionId ?? "coddy-studio-ui-grok-session",
         modes: {
           currentModeId: "code",
           availableModes: [
@@ -855,16 +855,16 @@ const server = NodeHTTP.createServer(async (request, response) => {
   }
   if (request.method === "POST" && pathname === "/session") {
     await readJson(request);
-    sendJson(response, { id: "bibcode-ui-opencode-session" });
+    sendJson(response, { id: "coddy-studio-ui-opencode-session" });
     return;
   }
-  if (request.method === "GET" && pathname === "/session/bibcode-ui-opencode-session") {
-    sendJson(response, { id: "bibcode-ui-opencode-session" });
+  if (request.method === "GET" && pathname === "/session/coddy-studio-ui-opencode-session") {
+    sendJson(response, { id: "coddy-studio-ui-opencode-session" });
     return;
   }
   if (
     request.method === "POST" &&
-    pathname === "/session/bibcode-ui-opencode-session/prompt_async"
+    pathname === "/session/coddy-studio-ui-opencode-session/prompt_async"
   ) {
     const body = await readJson(request);
     appendProviderInput("opencode", promptTextFromParts(body.parts));
@@ -876,7 +876,7 @@ const server = NodeHTTP.createServer(async (request, response) => {
       broadcast({
         type: "session.status",
         properties: {
-          sessionID: "bibcode-ui-opencode-session",
+          sessionID: "coddy-studio-ui-opencode-session",
           status: { type: "idle" }
         }
       });
@@ -885,7 +885,7 @@ const server = NodeHTTP.createServer(async (request, response) => {
   }
   if (
     request.method === "POST" &&
-    pathname === "/session/bibcode-ui-opencode-session/command"
+    pathname === "/session/coddy-studio-ui-opencode-session/command"
   ) {
     const body = await readJson(request);
     const commandText = "/" + String(body.command ?? "") +
@@ -899,7 +899,7 @@ const server = NodeHTTP.createServer(async (request, response) => {
       broadcast({
         type: "session.status",
         properties: {
-          sessionID: "bibcode-ui-opencode-session",
+          sessionID: "coddy-studio-ui-opencode-session",
           status: { type: "idle" }
         }
       });
@@ -910,14 +910,14 @@ const server = NodeHTTP.createServer(async (request, response) => {
     sendJson(response, {});
     return;
   }
-  const messageLookup = /^\/session\/bibcode-ui-opencode-session\/message\/([^/]+)$/.exec(pathname);
+  const messageLookup = /^\/session\/coddy-studio-ui-opencode-session\/message\/([^/]+)$/.exec(pathname);
   if (request.method === "GET" && messageLookup) {
     const parts = deliveredMessages.get(messageLookup[1]);
     if (parts === undefined) {
       sendJson(response, { name: "NotFoundError" }, 404);
     } else {
       sendJson(response, {
-        info: { id: messageLookup[1], sessionID: "bibcode-ui-opencode-session", role: "user" },
+        info: { id: messageLookup[1], sessionID: "coddy-studio-ui-opencode-session", role: "user" },
         parts
       });
     }
@@ -931,7 +931,7 @@ const server = NodeHTTP.createServer(async (request, response) => {
     sendJson(response, {});
     return;
   }
-  if (request.method === "POST" && pathname === "/bibcode-fixture/shutdown") {
+  if (request.method === "POST" && pathname === "/coddy-studio-fixture/shutdown") {
     sendJson(response, { shuttingDown: true });
     setTimeout(close, 0);
     return;
@@ -987,20 +987,20 @@ function createProviderShims(shimDirectory: string, isWindows: boolean): void {
       const probeCommands =
         provider === "codex"
           ? [
-              '@if "%~1"=="--version" goto bibcode_codex_version',
-              '@if "%~1"=="--help" goto bibcode_codex_help',
-              '@if "%~1"=="app-server" if "%~2"=="--help" goto bibcode_codex_app_server_help',
-              "@goto bibcode_codex_run",
-              ":bibcode_codex_version",
+              '@if "%~1"=="--version" goto coddy_studio_codex_version',
+              '@if "%~1"=="--help" goto coddy_studio_codex_help',
+              '@if "%~1"=="app-server" if "%~2"=="--help" goto coddy_studio_codex_app_server_help',
+              "@goto coddy_studio_codex_run",
+              ":coddy_studio_codex_version",
               "@echo codex-cli 99.0.0",
               "@exit /b 0",
-              ":bibcode_codex_help",
+              ":coddy_studio_codex_help",
               "@echo Usage: codex --remote unix://PATH",
               "@exit /b 0",
-              ":bibcode_codex_app_server_help",
+              ":coddy_studio_codex_app_server_help",
               "@echo Usage: codex app-server --listen unix://PATH",
               "@exit /b 0",
-              ":bibcode_codex_run",
+              ":coddy_studio_codex_run",
             ].join("\r\n")
           : "";
       NodeFS.writeFileSync(
@@ -1090,7 +1090,7 @@ function runGit(projectPath: string, args: ReadonlyArray<string>): void {
       "-C",
       projectPath,
       "-c",
-      "user.name=BiBCode UI Fixture",
+      "user.name=Coddy Studio UI Fixture",
       "-c",
       "user.email=fixture@example.test",
       ...args,
@@ -1135,7 +1135,7 @@ function initializeGitProject(projectPath: string): void {
   NodeFS.mkdirSync(projectPath, { recursive: true });
   NodeFS.writeFileSync(
     NodePath.join(projectPath, "README.md"),
-    "# BiBCode packaged desktop UI fixture\n",
+    "# Coddy Studio packaged desktop UI fixture\n",
   );
   const projectFiles = {
     ".claude/skills/docs/SKILL.md": [
@@ -1167,7 +1167,7 @@ export function completeDesktopUiSlowTurn(projectPath: string, turnId: string): 
 }
 
 function desktopUiHostTemporaryDirectory(): string {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone WDIO fixture selects its automatic run root from the actual host, not the simulated target.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone WDIO fixture selects its automatic run root from the actual host, not the simulated target.
   return NodeOS.platform() === "win32" ? NodeOS.tmpdir() : "/tmp";
 }
 
@@ -1175,15 +1175,15 @@ export function prepareDesktopUiTestContext(
   environment: NodeJS.ProcessEnv = process.env,
   hostTemporaryDirectory: string = desktopUiHostTemporaryDirectory(),
 ): DesktopUiTestContext {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone WDIO fixture injects the detected host into its adapters.
-  const hostPlatform = environment.BIBCODE_E2E_PLATFORM ?? process.platform;
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone WDIO fixture injects the detected host into its adapters.
+  const hostPlatform = environment.CODDY_STUDIO_E2E_PLATFORM ?? process.platform;
   const isWindows = hostPlatform === "win" || hostPlatform === "win32";
   const runRoot =
-    environment.BIBCODE_E2E_RUN_ROOT ??
+    environment.CODDY_STUDIO_E2E_RUN_ROOT ??
     NodeFS.mkdtempSync(NodePath.join(hostTemporaryDirectory, "t4ui-"));
   const artifactDirectory =
-    environment.BIBCODE_E2E_ARTIFACT_DIR ??
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-desktop-ui-artifacts-"));
+    environment.CODDY_STUDIO_E2E_ARTIFACT_DIR ??
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-desktop-ui-artifacts-"));
   const stateRoot = NodePath.join(runRoot, "state");
   const projectPath = NodePath.join(runRoot, "projects with spaces", FIXTURE_PROJECT_NAME);
   const shimDirectory = NodePath.join(runRoot, "provider-shims");
@@ -1217,14 +1217,14 @@ export function prepareDesktopUiTestContext(
   createProviderShims(shimDirectory, isWindows);
   writeProviderSettings(stateRoot, shimDirectory, fixtureUserHomePath, isWindows);
 
-  environment.BIBCODE_E2E_RUN_ROOT = runRoot;
-  environment.BIBCODE_E2E_ARTIFACT_DIR = artifactDirectory;
-  environment.BIBCODE_E2E_PROJECT_PATH = projectPath;
-  environment.BIBCODE_E2E_SHIM_DIRECTORY = shimDirectory;
-  environment.BIBCODE_E2E_USER_HOME = fixtureUserHomePath;
-  environment.BIBCODE_E2E_NATIVE_ACTION_LOG = nativeActionLogPath;
-  environment.BIBCODE_E2E_PROVIDER_INPUT_LOG = providerInputLogPath;
-  environment.BIBCODE_HOME = stateRoot;
+  environment.CODDY_STUDIO_E2E_RUN_ROOT = runRoot;
+  environment.CODDY_STUDIO_E2E_ARTIFACT_DIR = artifactDirectory;
+  environment.CODDY_STUDIO_E2E_PROJECT_PATH = projectPath;
+  environment.CODDY_STUDIO_E2E_SHIM_DIRECTORY = shimDirectory;
+  environment.CODDY_STUDIO_E2E_USER_HOME = fixtureUserHomePath;
+  environment.CODDY_STUDIO_E2E_NATIVE_ACTION_LOG = nativeActionLogPath;
+  environment.CODDY_STUDIO_E2E_PROVIDER_INPUT_LOG = providerInputLogPath;
+  environment.CODDY_STUDIO_HOME = stateRoot;
   if (isWindows) {
     environment.APPDATA = fixtureAppDataPath;
     environment.LOCALAPPDATA = fixtureLocalAppDataPath;
@@ -1235,8 +1235,8 @@ export function prepareDesktopUiTestContext(
     environment.HOME = fixtureUserHomePath;
   }
   environment.PATH = `${shimDirectory}${NodePath.delimiter}${environment.PATH ?? ""}`;
-  environment.RUST_LOG ??= "bibcode=debug";
-  environment.BIBCODE_LOG = `${environment.BIBCODE_LOG ?? environment.RUST_LOG},bibcode::desktop_e2e=info`;
+  environment.RUST_LOG ??= "coddy-studio=debug";
+  environment.CODDY_STUDIO_LOG = `${environment.CODDY_STUDIO_LOG ?? environment.RUST_LOG},coddy-studio::desktop_e2e=info`;
 
   return {
     runRoot,

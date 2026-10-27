@@ -8,7 +8,7 @@ use tauri::{
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-const CONTEXT_MENU_ID_PREFIX: &str = "bibcode:context-menu:";
+const CONTEXT_MENU_ID_PREFIX: &str = "coddy-studio:context-menu:";
 const CONTEXT_MENU_SELECTION_SETTLE_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]

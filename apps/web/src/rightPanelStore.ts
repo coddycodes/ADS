@@ -8,12 +8,12 @@
  * workspace paths, and diff/plan/files/sourceControl remain singleton
  * surfaces.
  */
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
 import {
   ACTIVITY_ID_MAX_LENGTH,
   type ScopedThreadRef,
   SourceControlProviderKind,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -79,7 +79,7 @@ export type RightPanelSurface =
   | ActivityRightPanelSurface
   | PullRequestRightPanelSurface;
 
-const RIGHT_PANEL_STORAGE_KEY = "bibcode:right-panel-state:v2";
+const RIGHT_PANEL_STORAGE_KEY = "coddy-studio:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 10;
 
 export interface ThreadRightPanelState {

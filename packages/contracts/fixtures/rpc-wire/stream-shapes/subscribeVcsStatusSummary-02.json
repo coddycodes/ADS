@@ -18,7 +18,7 @@
         "provider": "github",
         "number": 42,
         "title": "Fixture summary pull request",
-        "url": "https://github.com/bibcode/fixture/pull/42",
+        "url": "https://github.com/coddy-studio/fixture/pull/42",
         "baseRefName": "main",
         "headRefName": "feature/fixture-summary",
         "state": "open",

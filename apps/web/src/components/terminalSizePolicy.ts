@@ -1,4 +1,4 @@
-import type { TerminalSize } from "@bibcode/contracts";
+import type { TerminalSize } from "@coddy/contracts";
 
 export type TerminalDimensions = Pick<TerminalSize, "cols" | "rows">;
 export type TerminalSizeTrigger = "attach" | "focus" | "pointer" | "keypress" | "layout" | "fit";

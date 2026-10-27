@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerConfig } from "@bibcode/contracts";
+import type { EnvironmentId, ServerConfig } from "@coddy/contracts";
 
 import type { SidebarThreadSummary } from "../../types";
 import { formatWorktreePathForDisplay } from "../../worktreeCleanup";

@@ -5,8 +5,8 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::production::orchestration_rpc::register_orchestration_rpc_with_availability;
-use bibcode_server::{
+use coddy_studio_server::production::orchestration_rpc::register_orchestration_rpc_with_availability;
+use coddy_studio_server::{
     RpcExit, RpcRegistry, ServerConfig, ServerHandle, ServerMessage, ServerRuntime,
     orchestration::{EngineOptions, OrchestrationCommand, OrchestrationEngine, load_snapshot},
     persistence::{CheckpointDiffBlob, Database, NewOrchestrationEvent, run_migrations},
@@ -52,7 +52,7 @@ impl Harness {
             .0
     }
 
-    async fn shutdown(self) -> Result<(), bibcode_server::ServerError> {
+    async fn shutdown(self) -> Result<(), coddy_studio_server::ServerError> {
         self.handle.shutdown();
         let server_result = self.handle.join().await;
         self.engine.shutdown().await;
@@ -1073,7 +1073,7 @@ async fn project_create_resolves_home_relative_paths_and_reuses_canonical_duplic
             );
         }
 
-        let named_user_path = "~bibcode-final-review-user/project";
+        let named_user_path = "~coddy-studio-final-review-user/project";
         rpc_request(
             &mut socket,
             "14",
@@ -2296,7 +2296,7 @@ async fn expect_failure_with_deadline(
             assert_eq!(actual_request_id.as_str(), request_id);
             assert_eq!(cause.len(), 1);
             match &cause[0] {
-                bibcode_server::CauseItem::Fail { error } => error.clone(),
+                coddy_studio_server::CauseItem::Fail { error } => error.clone(),
                 other => panic!("expected fail cause for {request_id}, got {other:?}"),
             }
         }
@@ -2317,7 +2317,7 @@ async fn expect_interrupt_exit(
             assert_eq!(actual_request_id.as_str(), request_id);
             assert_eq!(
                 cause,
-                vec![bibcode_server::CauseItem::Interrupt { fiber_id: None }]
+                vec![coddy_studio_server::CauseItem::Interrupt { fiber_id: None }]
             );
         }
         other => panic!("expected interrupt exit for {request_id}, got {other:?}"),

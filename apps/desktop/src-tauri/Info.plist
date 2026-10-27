@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<!--
-	  Remote BiBCode servers are user-chosen plain-HTTP endpoints on a trusted
+	  Remote Coddy Studio servers are user-chosen plain-HTTP endpoints on a trusted
 	  private network (LAN or tailnet), reached from the webview. Host identity is
 	  pinned and the RPC channel is encrypted (Noise NK) on top of that transport,
 	  so App Transport Security is relaxed for web content only; native code keeps
@@ -17,6 +17,6 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>BiBCode connects to BiBCode servers you pair with on your local network or tailnet.</string>
+	<string>Coddy Studio connects to Coddy Studio servers you pair with on your local network or tailnet.</string>
 </dict>
 </plist>

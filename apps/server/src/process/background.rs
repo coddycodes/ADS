@@ -262,9 +262,9 @@ mod tests {
 
     use super::{configure_background_command, configure_supervised_background_command_wrap};
 
-    const CONSOLE_PROBE_ENV: &str = "BIBCODE_WINDOWS_CONSOLE_PROBE";
-    const CONSOLE_PROBE_MARKER: &str = "BIBCODE_HAS_CONSOLE=";
-    const WAIT_PROBE_ENV: &str = "BIBCODE_WINDOWS_JOB_WAIT_PROBE";
+    const CONSOLE_PROBE_ENV: &str = "CODDY_STUDIO_WINDOWS_CONSOLE_PROBE";
+    const CONSOLE_PROBE_MARKER: &str = "CODDY_STUDIO_HAS_CONSOLE=";
+    const WAIT_PROBE_ENV: &str = "CODDY_STUDIO_WINDOWS_JOB_WAIT_PROBE";
 
     #[test]
     fn windows_child_console_probe() {

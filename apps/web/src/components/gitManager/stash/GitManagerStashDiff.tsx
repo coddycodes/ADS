@@ -3,8 +3,8 @@ import type {
   GitManagerChangedFile,
   GitManagerStashEntry,
   ScopedProjectRef,
-} from "@bibcode/contracts";
-import { GitManagerOperationError } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { GitManagerOperationError } from "@coddy/contracts";
 import { LegendList } from "@legendapp/list/react";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";

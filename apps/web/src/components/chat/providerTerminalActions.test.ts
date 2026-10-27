@@ -10,7 +10,7 @@ import {
   type ProviderOptionDescriptor,
   type ServerSettings,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ProviderInstanceEntry } from "~/providerInstances";

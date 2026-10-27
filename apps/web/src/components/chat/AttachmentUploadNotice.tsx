@@ -1,4 +1,4 @@
-import type { UploadProgress } from "@bibcode/client-runtime/operations";
+import type { UploadProgress } from "@coddy/client-runtime/operations";
 
 import { formatTransferBytes } from "../../lib/formatTransferBytes";
 import { Button } from "../ui/button";

@@ -62,7 +62,7 @@ interface DesktopUiKeyboardOwnership {
 
 declare global {
   interface Window {
-    __bibcodeDesktopUiKeyboardOwnership?: DesktopUiKeyboardOwnership;
+    __coddyStudioDesktopUiKeyboardOwnership?: DesktopUiKeyboardOwnership;
   }
 }
 
@@ -74,7 +74,7 @@ async function cleanupDesktopUiKeyboardOwnership(
 ): Promise<void> {
   await browser.execute(
     (expectedOwnershipId: string, completed: boolean) => {
-      const ownership = window.__bibcodeDesktopUiKeyboardOwnership;
+      const ownership = window.__coddyStudioDesktopUiKeyboardOwnership;
       if (!ownership || ownership.id !== expectedOwnershipId) return;
       if (completed) {
         ownership.restoreFocus = false;
@@ -113,7 +113,7 @@ async function cleanupDesktopUiKeyboardOwnership(
           // Focus restoration failure must not strand temporary ownership globals.
         }
       }
-      delete window.__bibcodeDesktopUiKeyboardOwnership;
+      delete window.__coddyStudioDesktopUiKeyboardOwnership;
     },
     ownershipId,
     operationSucceeded,
@@ -187,11 +187,11 @@ export async function sendFocusedKeyboardKey(
           capture: null,
           synthetic: null,
         };
-        window.__bibcodeDesktopUiKeyboardOwnership = ownership;
+        window.__coddyStudioDesktopUiKeyboardOwnership = ownership;
 
         const probe = document.createElement("div");
         ownership.probe = probe;
-        probe.dataset.bibcodeKeyboardProbe = keyboardKey;
+        probe.dataset.coddyStudioKeyboardProbe = keyboardKey;
         probe.style.cssText =
           "position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;overflow:hidden";
         const first = document.createElement("button");
@@ -248,7 +248,7 @@ export async function sendFocusedKeyboardKey(
 
     const probeSupported = await browser.execute(
       (keyboardKey: DesktopUiKeyboardKey, expectedOwnershipId: string) => {
-        const ownership = window.__bibcodeDesktopUiKeyboardOwnership;
+        const ownership = window.__coddyStudioDesktopUiKeyboardOwnership;
         if (!ownership || ownership.id !== expectedOwnershipId || !ownership.capture) {
           throw new Error("Desktop UI keyboard capability probe lost its ownership.");
         }
@@ -276,7 +276,7 @@ export async function sendFocusedKeyboardKey(
     if (probeSupported) {
       await browser.execute(
         (keyboardKey: DesktopUiKeyboardKey, expectedOwnershipId: string) => {
-          const ownership = window.__bibcodeDesktopUiKeyboardOwnership;
+          const ownership = window.__coddyStudioDesktopUiKeyboardOwnership;
           if (!ownership || ownership.id !== expectedOwnershipId) {
             throw new Error("Desktop UI keyboard target was lost after its capability probe.");
           }
@@ -313,7 +313,7 @@ export async function sendFocusedKeyboardKey(
       await browser.keys(shift ? ["Shift", key] : key);
       const driverEvidence = await browser.execute(
         (expectedOwnershipId: string): DesktopUiDriverKeyEvidence => {
-          const ownership = window.__bibcodeDesktopUiKeyboardOwnership;
+          const ownership = window.__coddyStudioDesktopUiKeyboardOwnership;
           if (!ownership || ownership.id !== expectedOwnershipId || !ownership.capture) {
             throw new Error("Desktop UI keyboard evidence lost its ownership.");
           }
@@ -339,7 +339,7 @@ export async function sendFocusedKeyboardKey(
 
     const syntheticState = await browser.execute(
       (keyboardKey: DesktopUiKeyboardKey, shiftKey: boolean, expectedOwnershipId: string) => {
-        const ownership = window.__bibcodeDesktopUiKeyboardOwnership;
+        const ownership = window.__coddyStudioDesktopUiKeyboardOwnership;
         if (!ownership || ownership.id !== expectedOwnershipId) {
           throw new Error("Desktop UI keyboard fallback lost its ownership.");
         }

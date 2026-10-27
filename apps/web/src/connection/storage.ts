@@ -16,19 +16,19 @@ import {
   removeConnectionRegistrationFromCatalog,
   replaceCatalogValue,
   replaceSavedConnectionCredential,
-} from "@bibcode/client-runtime/platform";
-import { TokenStore } from "@bibcode/client-runtime/authorization";
+} from "@coddy/client-runtime/platform";
+import { TokenStore } from "@coddy/client-runtime/authorization";
 import {
   ConnectionTransientError,
   CredentialStore,
   ProfileStore,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   EnvironmentId,
   OrchestrationShellSnapshot,
   OrchestrationThread,
   ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

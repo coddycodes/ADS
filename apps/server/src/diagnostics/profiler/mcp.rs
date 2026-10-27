@@ -1,4 +1,4 @@
-//! `bibcode profiler mcp`: a stdio MCP server over the profiler directory, for AI agents. One
+//! `coddy-studio profiler mcp`: a stdio MCP server over the profiler directory, for AI agents. One
 //! JSON-RPC 2.0 message per line each way; stdout carries nothing else.
 //!
 //! It serves both protocol eras. A legacy client opens with `initialize` (2025-11-25 or
@@ -174,7 +174,7 @@ fn handle(reader: &Reader, method: &str, params: Option<&Value>) -> Result<Value
 }
 
 fn server_info() -> Value {
-    json!({ "name": "bibcode-profiler", "version": env!("CARGO_PKG_VERSION") })
+    json!({ "name": "coddy-studio-profiler", "version": env!("CARGO_PKG_VERSION") })
 }
 
 fn tools() -> Value {
@@ -214,7 +214,7 @@ fn tools() -> Value {
     json!([
         tool(
             "profiler_status",
-            "BiBCode profiler overview: whether recording is on, disk use, capture capabilities, the newest findings and the newest crash record ids.",
+            "Coddy Studio profiler overview: whether recording is on, disk use, capture capabilities, the newest findings and the newest crash record ids.",
             json!({ "type": "object", "additionalProperties": false }),
             false,
         ),
@@ -623,7 +623,7 @@ mod tests {
         assert_eq!(initialize["result"]["capabilities"], json!({ "tools": {} }));
         assert_eq!(
             initialize["result"]["serverInfo"]["name"],
-            "bibcode-profiler"
+            "coddy-studio-profiler"
         );
         assert!(
             initialize["result"].get("resultType").is_none(),
@@ -866,7 +866,7 @@ mod tests {
         assert_eq!(discover["capabilities"], json!({ "tools": {} }));
         assert_eq!(
             discover["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-            "bibcode-profiler"
+            "coddy-studio-profiler"
         );
         assert_eq!(discover["resultType"], "complete");
         let list = &responses[1]["result"];
@@ -938,14 +938,14 @@ mod tests {
         let panic = json!({
             "v": 1, "seq": 7, "sid": "aaaa1111", "ts": "2026-10-09T10:00:00Z", "kind": "panic",
             "source": "server", "thread": "main", "message": "boom", "location": "src/lib.rs:42",
-            "frames": [{ "module": "bibcode", "debugId": "ABC123", "offset": 0x1010 }],
+            "frames": [{ "module": "coddy-studio", "debugId": "ABC123", "offset": 0x1010 }],
         });
         fs::write(dir.join("events-000000.ndjson"), format!("{panic}\n")).unwrap();
-        let symbols = state.path().join("symbols/bibcode/ABC123");
+        let symbols = state.path().join("symbols/coddy-studio/ABC123");
         fs::create_dir_all(&symbols).unwrap();
         fs::write(
-            symbols.join("bibcode.sym"),
-            "MODULE linux x86_64 ABC123 bibcode\nFILE 0 src/lib.rs\nFUNC 1000 20 0 my_fn\n1000 20 42 0\n",
+            symbols.join("coddy-studio.sym"),
+            "MODULE linux x86_64 ABC123 coddy-studio\nFILE 0 src/lib.rs\nFUNC 1000 20 0 my_fn\n1000 20 42 0\n",
         )
         .unwrap();
         let store = state.path().join("symbols").to_string_lossy().into_owned();

@@ -1,4 +1,4 @@
-import { EnvironmentId, type EnvironmentId as EnvironmentIdType } from "@bibcode/contracts";
+import { EnvironmentId, type EnvironmentId as EnvironmentIdType } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";

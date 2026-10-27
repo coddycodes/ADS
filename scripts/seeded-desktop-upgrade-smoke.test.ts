@@ -11,8 +11,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessPlatform } from "@bibcode/shared/hostProcess";
-import { AuthPairingLink } from "@bibcode/contracts";
+import { HostProcessPlatform } from "@coddy/shared/hostProcess";
+import { AuthPairingLink } from "@coddy/contracts";
 import { parse as parseToml, type TomlTable } from "smol-toml";
 import {
   releasePackageFiles,
@@ -71,13 +71,13 @@ import {
 } from "./seeded-desktop-upgrade-smoke.ts";
 
 const absolute = (...parts: ReadonlyArray<string>): string =>
-  NodePath.resolve("/tmp/bibcode-upgrade-smoke", ...parts);
+  NodePath.resolve("/tmp/coddy-studio-upgrade-smoke", ...parts);
 
 const decodePairingLink = Schema.decodeUnknownSync(Schema.toCodecJson(AuthPairingLink));
 const repositoryRoot = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 
 describe("private held upload receipt and cleanup", () => {
-  const directory = "bibcode-update-witness-00000000-0000-4000-8000-000000000001";
+  const directory = "coddy-studio-update-witness-00000000-0000-4000-8000-000000000001";
   const receipt = {
     version: 1 as const,
     relativeDirectory: directory,
@@ -213,7 +213,7 @@ describe("private held upload receipt and cleanup", () => {
       await NodeFS.promises.mkdir(target);
       await NodeFS.promises.writeFile(NodePath.join(target, "protection-witness.txt"), "o");
       await NodeFS.promises.writeFile(
-        NodePath.join(target, ".protection-witness.txt.1-2-3.bibcode-upload.part"),
+        NodePath.join(target, ".protection-witness.txt.1-2-3.coddy-studio-upload.part"),
         "o",
       );
       const gate = Promise.withResolvers<void>();
@@ -963,7 +963,7 @@ describe("seeded packaging build budgets", () => {
           args: [
             "run",
             "--filter",
-            "@bibcode/desktop",
+            "@coddy/desktop",
             "build",
             "--features",
             "desktop-e2e",
@@ -1184,24 +1184,24 @@ describe("seeded packaged desktop upgrade harness", () => {
     expect(productVersionFromExecutableBytes(Buffer.from("ProductVersion"))).toBeNull();
   });
 
-  it("sees the updater's bibcode-desktop installer while it runs", async () => {
+  it("sees the updater's coddy-studio-desktop installer while it runs", async () => {
     const observation = await observeWindowsInstalledCandidate({
-      appBinaryPath: "C:\\BiBCode\\bibcode-desktop.exe",
+      appBinaryPath: "C:\\Coddy Studio\\coddy-studio-desktop.exe",
       candidateVersion: "0.7.3-upgrade.223",
       readFile: async () => Buffer.from(""),
       listProcesses: async () =>
-        `"bibcode-desktop-0.7.3-upg","4200","Console","1","9,000 K"\r\n"explorer.exe","1","Console","1","1 K"`,
+        `"coddy-studio-desktop-0.7.3-upg","4200","Console","1","9,000 K"\r\n"explorer.exe","1","Console","1","1 K"`,
     });
     expect(observation.installers).toEqual([{ pid: 4200, parentPid: null, path: null }]);
   });
 
   it("matches a truncated installer image without treating a short prefix as that installer", () => {
-    const expected = "BiBCode-0.8.3-upgrade.194-installer.exe";
+    const expected = "Coddy Studio-0.8.3-upgrade.194-installer.exe";
     const truncated = expected.slice(0, 25);
     const csv = [
       `"${truncated}","592","Console","1","12,345 K"`,
       `"${expected}","593","Console","1","12,345 K"`,
-      `"BiBCode","9","Console","1","1 K"`,
+      `"Coddy Studio","9","Console","1","1 K"`,
       `"notepad.exe","11","Console","1","1 K"`,
     ].join("\r\n");
     expect(windowsInstallerProcesses(csv, expected)).toEqual([
@@ -1214,7 +1214,7 @@ describe("seeded packaged desktop upgrade harness", () => {
     const version = "0.8.3-upgrade.194";
     const bytes = windowsVersionResource(version);
     const installed = await observeWindowsInstalledCandidate({
-      appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode.exe",
+      appBinaryPath: "C:\\Program Files\\Coddy Studio\\coddy-studio.exe",
       candidateVersion: version,
       readFile: async () => bytes,
       listProcesses: async () => `"notepad.exe","11"\r\n`,
@@ -1269,7 +1269,7 @@ describe("seeded packaged desktop upgrade harness", () => {
       candidateVersion: version,
       readFile: async () => bytes,
       listProcesses: async () => {
-        const image = "BiBCode-0.8.3-upgrade.194-installer.exe".slice(0, 25);
+        const image = "Coddy Studio-0.8.3-upgrade.194-installer.exe".slice(0, 25);
         return `"${image}","592"\r\n`;
       },
     });
@@ -1281,11 +1281,11 @@ describe("seeded packaged desktop upgrade harness", () => {
     const root = await NodeFS.promises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "windows-handoff-"));
     try {
       const version = "0.8.3-upgrade.194";
-      const installer = "BiBCode-0.8.3-upgrade.194-installer.exe".slice(0, 25);
+      const installer = "Coddy Studio-0.8.3-upgrade.194-installer.exe".slice(0, 25);
       let reads = 0;
       let now = 0;
       await waitForWindowsInstalledCandidate({
-        appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode.exe",
+        appBinaryPath: "C:\\Program Files\\Coddy Studio\\coddy-studio.exe",
         candidateVersion: version,
         evidenceDirectory: root,
         intervalMs: 10,
@@ -1323,7 +1323,7 @@ describe("seeded packaged desktop upgrade harness", () => {
       now = 0;
       await expect(
         waitForWindowsInstalledCandidate({
-          appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode.exe",
+          appBinaryPath: "C:\\Program Files\\Coddy Studio\\coddy-studio.exe",
           candidateVersion: version,
           evidenceDirectory: root,
           intervalMs: 10,
@@ -1417,7 +1417,7 @@ describe("seeded packaged desktop upgrade harness", () => {
 
   it("generates a syntactically valid isolated remote-install phase", async () => {
     const directory = await NodeFS.promises.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-remote-spec-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-remote-spec-"),
     );
     try {
       const spec = createSeededUpgradeDriverSpec({
@@ -1542,14 +1542,14 @@ describe("seeded packaged desktop upgrade harness", () => {
           {
             pid: 10,
             comm: "RemoteLane",
-            environ: "BIBCODE_HOME=/tmp/remote/data\u0000HOME=/home/test\u0000",
+            environ: "CODDY_STUDIO_HOME=/tmp/remote/data\u0000HOME=/home/test\u0000",
           },
           {
             pid: 11,
-            comm: "bibcode-desktop",
-            environ: "BIBCODE_HOME=/tmp/remote/data-other\u0000",
+            comm: "coddy-studio-desktop",
+            environ: "CODDY_STUDIO_HOME=/tmp/remote/data-other\u0000",
           },
-          { pid: 12, comm: "bibcode-desktop", environ: "HOME=/home/user\u0000" },
+          { pid: 12, comm: "coddy-studio-desktop", environ: "HOME=/home/user\u0000" },
         ],
         "/tmp/remote/data",
       ),
@@ -1562,31 +1562,31 @@ describe("seeded packaged desktop upgrade harness", () => {
   it("targets only the exact updater-restarted application on every host", () => {
     expect(
       restartedApplicationCleanupPlan(
-        String.raw`C:\Program Files\BiBCode\bibcode-desktop.exe`,
+        String.raw`C:\Program Files\Coddy Studio\coddy-studio-desktop.exe`,
         "win",
       ),
     ).toEqual({
-      args: ["/F", "/T", "/IM", "bibcode-desktop.exe"],
+      args: ["/F", "/T", "/IM", "coddy-studio-desktop.exe"],
       command: "taskkill.exe",
     });
     expect(
       restartedApplicationCleanupPlan(
-        "/private/tmp/BiBCode (test).app/Contents/MacOS/bibcode-desktop",
+        "/private/tmp/Coddy Studio (test).app/Contents/MacOS/coddy-studio-desktop",
         "mac",
       ),
     ).toEqual({
-      args: ["-TERM", "-x", "bibcode-desktop"],
+      args: ["-TERM", "-x", "coddy-studio-desktop"],
       command: "pkill",
     });
-    expect(restartedApplicationCleanupPlan("/tmp/installed/BiBCode.AppImage", "linux")).toEqual({
-      args: ["-TERM", "-x", "bibcode-desktop"],
+    expect(restartedApplicationCleanupPlan("/tmp/installed/Coddy Studio.AppImage", "linux")).toEqual({
+      args: ["-TERM", "-x", "coddy-studio-desktop"],
       command: "pkill",
     });
   });
 
   it("canonicalizes symlinked work roots before installing an updater target", async () => {
     const temporaryBase = await NodeFS.promises.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-upgrade-canonical-owner-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-upgrade-canonical-owner-"),
     );
     try {
       const root = await NodeFS.promises.mkdtemp(NodePath.join(temporaryBase, "fixture-"));
@@ -1610,7 +1610,7 @@ describe("seeded packaged desktop upgrade harness", () => {
 
   it("removes only the generated dependency tree before worktree cleanup", async () => {
     const checkout = await NodeFS.promises.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-upgrade-cleanup-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-upgrade-cleanup-"),
     );
     try {
       await NodeFS.promises.mkdir(NodePath.join(checkout, "node_modules", ".pnpm", "deep"), {
@@ -1832,11 +1832,11 @@ describe("seeded packaged desktop upgrade harness", () => {
         );
         expect(
           (lock.package as TomlTable[])
-            .filter((pkg) => ["bibcode-desktop", "bibcode-server"].includes(String(pkg.name)))
+            .filter((pkg) => ["coddy-studio-desktop", "coddy-studio-server"].includes(String(pkg.name)))
             .map((pkg) => [pkg.name, pkg.version]),
         ).toEqual([
-          ["bibcode-desktop", version],
-          ["bibcode-server", version],
+          ["coddy-studio-desktop", version],
+          ["coddy-studio-server", version],
         ]);
       }
       for (const [path, content] of fixture.originals) {
@@ -1912,13 +1912,13 @@ describe("seeded packaged desktop upgrade harness", () => {
   it("builds a deterministic public-key updater overlay without private key material", () => {
     const overlay = buildSeededUpgradeOverlay({
       endpoint: "http://127.0.0.1:4312/latest.json",
-      identifier: "dev.bibcode.upgradesmoke.run-17",
+      identifier: "dev.coddy.studio.upgradesmoke.run-17",
       publicKey: "public-test-key",
       version: "0.3.11",
     });
 
     expect(overlay).toEqual({
-      identifier: "dev.bibcode.upgradesmoke.run-17",
+      identifier: "dev.coddy.studio.upgradesmoke.run-17",
       version: "0.3.11",
       bundle: { createUpdaterArtifacts: true },
       plugins: {
@@ -2116,7 +2116,7 @@ describe("seeded packaged desktop upgrade harness", () => {
   });
 
   it("reaps a timed-out command before rejecting its caller", async () => {
-    const root = await NodeFS.promises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "bibcode-command-"));
+    const root = await NodeFS.promises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "coddy-studio-command-"));
     const pidPath = NodePath.join(root, "pid.txt");
     try {
       const command = process.execPath;
@@ -2150,7 +2150,7 @@ describe("seeded packaged desktop upgrade harness", () => {
 
   it("retains late stdout and waits for close after the normal command exits", async () => {
     const root = await NodeFS.promises.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-command-close-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-command-close-"),
     );
     const finishedPath = NodePath.join(root, "writer-finished");
     const writerSource = `
@@ -2244,7 +2244,7 @@ describe("seeded packaged desktop upgrade harness", () => {
   it("builds a single-platform local manifest from the signed candidate payload", () => {
     expect(
       buildLocalUpdaterManifest({
-        artifact: "BiBCode_0.3.11_x64-setup.exe",
+        artifact: "Coddy Studio_0.3.11_x64-setup.exe",
         baseUrl: "http://127.0.0.1:4312/",
         candidateVersion: "0.3.11",
         signature: "encoded-minisign-signature",
@@ -2252,12 +2252,12 @@ describe("seeded packaged desktop upgrade harness", () => {
       }),
     ).toEqual({
       version: "0.3.11",
-      notes: "BiBCode seeded packaged-upgrade smoke",
+      notes: "Coddy Studio seeded packaged-upgrade smoke",
       pub_date: "2026-01-01T00:00:00Z",
       platforms: {
         "windows-x86_64": {
           signature: "encoded-minisign-signature",
-          url: "http://127.0.0.1:4312/BiBCode_0.3.11_x64-setup.exe",
+          url: "http://127.0.0.1:4312/Coddy Studio_0.3.11_x64-setup.exe",
         },
       },
     });
@@ -2288,7 +2288,7 @@ describe("seeded packaged desktop upgrade harness", () => {
     expect(combined).toContain("browser.waitUntil");
     expect(combined).toContain("getLocalEnvironmentBootstraps");
     expect(combined).toContain("getLocalEnvironmentBearerToken");
-    expect(combined).toContain("/.well-known/bibcode/environment");
+    expect(combined).toContain("/.well-known/coddy-studio/environment");
     expect(combined).toContain("orchestration.dispatchCommand");
     expect(combined).toContain("project.create");
     expect(combined).toContain("orchestration.subscribeShell");
@@ -2331,7 +2331,7 @@ describe("seeded packaged desktop upgrade harness", () => {
       phase: "seed-and-install",
       projectId: "seeded-wsl-project",
       resultPath: absolute("work", "before.json"),
-      workspaceRoot: "/tmp/bibcode-seeded-wsl-project",
+      workspaceRoot: "/tmp/coddy-studio-seeded-wsl-project",
       wsl: true,
     });
 
@@ -2343,7 +2343,7 @@ describe("seeded packaged desktop upgrade harness", () => {
 
   it("normalizes WebDriver requests for the embedded Tauri service", () => {
     const config = createSeededUpgradeWdioConfig({
-      appBinaryPath: absolute("installed", "bibcode-desktop"),
+      appBinaryPath: absolute("installed", "coddy-studio-desktop"),
       artifactDirectory: absolute("evidence"),
       restartTimeoutMs: 120_000,
       specPath: absolute("driver", "seeded-upgrade.e2e.ts"),
@@ -2363,20 +2363,20 @@ describe("windowedApplicationRunning", () => {
   it("finds the relaunched app by its window and ignores windowless helpers", () => {
     expect(
       windowedApplicationRunning(
-        [row("bibcode-desktop.exe", "N/A"), row("bibcode-desktop.exe", "BiBCode")].join("\r\n"),
-        "bibcode-desktop.exe",
+        [row("coddy-studio-desktop.exe", "N/A"), row("coddy-studio-desktop.exe", "Coddy Studio")].join("\r\n"),
+        "coddy-studio-desktop.exe",
       ),
     ).toBe(true);
     expect(
-      windowedApplicationRunning(row("bibcode-desktop.exe", "N/A"), "bibcode-desktop.exe"),
+      windowedApplicationRunning(row("coddy-studio-desktop.exe", "N/A"), "coddy-studio-desktop.exe"),
     ).toBe(false);
-    expect(windowedApplicationRunning(row("other.exe", "BiBCode"), "bibcode-desktop.exe")).toBe(
+    expect(windowedApplicationRunning(row("other.exe", "Coddy Studio"), "coddy-studio-desktop.exe")).toBe(
       false,
     );
     expect(
       windowedApplicationRunning(
         "INFO: No tasks are running which match the specified criteria.",
-        "bibcode-desktop.exe",
+        "coddy-studio-desktop.exe",
       ),
     ).toBe(false);
   });
@@ -2387,7 +2387,7 @@ describe("waitForWindowsRelaunchedApplication", () => {
     let calls = 0;
     let clock = 0;
     await waitForWindowsRelaunchedApplication({
-      appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode-desktop.exe",
+      appBinaryPath: "C:\\Program Files\\Coddy Studio\\coddy-studio-desktop.exe",
       timeoutMs: 10_000,
       now: () => clock,
       sleep: async (milliseconds) => {
@@ -2396,7 +2396,7 @@ describe("waitForWindowsRelaunchedApplication", () => {
       listProcesses: async () => {
         calls += 1;
         if (calls === 1) throw Object.assign(new Error("timed out"), { killed: true });
-        return `"bibcode-desktop.exe","1","Console","1","1 K","Running","u","0:00:01","BiBCode"`;
+        return `"coddy-studio-desktop.exe","1","Console","1","1 K","Running","u","0:00:01","Coddy Studio"`;
       },
     });
     expect(calls).toBe(2);
@@ -2405,7 +2405,7 @@ describe("waitForWindowsRelaunchedApplication", () => {
   it("still fails when the listing cannot run at all", async () => {
     await expect(
       waitForWindowsRelaunchedApplication({
-        appBinaryPath: "bibcode-desktop.exe",
+        appBinaryPath: "coddy-studio-desktop.exe",
         timeoutMs: 10_000,
         listProcesses: async () => {
           throw Object.assign(new Error("spawn tasklist.exe ENOENT"), { code: "ENOENT" });

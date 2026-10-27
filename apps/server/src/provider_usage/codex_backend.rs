@@ -634,7 +634,8 @@ mod tests {
         let sandbox = TestSandbox::new("guard-codex-auth");
         let raw = r#"{"tokens":{"access_token":"fixture-token","account_id":"fixture-account"}}"#;
         if TestSandbox::is_isolated_case(CASE, TEST) {
-            let outside = PathBuf::from(std::env::var_os("BIBCODE_GUARD_CREDENTIAL_HOME").unwrap());
+            let outside =
+                PathBuf::from(std::env::var_os("CODDY_STUDIO_GUARD_CREDENTIAL_HOME").unwrap());
             assert!(read_auth(&outside).await.is_none());
             std::fs::write(sandbox.path("auth.json"), raw).unwrap();
             assert_eq!(
@@ -653,8 +654,14 @@ mod tests {
                 ("TMPDIR", allowed_root.as_os_str()),
                 ("TMP", allowed_root.as_os_str()),
                 ("TEMP", allowed_root.as_os_str()),
-                ("BIBCODE_GUARD_CREDENTIAL_HOME", sandbox.root().as_os_str()),
-                ("BIBCODE_HERMETIC_GUARD", std::ffi::OsStr::new("report")),
+                (
+                    "CODDY_STUDIO_GUARD_CREDENTIAL_HOME",
+                    sandbox.root().as_os_str(),
+                ),
+                (
+                    "CODDY_STUDIO_HERMETIC_GUARD",
+                    std::ffi::OsStr::new("report"),
+                ),
             ],
         );
         assert!(

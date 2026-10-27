@@ -82,7 +82,7 @@ pub(crate) fn locate_sdk(env: &SdkEnv) -> Result<AndroidSdk, Availability> {
             return Err(availability(
                 AvailabilityKind::AdbMissing,
                 format!(
-                    "Android platform-tools are missing from {}. Install them with the Android SDK Manager, then restart the BiBCode server.",
+                    "Android platform-tools are missing from {}. Install them with the Android SDK Manager, then restart the Coddy Studio server.",
                     root.display()
                 ),
             ));
@@ -91,7 +91,7 @@ pub(crate) fn locate_sdk(env: &SdkEnv) -> Result<AndroidSdk, Availability> {
     }
     Err(availability(
         AvailabilityKind::SdkMissing,
-        "No Android SDK found on this server. Set ANDROID_HOME for the BiBCode server to your SDK folder and restart it.".into(),
+        "No Android SDK found on this server. Set ANDROID_HOME for the Coddy Studio server to your SDK folder and restart it.".into(),
     ))
 }
 
@@ -166,7 +166,7 @@ pub(crate) async fn discover(env: &SdkEnv) -> (Availability, Vec<Image>, Option<
 
 fn acceleration_message(os: &str) -> String {
     match os {
-        "linux" => "Hardware acceleration is unavailable. Enable KVM on this server (bare metal or a VM with nested virtualization) and give the BiBCode user access to /dev/kvm.",
+        "linux" => "Hardware acceleration is unavailable. Enable KVM on this server (bare metal or a VM with nested virtualization) and give the Coddy Studio user access to /dev/kvm.",
         "macos" => "Hardware acceleration (Hypervisor.framework) is unavailable on this server.",
         "windows" => "Hardware acceleration is unavailable. Enable the Windows Hypervisor Platform (WHPX) on this server.",
         _ => "Hardware acceleration is unavailable on this server.",

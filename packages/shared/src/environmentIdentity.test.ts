@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { readBiBCodeEnvironmentVariable } from "./environmentIdentity.ts";
+import { readCoddyStudioEnvironmentVariable } from "./environmentIdentity.ts";
 
-describe("BiBCode environment identity", () => {
-  it("reads BiBCode values", () => {
-    expect(readBiBCodeEnvironmentVariable({ BIBCODE_PORT: "1" }, "PORT")).toBe("1");
-    expect(readBiBCodeEnvironmentVariable({}, "PORT")).toBeUndefined();
+describe("Coddy Studio environment identity", () => {
+  it("reads Coddy Studio values", () => {
+    expect(readCoddyStudioEnvironmentVariable({ CODDY_STUDIO_PORT: "1" }, "PORT")).toBe("1");
+    expect(readCoddyStudioEnvironmentVariable({}, "PORT")).toBeUndefined();
   });
 });

@@ -3,7 +3,7 @@ import type {
   PreviewAutomationRequest,
   PreviewAutomationResponse,
   PreviewAutomationStreamEvent,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import {

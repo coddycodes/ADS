@@ -1,5 +1,5 @@
-import { type ThreadId } from "@bibcode/contracts";
-import type { PickedElementPayload, PickedElementStackFrame } from "@bibcode/contracts";
+import { type ThreadId } from "@coddy/contracts";
+import type { PickedElementPayload, PickedElementStackFrame } from "@coddy/contracts";
 
 const ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT = 4000;
 const ELEMENT_CONTEXT_STYLES_LIMIT = 4000;

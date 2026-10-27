@@ -39,7 +39,7 @@ use std::{
     },
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     ServerConfig,
     activity::{
         ActivityCapabilities, ActivityHistoryRecovery, ActivityLifecycle, ActivityProjection,
@@ -678,7 +678,7 @@ impl TerminalLaunchPreparer for PostActivityCheckPausingPreparer {
                     executable: "instrumented-codex".to_owned(),
                     args: input.args,
                     private_env: BTreeMap::from([(
-                        "BIBCODE_ACTIVITY_OBSERVER".to_owned(),
+                        "CODDY_STUDIO_ACTIVITY_OBSERVER".to_owned(),
                         "enabled".to_owned(),
                     )]),
                     observer: Box::new(CountingActivityObserverProxy {
@@ -861,7 +861,7 @@ impl ProviderTerminalObserverFactory for HungProviderFactory {
                 executable: input.launch.executable,
                 args: input.launch.args,
                 private_env: BTreeMap::from([(
-                    "BIBCODE_HUNG_FACTORY_OBSERVER".to_owned(),
+                    "CODDY_STUDIO_HUNG_FACTORY_OBSERVER".to_owned(),
                     "installed".to_owned(),
                 )]),
                 observer: Box::new(HungPreparedObserver {
@@ -1764,7 +1764,7 @@ impl ProviderTerminalObserverFactory for PinningFactory {
                 executable: input.launch.executable,
                 args: input.launch.args,
                 private_env: BTreeMap::from([(
-                    "BIBCODE_PRIVATE_TOKEN".to_owned(),
+                    "CODDY_STUDIO_PRIVATE_TOKEN".to_owned(),
                     "observer-secret".to_owned(),
                 )]),
                 observer: Box::new(RecordingObserver {
@@ -2095,11 +2095,11 @@ async fn lifecycle_prepared_launch_replaces_command_and_notifies_only_after_spaw
             args: vec!["app-server".to_owned()],
             private_env: BTreeMap::from([
                 (
-                    "BIBCODE_PRIVATE_SOCKET".to_owned(),
+                    "CODDY_STUDIO_PRIVATE_SOCKET".to_owned(),
                     "/private/socket".to_owned(),
                 ),
                 (
-                    "BIBCODE_PRIVATE_TOKEN".to_owned(),
+                    "CODDY_STUDIO_PRIVATE_TOKEN".to_owned(),
                     "secret-token".to_owned(),
                 ),
             ]),
@@ -2130,11 +2130,17 @@ async fn lifecycle_prepared_launch_replaces_command_and_notifies_only_after_spaw
     assert_eq!(spawn.args, ["app-server"]);
     assert_eq!(spawn.env.get("PUBLIC").map(String::as_str), Some("visible"));
     assert_eq!(
-        spawn.env.get("BIBCODE_PRIVATE_SOCKET").map(String::as_str),
+        spawn
+            .env
+            .get("CODDY_STUDIO_PRIVATE_SOCKET")
+            .map(String::as_str),
         Some("/private/socket")
     );
     assert_eq!(
-        spawn.env.get("BIBCODE_PRIVATE_TOKEN").map(String::as_str),
+        spawn
+            .env
+            .get("CODDY_STUDIO_PRIVATE_TOKEN")
+            .map(String::as_str),
         Some("secret-token")
     );
 
@@ -2155,7 +2161,7 @@ async fn lifecycle_prepared_launch_replaces_command_and_notifies_only_after_spaw
     backend.latest().emit("secret-token from provider");
     let output = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if let Ok(bibcode_server::terminal::TerminalEvent::Output { data, .. }) =
+            if let Ok(coddy_studio_server::terminal::TerminalEvent::Output { data, .. }) =
                 terminal_events.recv().await
             {
                 break data;
@@ -2166,10 +2172,9 @@ async fn lifecycle_prepared_launch_replaces_command_and_notifies_only_after_spaw
     .expect("redacted output");
     assert!(!output.contains("secret-token"), "{output}");
     let attachment = manager
-        .attach(bibcode_server::terminal::TerminalAttachInput::existing(
-            "thread-1",
-            "terminal-1",
-        ))
+        .attach(
+            coddy_studio_server::terminal::TerminalAttachInput::existing("thread-1", "terminal-1"),
+        )
         .await
         .expect("attach prepared terminal");
     let history = serde_json::to_string(&attachment.initial.history).expect("history JSON");
@@ -2190,7 +2195,7 @@ async fn lifecycle_rejects_client_collision_with_private_environment_without_spa
             executable: "observed-codex".to_owned(),
             args: vec!["app-server".to_owned()],
             private_env: BTreeMap::from([(
-                "BIBCODE_PRIVATE_TOKEN".to_owned(),
+                "CODDY_STUDIO_PRIVATE_TOKEN".to_owned(),
                 "server-secret".to_owned(),
             )]),
             observer: observer.clone(),
@@ -2206,7 +2211,7 @@ async fn lifecycle_rejects_client_collision_with_private_environment_without_spa
     let mut input =
         TerminalOpenInput::new("thread-1", "terminal-1", root.path().to_path_buf(), 80, 24);
     input.env.insert(
-        "BIBCODE_PRIVATE_TOKEN".to_owned(),
+        "CODDY_STUDIO_PRIVATE_TOKEN".to_owned(),
         "client-value".to_owned(),
     );
     input.command = Some(command(true));
@@ -2216,7 +2221,10 @@ async fn lifecycle_rejects_client_collision_with_private_environment_without_spa
         .await
         .expect_err("reserved private environment collision")
         .to_string();
-    assert!(rendered.contains("BIBCODE_PRIVATE_TOKEN"), "{rendered}");
+    assert!(
+        rendered.contains("CODDY_STUDIO_PRIVATE_TOKEN"),
+        "{rendered}"
+    );
     assert!(!rendered.contains("server-secret"), "{rendered}");
     assert!(!rendered.contains("client-value"), "{rendered}");
     assert!(backend.spawns().is_empty());
@@ -2241,7 +2249,7 @@ async fn lifecycle_spawn_failure_cancels_prepared_observer_without_disclosing_pr
             executable: "observed-codex".to_owned(),
             args: vec!["app-server".to_owned()],
             private_env: BTreeMap::from([(
-                "BIBCODE_PRIVATE_TOKEN".to_owned(),
+                "CODDY_STUDIO_PRIVATE_TOKEN".to_owned(),
                 "secret-token".to_owned(),
             )]),
             observer: observer.clone(),
@@ -2361,9 +2369,7 @@ async fn lifecycle_exit_close_restart_and_shutdown_cancel_before_generation_inva
 
     let prepared_before_attach = preparer.input_count();
     let attached = manager
-        .attach(bibcode_server::terminal::TerminalAttachInput::existing(
-            "thread-1", "restart",
-        ))
+        .attach(coddy_studio_server::terminal::TerminalAttachInput::existing("thread-1", "restart"))
         .await
         .expect("attach existing terminal");
     assert_eq!(attached.initial.status, TerminalStatus::Running);
@@ -2424,7 +2430,7 @@ async fn lifecycle_restart_rejects_late_observer_and_pty_output_from_the_old_gen
     let mut saw_stale = false;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while !saw_current {
-            if let Ok(bibcode_server::terminal::TerminalEvent::Output { data, .. }) =
+            if let Ok(coddy_studio_server::terminal::TerminalEvent::Output { data, .. }) =
                 terminal_events.recv().await
             {
                 saw_stale |= data.contains("stale-generation-output");
@@ -2620,7 +2626,7 @@ async fn assert_lifecycle_cancellation_never_falls_back(restart: bool, during_re
     assert!(
         matches!(
             open_result,
-            Err(bibcode_server::terminal::TerminalError::NotFound { .. })
+            Err(coddy_studio_server::terminal::TerminalError::NotFound { .. })
         ),
         "invalidated open: {open_result:?}"
     );
@@ -2824,8 +2830,8 @@ async fn hardening_startup_cleans_only_direct_marked_private_runtime_artifacts_w
     std::fs::set_permissions(&owned, std::fs::Permissions::from_mode(0o700))
         .expect("owned permissions");
     std::fs::write(
-        owned.join(".bibcode-provider-terminal-owner"),
-        b"bibcode-provider-terminal-v1\n",
+        owned.join(".coddy-studio-provider-terminal-owner"),
+        b"coddy-studio-provider-terminal-v1\n",
     )
     .expect("ownership marker");
     std::fs::write(owned.join("credentials.json"), b"secret").expect("stale credentials");
@@ -2838,8 +2844,8 @@ async fn hardening_startup_cleans_only_direct_marked_private_runtime_artifacts_w
     let outside = fixture.path().join("outside");
     std::fs::create_dir(&outside).expect("outside directory");
     std::fs::write(
-        outside.join(".bibcode-provider-terminal-owner"),
-        b"bibcode-provider-terminal-v1\n",
+        outside.join(".coddy-studio-provider-terminal-owner"),
+        b"coddy-studio-provider-terminal-v1\n",
     )
     .expect("outside marker");
     std::fs::write(outside.join("preserve"), b"outside").expect("outside file");
@@ -2847,14 +2853,14 @@ async fn hardening_startup_cleans_only_direct_marked_private_runtime_artifacts_w
         .expect("outside symlink");
 
     let marker_target = fixture.path().join("marker-target");
-    std::fs::write(&marker_target, b"bibcode-provider-terminal-v1\n").expect("marker target");
+    std::fs::write(&marker_target, b"coddy-studio-provider-terminal-v1\n").expect("marker target");
     let linked_marker_dir = runtime_dir.join("linked-marker");
     std::fs::create_dir(&linked_marker_dir).expect("linked marker dir");
     std::fs::set_permissions(&linked_marker_dir, std::fs::Permissions::from_mode(0o700))
         .expect("linked marker permissions");
     std::os::unix::fs::symlink(
         &marker_target,
-        linked_marker_dir.join(".bibcode-provider-terminal-owner"),
+        linked_marker_dir.join(".coddy-studio-provider-terminal-owner"),
     )
     .expect("marker symlink");
     std::fs::write(linked_marker_dir.join("preserve"), b"linked marker")
@@ -2976,7 +2982,7 @@ async fn hardening_executable_uses_client_path_for_validation_and_pins_canonical
     let spawn = &backend.spawns()[0];
     assert_eq!(spawn.executable, "sh");
     assert!(
-        !spawn.env.contains_key("BIBCODE_PRIVATE_TOKEN"),
+        !spawn.env.contains_key("CODDY_STUDIO_PRIVATE_TOKEN"),
         "a rejected hint must not inject observer-private values"
     );
 
@@ -3022,7 +3028,7 @@ async fn hardening_executable_uses_client_path_for_validation_and_pins_canonical
     assert_eq!(
         trusted_spawn
             .env
-            .get("BIBCODE_PRIVATE_TOKEN")
+            .get("CODDY_STUDIO_PRIVATE_TOKEN")
             .map(String::as_str),
         Some("observer-secret")
     );
@@ -3308,7 +3314,7 @@ async fn hardening_cancellation_signal_is_exactly_once_and_independent_of_blocke
 
 #[test]
 fn hardening_non_cooperative_observer_callbacks_have_a_fixed_global_bound() {
-    const CHILD_PROCESS_ENV: &str = "BIBCODE_CALLBACK_BOUND_CHILD";
+    const CHILD_PROCESS_ENV: &str = "CODDY_STUDIO_CALLBACK_BOUND_CHILD";
     if std::env::var_os(CHILD_PROCESS_ENV).is_some() {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(8)
@@ -3629,7 +3635,7 @@ async fn hardening_on_spawned_setup_has_no_ambient_disposable_tokio_runtime() {
 
 #[test]
 fn hardening_durable_observer_workers_have_a_reusable_process_global_bound() {
-    const CHILD_PROCESS_ENV: &str = "BIBCODE_DURABLE_WORKER_BOUND_CHILD";
+    const CHILD_PROCESS_ENV: &str = "CODDY_STUDIO_DURABLE_WORKER_BOUND_CHILD";
     if std::env::var_os(CHILD_PROCESS_ENV).is_some() {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
@@ -3980,7 +3986,7 @@ async fn hardening_streaming_redaction_handles_every_split_longest_first_and_flu
         let rendered = tokio::time::timeout(std::time::Duration::from_secs(1), async {
             let mut rendered = String::new();
             loop {
-                if let Ok(bibcode_server::terminal::TerminalEvent::Output { data, .. }) =
+                if let Ok(coddy_studio_server::terminal::TerminalEvent::Output { data, .. }) =
                     events.recv().await
                 {
                     rendered.push_str(&data);
@@ -3995,10 +4001,12 @@ async fn hardening_streaming_redaction_handles_every_split_longest_first_and_flu
         assert!(!rendered.contains(secret), "split {split}: {rendered}");
         assert_eq!(rendered, "[redacted]", "split {split}");
         let attached = manager
-            .attach(bibcode_server::terminal::TerminalAttachInput::existing(
-                "thread-redaction",
-                format!("terminal-{split}"),
-            ))
+            .attach(
+                coddy_studio_server::terminal::TerminalAttachInput::existing(
+                    "thread-redaction",
+                    format!("terminal-{split}"),
+                ),
+            )
             .await
             .expect("attachment");
         assert!(!attached.initial.history.contains(secret));
@@ -4037,10 +4045,12 @@ async fn hardening_streaming_redaction_handles_every_split_longest_first_and_flu
     let attachment = tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
             let attachment = manager
-                .attach(bibcode_server::terminal::TerminalAttachInput::existing(
-                    "thread-redaction",
-                    "tail",
-                ))
+                .attach(
+                    coddy_studio_server::terminal::TerminalAttachInput::existing(
+                        "thread-redaction",
+                        "tail",
+                    ),
+                )
                 .await
                 .expect("tail attachment");
             if attachment.initial.status == TerminalStatus::Exited {
@@ -7186,7 +7196,7 @@ async fn codex_resume_immediately_reconciles_pre_subscription_descendants_and_ba
 /// The real Codex terminal client's WebSocket message limit, which the fixture enforces.
 #[cfg(unix)]
 const REAL_CLIENT_FRAME_LIMIT_BYTES: usize =
-    bibcode_server::provider::codex::protocol::CODEX_TRANSPORT_MESSAGE_MAX_BYTES;
+    coddy_studio_server::provider::codex::protocol::CODEX_TRANSPORT_MESSAGE_MAX_BYTES;
 
 /// A descendant whose history is larger than the 512 KiB decoder bound is skipped; it must not
 /// break the observer's connection and force a reconnect, and its siblings are still read.
@@ -8016,10 +8026,12 @@ async fn codex_list_discovery_correlates_root_when_broadcast_is_absent() {
     assert!(projection.snapshot(&scope).await.is_err());
     assert_eq!(
         manager
-            .attach(bibcode_server::terminal::TerminalAttachInput::existing(
-                "thread-codex",
-                "terminal-timeout",
-            ))
+            .attach(
+                coddy_studio_server::terminal::TerminalAttachInput::existing(
+                    "thread-codex",
+                    "terminal-timeout",
+                )
+            )
             .await
             .expect("terminal remains attachable")
             .initial
@@ -8532,9 +8544,9 @@ async fn codex_terminals_isolate_endpoints_scopes_and_owned_helper_cleanup() {
     };
     for directory in [&directory_a, &directory_b] {
         assert_eq!(
-            std::fs::read(directory.join(".bibcode-provider-terminal-owner"))
+            std::fs::read(directory.join(".coddy-studio-provider-terminal-owner"))
                 .expect("Codex generation ownership marker"),
-            b"bibcode-provider-terminal-v1\n",
+            b"coddy-studio-provider-terminal-v1\n",
             "every live Codex socket directory must carry the exact cleanup ownership marker"
         );
     }
@@ -9113,7 +9125,7 @@ async fn agent_activity_hung_factory_does_not_block_terminal_disable_or_later_se
     assert!(
         !backend.spawns()[0]
             .env
-            .contains_key("BIBCODE_HUNG_FACTORY_OBSERVER")
+            .contains_key("CODDY_STUDIO_HUNG_FACTORY_OBSERVER")
     );
 
     let mut disabling_update = tokio::spawn({
@@ -9956,10 +9968,10 @@ async fn claude_fixture_terminal(
             pinned_executable
                 .parent()
                 .expect("Claude generation directory")
-                .join(".bibcode-provider-terminal-owner"),
+                .join(".coddy-studio-provider-terminal-owner"),
         )
         .expect("Claude generation ownership marker"),
-        b"bibcode-provider-terminal-v1\n",
+        b"coddy-studio-provider-terminal-v1\n",
         "every live Claude credential directory must carry the exact cleanup ownership marker"
     );
     let scope = ActivityScopeRef::Terminal {
@@ -10025,12 +10037,14 @@ fn claude_hook_launch(backend: &RecordingBackend) -> (String, String, String, st
     let endpoint = handler["url"].as_str().expect("hook endpoint").to_owned();
     assert!(endpoint.starts_with("http://127.0.0.1:"));
     assert!(!endpoint.contains("token"));
-    let correlation = handler["headers"]["X-BiBCode-Launch-Correlation"]
+    let correlation = handler["headers"]["X-Coddy Studio-Launch-Correlation"]
         .as_str()
         .expect("launch correlation")
         .to_owned();
     assert!(
-        !spawn.env.contains_key("BIBCODE_CLAUDE_TERMINAL_HOOK_TOKEN"),
+        !spawn
+            .env
+            .contains_key("CODDY_STUDIO_CLAUDE_TERMINAL_HOOK_TOKEN"),
         "the bearer token must not reach Claude or tool subprocess environments"
     );
     let token = handler["headers"]["Authorization"]
@@ -10058,7 +10072,7 @@ async fn post_claude_hook(
         match client
             .post(endpoint)
             .bearer_auth(token)
-            .header("X-BiBCode-Launch-Correlation", correlation)
+            .header("X-Coddy Studio-Launch-Correlation", correlation)
             .json(&body)
             .send()
             .await
@@ -10090,7 +10104,7 @@ async fn begin_incomplete_claude_hook(
             .await
             .expect("hook socket");
         let headers = format!(
-            "POST {} HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nX-BiBCode-Launch-Correlation: {correlation}\r\nContent-Type: application/json\r\nContent-Length: {body_len}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n",
+            "POST {} HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nX-Coddy Studio-Launch-Correlation: {correlation}\r\nContent-Type: application/json\r\nContent-Length: {body_len}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n",
             endpoint.path(),
         );
         socket
@@ -10224,7 +10238,7 @@ async fn agent_activity_toggle_claude_hook_is_dormant_without_stopping_terminal(
     let response = reqwest::Client::new()
         .post(&endpoint)
         .bearer_auth(&token)
-        .header("X-BiBCode-Launch-Correlation", &correlation)
+        .header("X-Coddy Studio-Launch-Correlation", &correlation)
         .header("content-type", "application/json")
         .body("{this body must not be decoded while dormant")
         .send()
@@ -10343,7 +10357,7 @@ async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_siz
         client
             .post(&endpoint)
             .bearer_auth("0".repeat(64))
-            .header("X-BiBCode-Launch-Correlation", &correlation)
+            .header("X-Coddy Studio-Launch-Correlation", &correlation)
             .json(&root_hook)
             .send()
             .await
@@ -10355,7 +10369,7 @@ async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_siz
         client
             .post(&endpoint)
             .bearer_auth(&token)
-            .header("X-BiBCode-Launch-Correlation", "wrong-correlation")
+            .header("X-Coddy Studio-Launch-Correlation", "wrong-correlation")
             .json(&root_hook)
             .send()
             .await
@@ -10367,7 +10381,7 @@ async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_siz
         client
             .post(&endpoint)
             .bearer_auth(&token)
-            .header("X-BiBCode-Launch-Correlation", &correlation)
+            .header("X-Coddy Studio-Launch-Correlation", &correlation)
             .header(reqwest::header::CONTENT_TYPE, "text/plain")
             .body("{}")
             .send()
@@ -10380,7 +10394,7 @@ async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_siz
         client
             .post(&endpoint)
             .bearer_auth(&token)
-            .header("X-BiBCode-Launch-Correlation", &correlation)
+            .header("X-Coddy Studio-Launch-Correlation", &correlation)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(format!("\"{}\"", "x".repeat(1_048_577)))
             .send()
@@ -11464,7 +11478,7 @@ impl OpenCodeRemoteClient for OpenCodeFixtureRemoteClient {
                 .expect("OpenCode sessions")
                 .push(serde_json::json!({
                     "id": root_session_id,
-                    "title": "BiBCode terminal",
+                    "title": "Coddy Studio terminal",
                     "model": model,
                 }));
             #[cfg(unix)]
@@ -13723,7 +13737,7 @@ async fn opencode_2_terminals_open_the_owned_root_with_server_flags() {
             .any(|argument| argument.contains(password))
     );
     // OpenCode 2 prefers `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`, so the helper gets
-    // both: one inherited from BiBCode's environment cannot override its own.
+    // both: one inherited from Coddy Studio's environment cannot override its own.
     {
         let launches = helper_launches
             .launches
@@ -14331,17 +14345,17 @@ async fn opencode_helper_failure_and_unsafe_args_are_exact_pass_through() {
 
 /// Observes a terminal of a real OpenCode 2 binary through the production factory: the
 /// capability probe, the authenticated helper, the `/api` client and root correlation. The PTY
-/// itself is recorded, not run. Set `BIBCODE_OPENCODE_V2_BINARY` (a copy under the temporary
-/// directory, which the hermetic test guard allows), `BIBCODE_OPENCODE_V2_HOME` (a scratch home
+/// itself is recorded, not run. Set `CODDY_STUDIO_OPENCODE_V2_BINARY` (a copy under the temporary
+/// directory, which the hermetic test guard allows), `CODDY_STUDIO_OPENCODE_V2_HOME` (a scratch home
 /// whose configuration points the default model at a scripted local endpoint) and
-/// `BIBCODE_OPENCODE_V2_MODEL`.
+/// `CODDY_STUDIO_OPENCODE_V2_MODEL`.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs a live OpenCode 2 binary"]
 async fn live_opencode_2_terminal_observation() {
     let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
-    let binary = var("BIBCODE_OPENCODE_V2_BINARY");
-    let home = std::path::PathBuf::from(var("BIBCODE_OPENCODE_V2_HOME"));
+    let binary = var("CODDY_STUDIO_OPENCODE_V2_BINARY");
+    let home = std::path::PathBuf::from(var("CODDY_STUDIO_OPENCODE_V2_HOME"));
     let root = tempfile::tempdir().expect("OpenCode 2 terminal root");
     let database = Database::open_in_memory().await.expect("database");
     database
@@ -14393,7 +14407,7 @@ async fn live_opencode_2_terminal_observation() {
     .collect();
     input.command = Some(TerminalLaunchCommand {
         executable: binary,
-        args: vec!["--model".to_owned(), var("BIBCODE_OPENCODE_V2_MODEL")],
+        args: vec!["--model".to_owned(), var("CODDY_STUDIO_OPENCODE_V2_MODEL")],
         label: Some("OpenCode".to_owned()),
         activity: Some(ProviderTerminalActivityLaunch {
             driver_kind: "opencode".to_owned(),

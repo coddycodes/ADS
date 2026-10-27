@@ -1,7 +1,7 @@
-use bibcode_server::persistence::{
+use coddy_studio_server::persistence::{
     BackupTrigger, RecoveryAction, RecoveryResult, StoreInspection, StoreInspectionStatus,
 };
-use bibcode_server::{ResolvedDataRoot, persistence};
+use coddy_studio_server::{ResolvedDataRoot, persistence};
 use serde::{Deserialize, Serialize};
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
@@ -74,7 +74,7 @@ pub(crate) enum ProjectDataError {
     Stop(String),
     #[error("project-data recovery failed: {0}")]
     Recovery(String),
-    #[error("BiBCode's local server couldn't restart: {0}")]
+    #[error("Coddy Studio's local server couldn't restart: {0}")]
     Restart(BackendStartFailure),
 }
 
@@ -670,7 +670,7 @@ pub(crate) async fn project_data_diagnostics(
 mod tests {
     use super::*;
     use crate::backend::{BackendRunConfig, BackendShutdownConfig, WslBackendLaunchPlanInput};
-    use bibcode_server::{DataRootRequest, DataRootSource, resolve_data_root};
+    use coddy_studio_server::{DataRootRequest, DataRootSource, resolve_data_root};
     use std::fs;
 
     fn local_config() -> BackendRunConfig {
@@ -727,7 +727,7 @@ mod tests {
         });
         assert_eq!(
             error.to_string(),
-            "BiBCode's local server couldn't restart: listener is occupied"
+            "Coddy Studio's local server couldn't restart: listener is occupied"
         );
         assert!(matches!(
             error,
@@ -743,8 +743,8 @@ mod tests {
     fn wsl_storage_invocation_is_an_argument_vector_without_shell_interpretation() {
         let invocation = wsl_storage_invocation(
             "Ubuntu; touch /tmp/owned",
-            "/opt/bibcode/bin/bibcode; echo owned",
-            "/home/user/.bibcode; touch /tmp/store-owned",
+            "/opt/coddy-studio/bin/coddy-studio; echo owned",
+            "/home/user/.coddy/studio; touch /tmp/store-owned",
             WslStorageAction::Restore {
                 backup_id: "26b6ca53-27d3-401a-b51f-d7bdf534081f",
             },
@@ -757,13 +757,13 @@ mod tests {
                 "--distribution",
                 "Ubuntu; touch /tmp/owned",
                 "--",
-                "/opt/bibcode/bin/bibcode; echo owned",
+                "/opt/coddy-studio/bin/coddy-studio; echo owned",
                 "storage",
                 "restore",
                 "--backup-id",
                 "26b6ca53-27d3-401a-b51f-d7bdf534081f",
                 "--base-dir",
-                "/home/user/.bibcode; touch /tmp/store-owned",
+                "/home/user/.coddy/studio; touch /tmp/store-owned",
                 "--json",
             ]
         );
@@ -778,8 +778,8 @@ mod tests {
             port: 4_301,
             renderer_host: "172.20.0.2".to_owned(),
             desktop_bootstrap_token: "wsl-token".to_owned(),
-            binary_path: "/opt/bibcode/bin/bibcode".to_owned(),
-            data_root: "/srv/bibcode projects".to_owned(),
+            binary_path: "/opt/coddy-studio/bin/coddy-studio".to_owned(),
+            data_root: "/srv/coddy-studio projects".to_owned(),
         });
 
         let resolved = resolve_project_data_target(&plan)
@@ -787,14 +787,14 @@ mod tests {
             .expect("the launch plan should own the recovery root");
         assert!(matches!(
             resolved,
-            ProjectDataTarget::Wsl { ref root, .. } if root == "/srv/bibcode projects"
+            ProjectDataTarget::Wsl { ref root, .. } if root == "/srv/coddy-studio projects"
         ));
         let BackendLaunchTarget::ExternalProcess { bootstrap_line, .. } = &plan.target else {
             panic!("WSL plan should launch an external process");
         };
         let bootstrap: serde_json::Value =
             serde_json::from_str(bootstrap_line).expect("bootstrap should be JSON");
-        assert_eq!(bootstrap["bibcodeHome"], "/srv/bibcode projects");
+        assert_eq!(bootstrap["coddyStudioHome"], "/srv/coddy-studio projects");
     }
 
     #[tokio::test]

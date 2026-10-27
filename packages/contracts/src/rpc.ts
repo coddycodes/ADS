@@ -412,12 +412,12 @@ export const WorktreeGetRemovalPlanInput = Schema.Struct({
 });
 export type WorktreeGetRemovalPlanInput = typeof WorktreeGetRemovalPlanInput.Type;
 
-export const WorktreeRemoveFromBibCodeInput = Schema.Struct({
+export const WorktreeRemoveFromCoddyStudioInput = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   threadId: ThreadId,
 });
-export type WorktreeRemoveFromBibCodeInput = typeof WorktreeRemoveFromBibCodeInput.Type;
+export type WorktreeRemoveFromCoddyStudioInput = typeof WorktreeRemoveFromCoddyStudioInput.Type;
 
 export const WorktreeRemoveInput = Schema.Struct({
   commandId: CommandId,
@@ -487,7 +487,7 @@ export const WS_METHODS = {
   worktreeCreatePanel: "worktree.createPanel",
   worktreeRetarget: "worktree.retarget",
   worktreeGetRemovalPlan: "worktree.getRemovalPlan",
-  worktreeRemoveFromBibCode: "worktree.removeFromBibCode",
+  worktreeRemoveFromCoddyStudio: "worktree.removeFromCoddyStudio",
   worktreeRemove: "worktree.remove",
 
   // Git Manager methods
@@ -1252,8 +1252,8 @@ export const WsWorktreeGetRemovalPlanRpc = Rpc.make(WS_METHODS.worktreeGetRemova
   error: Schema.Union([WorktreeRemovalError, WorktreeOperationError, EnvironmentRpcError]),
 });
 
-export const WsWorktreeRemoveFromBibCodeRpc = Rpc.make(WS_METHODS.worktreeRemoveFromBibCode, {
-  payload: WorktreeRemoveFromBibCodeInput,
+export const WsWorktreeRemoveFromCoddyStudioRpc = Rpc.make(WS_METHODS.worktreeRemoveFromCoddyStudio, {
+  payload: WorktreeRemoveFromCoddyStudioInput,
   success: WorktreeRemovalResult,
   error: Schema.Union([
     WorktreeRemovalError,
@@ -1450,7 +1450,7 @@ export const WsPullRequestsSubscribeRpc = Rpc.make(WS_METHODS.pullRequestsSubscr
 
 /**
  * Ephemeral live diff preview for compact/mobile surfaces.
- * Not the persisted BiBCode Review model. Future review sessions should use
+ * Not the persisted Coddy Studio Review model. Future review sessions should use
  * review.open* + review.getSnapshot.
  */
 export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
@@ -1933,7 +1933,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorktreeCreatePanelRpc,
   WsWorktreeRetargetRpc,
   WsWorktreeGetRemovalPlanRpc,
-  WsWorktreeRemoveFromBibCodeRpc,
+  WsWorktreeRemoveFromCoddyStudioRpc,
   WsWorktreeRemoveRpc,
   WsGitManagerGetRefsRpc,
   WsGitManagerGetCommitsRpc,

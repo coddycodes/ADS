@@ -2,7 +2,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   type ContextMenuItem,
   type DesktopBridge,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const showContextMenuFallbackMock =

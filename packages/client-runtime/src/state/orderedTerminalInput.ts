@@ -1,4 +1,4 @@
-import { TerminalInputError, WS_METHODS, type TerminalBeginInput } from "@bibcode/contracts";
+import { TerminalInputError, WS_METHODS, type TerminalBeginInput } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

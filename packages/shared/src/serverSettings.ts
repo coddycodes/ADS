@@ -1,4 +1,4 @@
-import { ServerSettings, type ServerSettingsPatch } from "@bibcode/contracts";
+import { ServerSettings, type ServerSettingsPatch } from "@coddy/contracts";
 import { deepMerge } from "./Struct.ts";
 import { createModelSelection } from "./model.ts";
 

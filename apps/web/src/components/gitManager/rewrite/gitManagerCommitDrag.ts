@@ -1,4 +1,4 @@
-import type { GitManagerBlockedReason } from "@bibcode/contracts";
+import type { GitManagerBlockedReason } from "@coddy/contracts";
 import {
   closestCenter,
   DndContext,

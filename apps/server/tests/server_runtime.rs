@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     ConfigError, DESKTOP_SHUTDOWN_PATH, DESKTOP_SHUTDOWN_TOKEN_HEADER, ROUTE_INVENTORY,
     RpcRegistry, ServerConfig, ServerError, ServerMode, ServerRuntime, logging,
 };
@@ -30,7 +30,7 @@ use websocket_frames::next_frame_past_heartbeat;
 mod hermetic_providers;
 use hermetic_providers::BUILTIN_PROVIDER_DRIVERS;
 
-const SAME_LOG_PATH_CHILD_ENV: &str = "BIBCODE_TEST_SAME_LOG_PATH_CHILD_ROOT";
+const SAME_LOG_PATH_CHILD_ENV: &str = "CODDY_STUDIO_TEST_SAME_LOG_PATH_CHILD_ROOT";
 const SAME_LOG_PATH_TEST: &str = "public_and_runtime_initializers_share_one_physical_log_writer";
 
 fn test_config(temp: &TempDir) -> ServerConfig {
@@ -106,7 +106,7 @@ async fn exchange_startup_credential(
             ("subject_token", credential),
             (
                 "subject_token_type",
-                "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
             ),
             (
                 "requested_token_type",
@@ -279,7 +279,7 @@ async fn binds_an_ephemeral_port_and_serves_the_environment_descriptor() {
     assert_ne!(handle.local_addr().port(), 0);
     let response = reqwest::get(endpoint(
         handle.local_addr(),
-        "/.well-known/bibcode/environment",
+        "/.well-known/coddy-studio/environment",
     ))
     .await
     .expect("environment response");
@@ -384,7 +384,7 @@ async fn public_and_runtime_initializers_share_one_physical_log_writer() {
             1,
             "dropping the runtime lease must retain exactly one process-owned writer"
         );
-        println!("BIBCODE_TEST_SAME_LOG_PATH_CHILD_DONE");
+        println!("CODDY_STUDIO_TEST_SAME_LOG_PATH_CHILD_DONE");
         return;
     }
 
@@ -414,7 +414,8 @@ async fn public_and_runtime_initializers_share_one_physical_log_writer() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("BIBCODE_TEST_SAME_LOG_PATH_CHILD_DONE"),
+        String::from_utf8_lossy(&output.stdout)
+            .contains("CODDY_STUDIO_TEST_SAME_LOG_PATH_CHILD_DONE"),
         "same-path child did not confirm completion"
     );
 }
@@ -430,7 +431,7 @@ async fn authenticated_rpc_and_lifecycle_descriptors_match_the_well_known_storag
     let well_known = client
         .get(endpoint(
             handle.local_addr(),
-            "/.well-known/bibcode/environment",
+            "/.well-known/coddy-studio/environment",
         ))
         .send()
         .await
@@ -1285,7 +1286,7 @@ fn route_inventory_covers_every_current_http_method_and_path() {
 
 fn expected_routes() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("GET", "/.well-known/bibcode/environment"),
+        ("GET", "/.well-known/coddy-studio/environment"),
         ("GET", "/api/auth/session"),
         ("POST", "/api/auth/browser-session"),
         ("POST", "/oauth/token"),
@@ -1305,9 +1306,9 @@ fn expected_routes() -> Vec<(&'static str, &'static str)> {
         ("POST", "/api/connect/relay-config"),
         ("GET", "/api/connect/link-state"),
         ("POST", "/api/connect/unlink"),
-        ("POST", "/api/bibcode-connect/health"),
+        ("POST", "/api/coddy-connect/health"),
         ("POST", "/api/connect/mint-credential"),
-        ("POST", "/api/bibcode-connect/mint-credential"),
+        ("POST", "/api/coddy-connect/mint-credential"),
         ("GET", "/ws"),
         ("GET", "/ws-e2ee"),
         ("POST", "/api/diagnostics/logs.zip"),
@@ -1317,7 +1318,7 @@ fn expected_routes() -> Vec<(&'static str, &'static str)> {
         ("GET", "/api/device-media"),
         ("GET", "/api/device-media-e2ee"),
         ("POST", "/api/transfers/*"),
-        ("POST", "/.well-known/bibcode/desktop/shutdown"),
+        ("POST", "/.well-known/coddy-studio/desktop/shutdown"),
         ("POST", "/api/maintenance/update/prepare"),
         ("POST", "/api/maintenance/update/commit"),
         ("POST", "/api/maintenance/update/cancel"),

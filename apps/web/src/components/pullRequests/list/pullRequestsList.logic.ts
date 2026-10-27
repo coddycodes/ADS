@@ -1,4 +1,4 @@
-import type { PullRequestsListInput, PullRequestsListRow } from "@bibcode/contracts";
+import type { PullRequestsListInput, PullRequestsListRow } from "@coddy/contracts";
 import {
   DEFAULT_PULL_REQUESTS_VIEW_STATE,
   type PullRequestsViewState,

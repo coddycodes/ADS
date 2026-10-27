@@ -4,7 +4,7 @@ import {
   type ServerConfigStreamEvent,
   ORCHESTRATION_WS_METHODS,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -87,7 +87,7 @@ export class RpcSessionFactory extends Context.Service<
       connection: PreparedConnection,
     ) => Effect.Effect<EstablishingRpcSession, ConnectionAttemptError, Scope.Scope>;
   }
->()("@bibcode/client-runtime/rpc/session/RpcSessionFactory") {}
+>()("@coddy/client-runtime/rpc/session/RpcSessionFactory") {}
 
 function mapInitialConfigError(error: InitialConfigError): ConnectionAttemptError {
   switch (error._tag) {

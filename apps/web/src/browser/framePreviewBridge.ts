@@ -2,25 +2,25 @@
  * Browser-mode preview host: gateway previews shown in sandboxed iframes inside
  * the preview panel's slots, driven through the same `DesktopPreviewBridge` the
  * desktop's native child webviews implement. The gateway's navigation reporter
- * (`/__bibcode/frame.js`) tells each frame's URL, title, and history to this
+ * (`/__coddy-studio/frame.js`) tells each frame's URL, title, and history to this
  * window, and Back/Forward/Reload go back to the page as messages.
  */
-import type { DesktopPreviewBridge, DesktopPreviewTabState } from "@bibcode/contracts";
+import type { DesktopPreviewBridge, DesktopPreviewTabState } from "@coddy/contracts";
 
 import { registerPreviewRuntimeCapabilities } from "~/previewRuntimeCapabilities";
 
 const SANDBOX =
   "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
-const BOOTSTRAP_PATH = "/__bibcode/bootstrap";
-const FRAME_MESSAGE = "bibcode-preview-frame";
-const COMMAND_MESSAGE = "bibcode-preview-command";
-/** A link to the server's localhost clicked in the page: BiBCode opens it as a new tab. */
-const OPEN_MESSAGE = "bibcode-preview-open";
+const BOOTSTRAP_PATH = "/__coddy-studio/bootstrap";
+const FRAME_MESSAGE = "coddy-studio-preview-frame";
+const COMMAND_MESSAGE = "coddy-studio-preview-command";
+/** A link to the server's localhost clicked in the page: Coddy Studio opens it as a new tab. */
+const OPEN_MESSAGE = "coddy-studio-preview-open";
 /** A loaded page that hasn't reported by then has no reporter (its CSP blocked it). */
 const SETTLE_WITHOUT_REPORT_MS = 5_000;
 
 export const FRAME_UNSUPPORTED_DESCRIPTION =
-  "In a browser tab, BiBCode shows here only dev servers on the machine serving this page. Open this one in a new tab.";
+  "In a browser tab, Coddy Studio shows here only dev servers on the machine serving this page. Open this one in a new tab.";
 
 interface FrameTab {
   readonly iframe: HTMLIFrameElement;
@@ -169,7 +169,7 @@ export function createFramePreviewBridge(deps: FramePreviewBridgeDeps): DesktopP
       }
       const report = readReport(event.data);
       // The page writes its own reports: believe only an address on its own
-      // gateway origin (a moved frame reopens it, and BiBCode shares it).
+      // gateway origin (a moved frame reopens it, and Coddy Studio shares it).
       if (!report || tab.awaitingLoad || !isOnOrigin(report.url, tab.origin)) return;
       clearTimeout(tab.settleTimer);
       tab.currentUrl = report.url;

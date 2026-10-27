@@ -1,20 +1,20 @@
 import {
   detectComposerTrigger as detectSharedComposerTrigger,
-  parseStandaloneComposerBiBCodeAction,
+  parseStandaloneComposerCoddyStudioAction,
   replaceTextRange,
-} from "@bibcode/shared/composerTrigger";
-import type { ComposerTrigger, ComposerTriggerProfile } from "@bibcode/shared/composerTrigger";
+} from "@coddy/shared/composerTrigger";
+import type { ComposerTrigger, ComposerTriggerProfile } from "@coddy/shared/composerTrigger";
 
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-export { parseStandaloneComposerBiBCodeAction, replaceTextRange };
+export { parseStandaloneComposerCoddyStudioAction, replaceTextRange };
 export type {
-  ComposerBiBCodeAction,
+  ComposerCoddyStudioAction,
   ComposerTrigger,
   ComposerTriggerKind,
   ComposerTriggerProfile,
-} from "@bibcode/shared/composerTrigger";
+} from "@coddy/shared/composerTrigger";
 
 export interface ComposerInlineTokenContext {
   readonly mentionableAgentNames?: ReadonlySet<string>;

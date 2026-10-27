@@ -6,7 +6,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import type { GitManagerPullRequestsResult, SourceControlProviderInfo } from "@bibcode/contracts";
+import type { GitManagerPullRequestsResult, SourceControlProviderInfo } from "@coddy/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

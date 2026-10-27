@@ -1,4 +1,4 @@
-import { AssetResource, EnvironmentId, WS_METHODS } from "@bibcode/contracts";
+import { AssetResource, EnvironmentId, WS_METHODS } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 

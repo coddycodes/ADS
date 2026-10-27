@@ -1,4 +1,4 @@
-import { EnvironmentId, type OrchestrationShellSnapshot } from "@bibcode/contracts";
+import { EnvironmentId, type OrchestrationShellSnapshot } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it } from "vite-plus/test";

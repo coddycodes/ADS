@@ -1,15 +1,15 @@
 //! Opt-in tests against this Mac's real iOS simulators, through CoreSimulator loaded in the
-//! test process. They run only with `BIBCODE_IOS_SIM_TESTS=1`:
+//! test process. They run only with `CODDY_STUDIO_IOS_SIM_TESTS=1`:
 //!
 //! ```sh
-//! BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
+//! CODDY_STUDIO_IOS_SIM_TESTS=1 cargo test -p coddy-studio-server --test ios_simulator -- --nocapture
 //! ```
 //!
-//! Each test boots one `Shutdown` iPhone simulator (`BIBCODE_IOS_SIM_UDID`, or the first one
+//! Each test boots one `Shutdown` iPhone simulator (`CODDY_STUDIO_IOS_SIM_UDID`, or the first one
 //! listed), and shuts it down again at the end, even when it fails, then checks that `simctl`
 //! reports it `Shutdown`.
 //!
-//! - `BIBCODE_IOS_SIM_FRAMES_DIR`: also write the JPEGs and PNGs received there, and the
+//! - `CODDY_STUDIO_IOS_SIM_FRAMES_DIR`: also write the JPEGs and PNGs received there, and the
 //!   first H.264 config and key as `first.h264` (Annex B, for `ffprobe`), to look at them.
 #![cfg(target_os = "macos")]
 
@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_server::device::{
+use coddy_studio_server::device::{
     DeviceManager, DeviceOpError,
     catalog::{AvailabilityKind, DeviceState, Orientation, Platform},
     frames::{FrameSubscription, JpegFrame},
@@ -31,7 +31,7 @@ use bibcode_server::device::{
 use tokio::sync::watch;
 
 fn enabled() -> bool {
-    std::env::var("BIBCODE_IOS_SIM_TESTS").as_deref() == Ok("1")
+    std::env::var("CODDY_STUDIO_IOS_SIM_TESTS").as_deref() == Ok("1")
 }
 
 /// One simulator test at a time: they may pick the same simulator.
@@ -69,7 +69,7 @@ fn assert_first_launch_done() {
 
 /// A `Shutdown` iPhone simulator to boot.
 fn pick_simulator() -> String {
-    if let Ok(udid) = std::env::var("BIBCODE_IOS_SIM_UDID") {
+    if let Ok(udid) = std::env::var("CODDY_STUDIO_IOS_SIM_UDID") {
         return udid;
     }
     let output = Command::new("/usr/bin/xcrun")
@@ -205,7 +205,7 @@ impl IosHarness {
         (frame, subscription)
     }
 
-    fn snapshot(&self) -> bibcode_server::device::catalog::DeviceSnapshot {
+    fn snapshot(&self) -> coddy_studio_server::device::catalog::DeviceSnapshot {
         self.manager
             .catalog()
             .borrow()
@@ -396,7 +396,7 @@ impl IosHarness {
             .await
             .expect("a screenshot");
         assert_eq!(mime_type, "image/png", "a live simulator gives PNGs");
-        if let Ok(dir) = std::env::var("BIBCODE_IOS_SIM_FRAMES_DIR") {
+        if let Ok(dir) = std::env::var("CODDY_STUDIO_IOS_SIM_FRAMES_DIR") {
             let path = std::path::Path::new(&dir).join(format!("{name}.png"));
             std::fs::write(&path, &png).expect("write screenshot");
             println!("wrote {}", path.display());
@@ -428,7 +428,7 @@ impl IosHarness {
         &self,
         state: DeviceState,
         timeout: Duration,
-    ) -> bibcode_server::device::catalog::DeviceSnapshot {
+    ) -> coddy_studio_server::device::catalog::DeviceSnapshot {
         let deadline = Instant::now() + timeout;
         loop {
             let snapshot = self.snapshot();
@@ -525,10 +525,10 @@ impl IosHarness {
     }
 }
 
-/// Writes `frame` to `BIBCODE_IOS_SIM_FRAMES_DIR` when it is set.
+/// Writes `frame` to `CODDY_STUDIO_IOS_SIM_FRAMES_DIR` when it is set.
 fn save(frame: &JpegFrame, name: &str) {
     use base64::Engine as _;
-    let Ok(dir) = std::env::var("BIBCODE_IOS_SIM_FRAMES_DIR") else {
+    let Ok(dir) = std::env::var("CODDY_STUDIO_IOS_SIM_FRAMES_DIR") else {
         return;
     };
     let jpeg = base64::engine::general_purpose::STANDARD
@@ -626,11 +626,11 @@ async fn rotation_changes_the_screen_size() {
     harness.stop().await;
 }
 
-/// BiBCode's `landscape` is Android's: the phone turned left (counter-clockwise), so the
+/// Coddy Studio's `landscape` is Android's: the phone turned left (counter-clockwise), so the
 /// UI's top lies along the device's right edge. That convention comes from spec §0's
 /// observation of which surface edge the UI's top lies along at each `uiOrientation`, which
 /// `IosOrientation` encodes. This test checks the chain end to end: `landscape` is
-/// reported back as `landscape` at the landscape size, and the frame BiBCode turns upright
+/// reported back as `landscape` at the landscape size, and the frame Coddy Studio turns upright
 /// with that orientation's turn matches `simctl`'s own upright screenshot rather than the
 /// same picture upside down, so the turn, and with it the edge, is the real one.
 #[tokio::test(flavor = "multi_thread")]
@@ -654,10 +654,12 @@ async fn rotation_matches_android_convention() {
     assert_eq!((snapshot.width, snapshot.height), (Some(2622), Some(1206)));
     // Let the turn's animation settle before comparing pictures.
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let ours = harness.screen_rgb(400, "android-convention-bibcode").await;
+    let ours = harness
+        .screen_rgb(400, "android-convention-coddy-studio")
+        .await;
     let theirs = simctl_screenshot(&harness.udid);
     println!(
-        "simctl screenshot {}x{}, BiBCode frame {}x{}",
+        "simctl screenshot {}x{}, Coddy Studio frame {}x{}",
         theirs.width, theirs.height, ours.width, ours.height
     );
     assert!(
@@ -729,7 +731,7 @@ async fn text_arrives_in_a_text_field() {
     let focused = harness.screen_rgb(360, "text-focused").await;
     let started = Instant::now();
     let text = vec![DeviceInputEvent::Text {
-        text: "BiBCode".to_owned(),
+        text: "Coddy Studio".to_owned(),
     }];
     // The keyboard path needs the DTUHID handshake, which may still run after boot.
     loop {
@@ -793,7 +795,10 @@ async fn external_shutdown_fails_device() {
     let (status, returned) = shutdown.join().expect("the shutdown thread");
     assert!(status.success());
     println!("simctl shutdown took {:?}", returned - started);
-    assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BiBCode"));
+    assert_eq!(
+        failed.failure.as_deref(),
+        Some("Shutdown outside Coddy Studio")
+    );
     let reason = tokio::time::timeout(Duration::from_secs(5), media.end_reason(&harness.manager))
         .await
         .expect("the media stream closes");
@@ -839,7 +844,7 @@ async fn first_key_frame_decodes_to_the_screen_size() {
     // Level 5.1 or above, so a full-size simulator screen at 60 fps fits the level.
     assert!(level_idc >= 51, "SPS level_idc {level_idc} is below 5.1");
     assert_eq!((w, h), harness.screen_size());
-    if let Ok(dir) = std::env::var("BIBCODE_IOS_SIM_FRAMES_DIR") {
+    if let Ok(dir) = std::env::var("CODDY_STUDIO_IOS_SIM_FRAMES_DIR") {
         // Config then key as an Annex B file, for `ffprobe`.
         let path = std::path::Path::new(&dir).join("first.h264");
         std::fs::write(&path, [&units[0].data[..], &units[1].data[..]].concat()).expect("write");

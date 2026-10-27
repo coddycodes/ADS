@@ -64,8 +64,8 @@ fn process_identity(pid: u32) -> std::io::Result<(u32, u64)> {
 
 #[cfg(windows)]
 fn main() {
-    let real_git = env::var_os("BIBCODE_VCS_MEASURE_REAL_GIT").expect("missing real Git path");
-    let log_path = env::var_os("BIBCODE_VCS_MEASURE_GIT_LOG").expect("missing Git log path");
+    let real_git = env::var_os("CODDY_STUDIO_VCS_MEASURE_REAL_GIT").expect("missing real Git path");
+    let log_path = env::var_os("CODDY_STUDIO_VCS_MEASURE_GIT_LOG").expect("missing Git log path");
     let args = env::args_os().skip(1).collect::<Vec<_>>();
     let pid = process::id();
     let (parent_pid, started_at) = process_identity(pid).expect("query shim identity");
@@ -82,7 +82,7 @@ fn main() {
         "parentStartedAt": parent_started_at.to_string(),
         "args": args.iter().map(|value| value.to_string_lossy()).collect::<Vec<_>>()
     });
-    let mutex_name = "Local\\BiBCodeVcsMeasureGitLogMutex"
+    let mutex_name = "Local\\CoddyStudioVcsMeasureGitLogMutex"
         .encode_utf16()
         .chain(Some(0))
         .collect::<Vec<_>>();

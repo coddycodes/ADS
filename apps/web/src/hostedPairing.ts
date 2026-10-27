@@ -1,7 +1,7 @@
 import {
   readHostedPairingRequest as readNormalizedHostedPairingRequest,
   type HostedPairingRequest,
-} from "@bibcode/shared/remote";
+} from "@coddy/shared/remote";
 
 import { setPairingTokenOnUrl } from "./pairingUrl";
 
@@ -35,8 +35,8 @@ function originFromUrl(value: string): string | null {
 }
 
 /**
- * Whether this page is the web app a BiBCode server served for this very host: the server writes
- * `<meta name="bibcode-served-host">` into the entry document it serves. Only that document can
+ * Whether this page is the web app a Coddy Studio server served for this very host: the server writes
+ * `<meta name="coddy-studio-served-host">` into the entry document it serves. Only that document can
  * carry it, and a copy deployed on another host names a different host, so the marker cannot turn
  * a remote client's page into one that pairs with its own origin.
  */
@@ -44,7 +44,7 @@ export function isServedByThisBackend(url: URL = new URL(window.location.href)):
   const marker =
     typeof document === "undefined"
       ? null
-      : (document.querySelector('meta[name="bibcode-served-host"]')?.getAttribute("content") ??
+      : (document.querySelector('meta[name="coddy-studio-served-host"]')?.getAttribute("content") ??
         null);
   if (marker === null) return false;
   // Compare as the browser would: a forwarded `host:443` names the same host as `host`.
@@ -133,7 +133,7 @@ export function buildHostedPairingUrl(input: {
 export function buildHostedChannelSelectionUrl(input: {
   readonly channel: HostedAppChannel;
 }): string {
-  const url = new URL("/__bibcode/channel", configuredHostedAppUrl());
+  const url = new URL("/__coddy-studio/channel", configuredHostedAppUrl());
   url.searchParams.set("channel", input.channel);
   return url.toString();
 }

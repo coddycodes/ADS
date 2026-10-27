@@ -386,9 +386,9 @@ it.layer(NodeServices.layer)("mock-update-server", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4312",
-                BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG: path.join(root, "requests.jsonl"),
-                BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT: root,
+                CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4312",
+                CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG: path.join(root, "requests.jsonl"),
+                CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_ROOT: root,
               },
             }),
           ),

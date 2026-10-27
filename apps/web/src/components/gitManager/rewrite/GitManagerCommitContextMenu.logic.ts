@@ -1,4 +1,4 @@
-import type { GitManagerBlockedReason, GitManagerCommitEntry } from "@bibcode/contracts";
+import type { GitManagerBlockedReason, GitManagerCommitEntry } from "@coddy/contracts";
 
 export type GitManagerCommitMenuItemId =
   | "reset"

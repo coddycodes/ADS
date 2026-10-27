@@ -1,4 +1,4 @@
-import { EditorId, EnvironmentId } from "@bibcode/contracts";
+import { EditorId, EnvironmentId } from "@coddy/contracts";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -8,7 +8,7 @@ import {
 } from "./editorPreferences";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
-const storageKey = "bibcode:last-editor";
+const storageKey = "coddy-studio:last-editor";
 
 afterEach(() => {
   removeLocalStorageItem(storageKey);

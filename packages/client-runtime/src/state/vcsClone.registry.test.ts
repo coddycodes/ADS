@@ -1,8 +1,8 @@
 // The clone re-attach loop and the next-session cancel against the real environment registry:
 // a supervisor the registry replaces, and an environment the registry removes. Only the
 // connection driver's sessions are scripted; the registry and its supervisors are real.
-import { EnvironmentId, WS_METHODS } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { EnvironmentId, WS_METHODS } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";

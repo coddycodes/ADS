@@ -89,8 +89,8 @@ describe("RelayApi security", () => {
 describe("relay schemas", () => {
   it("decodes every endpoint provider literal and optional runtime fields", () => {
     expect(
-      ["manual", "cloudflare_tunnel", "bibcode_relay"].map((kind) => decodeProviderKind(kind)),
-    ).toEqual(["manual", "cloudflare_tunnel", "bibcode_relay"]);
+      ["manual", "cloudflare_tunnel", "coddy_studio_relay"].map((kind) => decodeProviderKind(kind)),
+    ).toEqual(["manual", "cloudflare_tunnel", "coddy_studio_relay"]);
 
     const minimal = decodeEnvironmentConfig({
       relayUrl: "https://relay.example.test",

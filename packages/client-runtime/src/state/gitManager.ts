@@ -1,4 +1,4 @@
-import { WS_METHODS, type EnvironmentId } from "@bibcode/contracts";
+import { WS_METHODS, type EnvironmentId } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";

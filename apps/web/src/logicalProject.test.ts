@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { derivePhysicalProjectKey, projectDraftFallbackKeys } from "./logicalProject";

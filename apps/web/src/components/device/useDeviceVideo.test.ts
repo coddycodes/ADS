@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentRpcUnavailableError } from "@coddy/client-runtime/rpc";
+import { EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";

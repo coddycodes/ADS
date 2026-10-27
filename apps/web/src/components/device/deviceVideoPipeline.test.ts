@@ -1,4 +1,4 @@
-import type { DeviceMediaTarget, MediaFrame } from "@bibcode/client-runtime/device";
+import type { DeviceMediaTarget, MediaFrame } from "@coddy/client-runtime/device";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {

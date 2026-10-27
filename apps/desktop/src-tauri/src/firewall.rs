@@ -5,9 +5,9 @@
 //! firewall here and every call is a successful no-op.
 
 #[cfg(windows)]
-use bibcode_server::process::ProcessRunner;
+use coddy_studio_server::process::ProcessRunner;
 #[cfg(any(windows, test))]
-use bibcode_server::process::{OutputMode, ProcessRunInput};
+use coddy_studio_server::process::{OutputMode, ProcessRunInput};
 #[cfg(windows)]
 use std::sync::OnceLock;
 #[cfg(any(windows, test))]
@@ -30,7 +30,7 @@ const FIREWALL_WORKER_WAKE_CAPACITY: usize = 1;
     all(not(windows), not(test)),
     expect(dead_code, reason = "Windows-only firewall command")
 )]
-const REMOTE_ACCESS_RULE_NAME: &str = "BiBCode Remote Access";
+const REMOTE_ACCESS_RULE_NAME: &str = "Coddy Studio Remote Access";
 
 #[must_use]
 #[cfg_attr(
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn add_rule_arguments_are_program_scoped() {
-        let args = remote_access_rule_add_args(r"C:\Apps\BiBCode\bibcode-desktop.exe");
+        let args = remote_access_rule_add_args(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe");
         assert_eq!(
             args,
             vec![
@@ -525,10 +525,10 @@ mod tests {
                 "firewall".to_string(),
                 "add".to_string(),
                 "rule".to_string(),
-                "name=BiBCode Remote Access".to_string(),
+                "name=Coddy Studio Remote Access".to_string(),
                 "dir=in".to_string(),
                 "action=allow".to_string(),
-                r"program=C:\Apps\BiBCode\bibcode-desktop.exe".to_string(),
+                r"program=C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_string(),
                 "protocol=TCP".to_string(),
                 "profile=domain,private".to_string(),
                 "enable=yes".to_string(),
@@ -556,7 +556,7 @@ mod tests {
                 "firewall".to_string(),
                 "show".to_string(),
                 "rule".to_string(),
-                "name=BiBCode Remote Access".to_string(),
+                "name=Coddy Studio Remote Access".to_string(),
             ]
         );
         assert_eq!(
@@ -566,7 +566,7 @@ mod tests {
                 "firewall".to_string(),
                 "delete".to_string(),
                 "rule".to_string(),
-                "name=BiBCode Remote Access".to_string(),
+                "name=Coddy Studio Remote Access".to_string(),
             ]
         );
     }
@@ -585,7 +585,7 @@ mod tests {
         assert!(
             !super::rule_listing_is_absent(&FirewallCommandOutput {
                 success: true,
-                stdout: "Rule Name: BiBCode Remote Access\n".to_owned(),
+                stdout: "Rule Name: Coddy Studio Remote Access\n".to_owned(),
                 stderr: String::new(),
             })
             .expect("present rule")
@@ -622,7 +622,7 @@ mod tests {
         ]);
 
         sync_remote_access_rule_with_runner(true, &runner, || {
-            Ok(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned())
+            Ok(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned())
         })
         .await
         .expect("localized miss still enables remote access");
@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(calls[1].1, remote_access_store_probe_args());
         assert_eq!(
             calls[2].1,
-            remote_access_rule_add_args(r"C:\Apps\BiBCode\bibcode-desktop.exe")
+            remote_access_rule_add_args(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe")
         );
 
         let denied = FakeFirewallCommandRunner::with_results(vec![
@@ -656,7 +656,7 @@ mod tests {
         let runner = FakeFirewallCommandRunner::with_results(vec![
             Ok(FirewallCommandOutput {
                 success: true,
-                stdout: "Rule Name: BiBCode Remote Access\n".to_owned(),
+                stdout: "Rule Name: Coddy Studio Remote Access\n".to_owned(),
                 stderr: String::new(),
             }),
             Ok(success()),
@@ -669,7 +669,7 @@ mod tests {
         ]);
 
         sync_remote_access_rule_with_runner(true, &runner, || {
-            Ok(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned())
+            Ok(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned())
         })
         .await
         .expect("replace a present rule");
@@ -681,7 +681,7 @@ mod tests {
         assert_eq!(calls[2].1, remote_access_rule_show_args());
         assert_eq!(
             calls[3].1,
-            remote_access_rule_add_args(r"C:\Apps\BiBCode\bibcode-desktop.exe")
+            remote_access_rule_add_args(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe")
         );
     }
 
@@ -725,7 +725,7 @@ mod tests {
         let runner = FakeFirewallCommandRunner::with_results(vec![Ok(success()), Ok(success())]);
 
         sync_remote_access_rule_with_runner(true, &runner, || {
-            Ok(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned())
+            Ok(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned())
         })
         .await
         .expect("verified replacement");
@@ -736,7 +736,7 @@ mod tests {
         assert_eq!(calls[1].0, "netsh");
         assert_eq!(
             calls[1].1,
-            remote_access_rule_add_args(r"C:\Apps\BiBCode\bibcode-desktop.exe")
+            remote_access_rule_add_args(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe")
         );
     }
 
@@ -750,7 +750,7 @@ mod tests {
             Ok(success()),
         ]);
         let worker = FirewallWorker::start(runner.clone());
-        let program = Some(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned());
+        let program = Some(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned());
 
         worker
             .sync(true, program.clone(), FIREWALL_CALLER_TIMEOUT)
@@ -786,7 +786,7 @@ mod tests {
         let error = worker
             .sync(
                 true,
-                Some(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned()),
+                Some(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned()),
                 FIREWALL_CALLER_TIMEOUT,
             )
             .await
@@ -896,7 +896,7 @@ mod tests {
             first_worker
                 .sync(
                     true,
-                    Some(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned()),
+                    Some(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned()),
                     FIREWALL_CALLER_TIMEOUT,
                 )
                 .await
@@ -915,7 +915,7 @@ mod tests {
             later_worker
                 .sync(
                     true,
-                    Some(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned()),
+                    Some(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned()),
                     FIREWALL_CALLER_TIMEOUT,
                 )
                 .await
@@ -944,7 +944,7 @@ mod tests {
         let runner = LateSpawnFirewallCommandRunner::default();
         runner.block_next_add();
         let worker = FirewallWorker::start(runner.clone());
-        let program = Some(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned());
+        let program = Some(r"C:\Apps\Coddy Studio\coddy-studio-desktop.exe".to_owned());
 
         let active_worker = worker.clone();
         let active_program = program.clone();

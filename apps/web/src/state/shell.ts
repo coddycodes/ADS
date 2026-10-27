@@ -4,7 +4,7 @@ import {
   createEnvironmentSnapshotAtom,
   createConnectionCatalogHealthAtom,
   createShellEnvironmentAtoms,
-} from "@bibcode/client-runtime/state/shell";
+} from "@coddy/client-runtime/state/shell";
 import { useAtomValue } from "@effect/atom-react";
 
 import { environmentCatalog } from "../connection/catalog";

@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
-import type { TerminalAttachStreamEvent } from "@bibcode/contracts";
+import type { TerminalAttachStreamEvent } from "@coddy/contracts";
 
 import {
   createTerminalTranscriptRuntime,

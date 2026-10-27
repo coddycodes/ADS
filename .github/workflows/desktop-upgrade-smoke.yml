@@ -144,7 +144,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          key_path="$RUNNER_TEMP/bibcode-seeded-upgrade.key"
+          key_path="$RUNNER_TEMP/coddy-studio-seeded-upgrade.key"
           key_password="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
           echo "::add-mask::$key_password"
           (cd apps/desktop && vp exec tauri signer generate \
@@ -154,7 +154,7 @@ jobs:
           {
             echo "TAURI_SIGNING_PRIVATE_KEY=$key_path"
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$key_password"
-            echo "BIBCODE_UPGRADE_PUBLIC_KEY_FILE=$key_path.pub"
+            echo "CODDY_STUDIO_UPGRADE_PUBLIC_KEY_FILE=$key_path.pub"
           } >> "$GITHUB_ENV"
 
       - name: Audit Windows processes and keep crash dumps
@@ -168,9 +168,9 @@ jobs:
           reg add HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit /v ProcessCreationIncludeCmdLine_Enabled /t REG_DWORD /d 1 /f
           # A seeded client that crashes (v0.7.2 overflows its stack when it installs, #95) leaves
           # a minidump of the test's own synthetic data for the crash site.
-          $dumps = Join-Path $env:RUNNER_TEMP "bibcode-crash-dumps"
+          $dumps = Join-Path $env:RUNNER_TEMP "coddy-studio-crash-dumps"
           New-Item -ItemType Directory -Force -Path $dumps | Out-Null
-          $key = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\bibcode-desktop.exe"
+          $key = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\coddy-studio-desktop.exe"
           New-Item -Force -Path $key | Out-Null
           New-ItemProperty -Force -Path $key -Name DumpFolder -PropertyType ExpandString -Value $dumps | Out-Null
           New-ItemProperty -Force -Path $key -Name DumpType -PropertyType DWord -Value 1 | Out-Null
@@ -187,10 +187,10 @@ jobs:
             --candidate-version "${{ steps.versions.outputs.candidate_version }}"
             --previous-tag "${{ steps.versions.outputs.previous_tag }}"
             --previous-version "${{ steps.versions.outputs.previous_version }}"
-            --public-key-file "$BIBCODE_UPGRADE_PUBLIC_KEY_FILE"
+            --public-key-file "$CODDY_STUDIO_UPGRADE_PUBLIC_KEY_FILE"
             --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.platform }}-${{ matrix.arch }}"
-            --work-root "$RUNNER_TEMP/bibcode-seeded-upgrade/work"
-            --artifact-dir "$RUNNER_TEMP/bibcode-seeded-upgrade/evidence"
+            --work-root "$RUNNER_TEMP/coddy-studio-seeded-upgrade/work"
+            --artifact-dir "$RUNNER_TEMP/coddy-studio-seeded-upgrade/evidence"
             --updater-port 43120
             --restart-timeout-ms 180000)
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
@@ -204,7 +204,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: seeded-upgrade-${{ matrix.platform }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/bibcode-seeded-upgrade/evidence/*
+          path: ${{ runner.temp }}/coddy-studio-seeded-upgrade/evidence/*
           if-no-files-found: error
           retention-days: 7
 
@@ -213,7 +213,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: seeded-upgrade-crash-dumps-${{ matrix.arch }}
-          path: ${{ runner.temp }}/bibcode-crash-dumps/*
+          path: ${{ runner.temp }}/coddy-studio-crash-dumps/*
           if-no-files-found: ignore
           retention-days: 7
 
@@ -281,14 +281,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "WSL build prerequisites failed" }
           wsl bash -lc "set -euo pipefail; if ! command -v cargo >/dev/null; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.1; fi"
           if ($LASTEXITCODE -ne 0) { throw "WSL Rust setup failed" }
-          $build = "set -euo pipefail; cd '$workspaceWsl'; export PATH=`"`$HOME/.cargo/bin:`$PATH`"; CARGO_TARGET_DIR='$workspaceWsl/target/x86_64-unknown-linux-gnu' cargo build -p bibcode-server --bin bibcode --release"
+          $build = "set -euo pipefail; cd '$workspaceWsl'; export PATH=`"`$HOME/.cargo/bin:`$PATH`"; CARGO_TARGET_DIR='$workspaceWsl/target/x86_64-unknown-linux-gnu' cargo build -p coddy-studio-server --bin coddy-studio --release"
           wsl bash -lc $build
           if ($LASTEXITCODE -ne 0) { throw "WSL server build failed" }
-          $serverBinary = Join-Path $env:GITHUB_WORKSPACE "target\x86_64-unknown-linux-gnu\release\bibcode"
+          $serverBinary = Join-Path $env:GITHUB_WORKSPACE "target\x86_64-unknown-linux-gnu\release\coddy-studio"
           if (-not (Test-Path -LiteralPath $serverBinary -PathType Leaf)) {
             throw "WSL server build did not produce the expected binary"
           }
-          "BIBCODE_WSL_SERVER_BINARY=$serverBinary" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CODDY_STUDIO_WSL_SERVER_BINARY=$serverBinary" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - id: wsl_versions
         name: Resolve WSL previous and candidate versions
@@ -314,14 +314,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          key_path="$RUNNER_TEMP/bibcode-seeded-wsl-upgrade.key"
+          key_path="$RUNNER_TEMP/coddy-studio-seeded-wsl-upgrade.key"
           key_password="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
           echo "::add-mask::$key_password"
           (cd apps/desktop && vp exec tauri signer generate --ci --password "$key_password" --write-keys "$key_path" >/dev/null)
           {
             echo "TAURI_SIGNING_PRIVATE_KEY=$key_path"
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$key_password"
-            echo "BIBCODE_UPGRADE_PUBLIC_KEY_FILE=$key_path.pub"
+            echo "CODDY_STUDIO_UPGRADE_PUBLIC_KEY_FILE=$key_path.pub"
           } >> "$GITHUB_ENV"
 
       - name: Run protected WSL storage-identity upgrade
@@ -336,10 +336,10 @@ jobs:
             --candidate-version "${{ steps.wsl_versions.outputs.candidate_version }}" \
             --previous-tag "${{ steps.wsl_versions.outputs.previous_tag }}" \
             --previous-version "${{ steps.wsl_versions.outputs.previous_version }}" \
-            --public-key-file "$BIBCODE_UPGRADE_PUBLIC_KEY_FILE" \
+            --public-key-file "$CODDY_STUDIO_UPGRADE_PUBLIC_KEY_FILE" \
             --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-windows-wsl" \
-            --work-root "$RUNNER_TEMP/bibcode-seeded-wsl-upgrade/work" \
-            --artifact-dir "$RUNNER_TEMP/bibcode-seeded-wsl-upgrade/evidence" \
+            --work-root "$RUNNER_TEMP/coddy-studio-seeded-wsl-upgrade/work" \
+            --artifact-dir "$RUNNER_TEMP/coddy-studio-seeded-wsl-upgrade/evidence" \
             --updater-port 43220 \
             --restart-timeout-ms 240000
 
@@ -348,6 +348,6 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: seeded-upgrade-windows-wsl
-          path: ${{ runner.temp }}/bibcode-seeded-wsl-upgrade/evidence/*
+          path: ${{ runner.temp }}/coddy-studio-seeded-wsl-upgrade/evidence/*
           if-no-files-found: error
           retention-days: 7

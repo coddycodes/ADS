@@ -91,7 +91,7 @@ describe("hermetic guard activation", () => {
     const server = read("apps/server/Cargo.toml");
     expect(table(server.features)[feature]).toEqual([]);
     for (const path of ["apps/server/Cargo.toml", "apps/desktop/src-tauri/Cargo.toml"]) {
-      const dependency = table(table(read(path))["dev-dependencies"])["bibcode-server"];
+      const dependency = table(table(read(path))["dev-dependencies"])["coddy-studio-server"];
       expect(table(dependency).workspace).toBe(true);
       expect(strings(table(dependency).features)).toContain(feature);
     }
@@ -103,19 +103,19 @@ describe("hermetic guard activation", () => {
   it("rejects accidental normal, target-specific and indirect-default activation", () => {
     expect(
       runtimeViolations(
-        parseToml('[dependencies]\nbibcode-server = { features = ["hermetic-test-guard"] }'),
+        parseToml('[dependencies]\ncoddy-studio-server = { features = ["hermetic-test-guard"] }'),
       ),
-    ).toEqual(["runtime dependency bibcode-server"]);
+    ).toEqual(["runtime dependency coddy-studio-server"]);
     expect(
       runtimeViolations(
         parseToml(
-          '[target."cfg(windows)".dependencies]\nbibcode-server = { features = ["hermetic-test-guard"] }',
+          '[target."cfg(windows)".dependencies]\ncoddy-studio-server = { features = ["hermetic-test-guard"] }',
         ),
       ),
-    ).toEqual(["runtime dependency bibcode-server"]);
+    ).toEqual(["runtime dependency coddy-studio-server"]);
     expect(
       runtimeViolations(
-        parseToml('[features]\ndefault = ["full"]\nfull = ["bibcode-server/hermetic-test-guard"]'),
+        parseToml('[features]\ndefault = ["full"]\nfull = ["coddy-studio-server/hermetic-test-guard"]'),
       ),
     ).toEqual(["default feature"]);
   });

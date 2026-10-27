@@ -1,4 +1,4 @@
-import type { DesktopPreviewTabState } from "@bibcode/contracts";
+import type { DesktopPreviewTabState } from "@coddy/contracts";
 import { Window } from "happy-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -7,7 +7,7 @@ import { supportsPreviewRuntimeCapability } from "~/previewRuntimeCapabilities";
 import { createFramePreviewBridge, FRAME_UNSUPPORTED_DESCRIPTION } from "./framePreviewBridge";
 
 const GATEWAY = "http://box.lan:41000";
-const BOOTSTRAP = `${GATEWAY}/__bibcode/bootstrap?cap=C&to=%2F&ui=http%3A%2F%2Fbox.lan%3A3773`;
+const BOOTSTRAP = `${GATEWAY}/__coddy-studio/bootstrap?cap=C&to=%2F&ui=http%3A%2F%2Fbox.lan%3A3773`;
 
 let window: Window;
 let frameWindows: Map<HTMLIFrameElement, { postMessage: ReturnType<typeof vi.fn> }>;
@@ -106,7 +106,7 @@ describe("createFramePreviewBridge", () => {
     // The frame's load event comes first; the page reports from its own load handler.
     iframe?.dispatchEvent(new window.Event("load") as unknown as Event);
     report(iframe!, {
-      type: "bibcode-preview-frame",
+      type: "coddy-studio-preview-frame",
       url: `${GATEWAY}/docs?x=1`,
       title: "Docs",
       canGoBack: true,
@@ -137,7 +137,7 @@ describe("createFramePreviewBridge", () => {
     const [iframe] = iframes();
     iframe?.dispatchEvent(new window.Event("load") as unknown as Event);
     const page = {
-      type: "bibcode-preview-frame",
+      type: "coddy-studio-preview-frame",
       title: "A",
       canGoBack: false,
       canGoForward: false,
@@ -172,7 +172,7 @@ describe("createFramePreviewBridge", () => {
     const [iframe] = iframes();
     iframe?.dispatchEvent(new window.Event("load") as unknown as Event);
     report(iframe!, {
-      type: "bibcode-preview-frame",
+      type: "coddy-studio-preview-frame",
       url: `${GATEWAY}/a`,
       title: "A",
       canGoBack: true,
@@ -194,7 +194,7 @@ describe("createFramePreviewBridge", () => {
     iframe?.dispatchEvent(new window.Event("load") as unknown as Event);
     const before = states.length;
     const valid = {
-      type: "bibcode-preview-frame",
+      type: "coddy-studio-preview-frame",
       url: `${GATEWAY}/x`,
       title: "X",
       canGoBack: false,
@@ -213,7 +213,7 @@ describe("createFramePreviewBridge", () => {
     expect(states.length).toBe(before);
   });
 
-  it("hands the page's links to the server's localhost to BiBCode as new tabs", async () => {
+  it("hands the page's links to the server's localhost to Coddy Studio as new tabs", async () => {
     const { bridge } = makeBridge();
     const opened: Array<[string, string]> = [];
     bridge.onNewWindowRequest((tabId, url) => opened.push([tabId, url]));
@@ -221,11 +221,11 @@ describe("createFramePreviewBridge", () => {
     await bridge.navigate("tab-1", BOOTSTRAP);
     const [iframe] = iframes();
     // An interactive page can be clicked before its frame's load event (a slow image).
-    report(iframe!, { type: "bibcode-preview-open", url: "http://localhost:8123/docs" });
-    report(iframe!, { type: "bibcode-preview-open", url: "javascript:alert(1)" });
+    report(iframe!, { type: "coddy-studio-preview-open", url: "http://localhost:8123/docs" });
+    report(iframe!, { type: "coddy-studio-preview-open", url: "javascript:alert(1)" });
     report(
       iframe!,
-      { type: "bibcode-preview-open", url: "http://localhost:1/" },
+      { type: "coddy-studio-preview-open", url: "http://localhost:1/" },
       "http://box.lan:42000",
     );
     expect(opened).toEqual([["tab-1", "http://localhost:8123/docs"]]);
@@ -241,16 +241,16 @@ describe("createFramePreviewBridge", () => {
     await bridge.goForward("tab-1");
     await bridge.refresh("tab-1");
     expect(frame?.postMessage.mock.calls).toEqual([
-      [{ type: "bibcode-preview-command", command: "back" }, GATEWAY],
-      [{ type: "bibcode-preview-command", command: "forward" }, GATEWAY],
-      [{ type: "bibcode-preview-command", command: "reload" }, GATEWAY],
+      [{ type: "coddy-studio-preview-command", command: "back" }, GATEWAY],
+      [{ type: "coddy-studio-preview-command", command: "forward" }, GATEWAY],
+      [{ type: "coddy-studio-preview-command", command: "reload" }, GATEWAY],
     ]);
   });
 
   it.each([
     ["another site", "https://example.com/"],
     // The gateway lets only a page on its own host frame it.
-    ["another host's gateway", "http://other.lan:41000/__bibcode/bootstrap?cap=C&to=%2F"],
+    ["another host's gateway", "http://other.lan:41000/__coddy-studio/bootstrap?cap=C&to=%2F"],
   ])("explains %s instead of showing a blank page", async (_, url) => {
     const { bridge, states } = makeBridge();
     await bridge.createTab("tab-1");
@@ -272,7 +272,7 @@ describe("createFramePreviewBridge", () => {
     const [iframe] = iframes();
     iframe?.dispatchEvent(new window.Event("load") as unknown as Event);
     const page = {
-      type: "bibcode-preview-frame",
+      type: "coddy-studio-preview-frame",
       title: "A",
       canGoBack: true,
       canGoForward: false,
@@ -296,7 +296,7 @@ describe("createFramePreviewBridge", () => {
     const [iframe] = iframes();
     iframe?.dispatchEvent(new window.Event("load") as unknown as Event);
     report(iframe!, {
-      type: "bibcode-preview-frame",
+      type: "coddy-studio-preview-frame",
       url: `${GATEWAY}/docs`,
       title: "Docs",
       canGoBack: false,
@@ -349,7 +349,7 @@ describe("createFramePreviewBridge", () => {
     expect(iframes()).toHaveLength(0);
     const before = states.length;
     report(iframe!, {
-      type: "bibcode-preview-frame",
+      type: "coddy-studio-preview-frame",
       url: `${GATEWAY}/late`,
       title: "",
       canGoBack: false,

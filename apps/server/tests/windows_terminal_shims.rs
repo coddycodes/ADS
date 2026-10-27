@@ -8,7 +8,7 @@ use std::{
 };
 
 use base64::Engine as _;
-use bibcode_server::terminal::{PortablePtyBackend, PtyBackend, PtySpawnInput};
+use coddy_studio_server::terminal::{PortablePtyBackend, PtyBackend, PtySpawnInput};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use windows_sys::Win32::{
     Foundation::{
@@ -21,12 +21,12 @@ use windows_sys::Win32::{
     System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
 };
 
-const OUTPUT_MARKER: &str = "BIBCODE_NATIVE_PTY_OUTPUT";
-const CONSOLE_PALETTE_MARKER: &str = "BIBCODE_CONSOLE_PALETTE";
-const CONSOLE_PALETTE_CHILD_ENV: &str = "BIBCODE_TEST_CONSOLE_PALETTE_CHILD";
-const WINDOWS_CONSOLE_THEME_ENV: &str = "BIBCODE_WINDOWS_CONSOLE_THEME";
-const TRUSTED_CMD_FIXTURE_ENV: &str = "BIBCODE_TEST_TRUSTED_CMD_FIXTURE";
-const NATIVE_ARGV_MARKER: &str = "BIBCODE_NATIVE_ARGV";
+const OUTPUT_MARKER: &str = "CODDY_STUDIO_NATIVE_PTY_OUTPUT";
+const CONSOLE_PALETTE_MARKER: &str = "CODDY_STUDIO_CONSOLE_PALETTE";
+const CONSOLE_PALETTE_CHILD_ENV: &str = "CODDY_STUDIO_TEST_CONSOLE_PALETTE_CHILD";
+const WINDOWS_CONSOLE_THEME_ENV: &str = "CODDY_STUDIO_WINDOWS_CONSOLE_THEME";
+const TRUSTED_CMD_FIXTURE_ENV: &str = "CODDY_STUDIO_TEST_TRUSTED_CMD_FIXTURE";
+const NATIVE_ARGV_MARKER: &str = "CODDY_STUDIO_NATIVE_ARGV";
 const TERMINAL_PROCESS_TREE_INTEGRATION_DEADLINE: Duration = Duration::from_secs(30);
 
 struct OwnedHandle(HANDLE);
@@ -93,7 +93,7 @@ fn powershell_encoded_command(command: &str) -> String {
 
 fn descendant_spawning_powershell_command() -> String {
     let child_command = powershell_encoded_command(
-        "[IO.File]::WriteAllText($env:BIBCODE_TEST_CHILD_PID, [string]$PID); Start-Sleep -Seconds 30",
+        "[IO.File]::WriteAllText($env:CODDY_STUDIO_TEST_CHILD_PID, [string]$PID); Start-Sleep -Seconds 30",
     );
     format!(
         "$child = Start-Process -FilePath powershell.exe -ArgumentList '-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand','{child_command}' -PassThru; Wait-Process -Id $child.Id"
@@ -272,11 +272,11 @@ fn console_palette_fallback_child_fixture() {
         "report" => true,
         _ => false,
     };
-    let cwd_matches = std::env::var("BIBCODE_TEST_EXPECTED_CWD").map_or(true, |cwd| {
+    let cwd_matches = std::env::var("CODDY_STUDIO_TEST_EXPECTED_CWD").map_or(true, |cwd| {
         Path::new(&cwd) == std::env::current_dir().unwrap()
     });
     let env_matches =
-        std::env::var("BIBCODE_TEST_SENTINEL_ENV").map_or(true, |value| value == "env value");
+        std::env::var("CODDY_STUDIO_TEST_SENTINEL_ENV").map_or(true, |value| value == "env value");
     let marker_stripped = std::env::var_os(WINDOWS_CONSOLE_THEME_ENV).is_none();
     if !(palette_matches && cwd_matches && env_matches && marker_stripped) {
         std::process::exit(92);
@@ -549,11 +549,11 @@ async fn portable_backend_initializes_codex_console_palette_before_root_spawn() 
                     (CONSOLE_PALETTE_CHILD_ENV.to_owned(), expected.to_owned()),
                     (WINDOWS_CONSOLE_THEME_ENV.to_owned(), expected.to_owned()),
                     (
-                        "BIBCODE_TEST_EXPECTED_CWD".to_owned(),
+                        "CODDY_STUDIO_TEST_EXPECTED_CWD".to_owned(),
                         cwd.to_string_lossy().into_owned(),
                     ),
                     (
-                        "BIBCODE_TEST_SENTINEL_ENV".to_owned(),
+                        "CODDY_STUDIO_TEST_SENTINEL_ENV".to_owned(),
                         "env value".to_owned(),
                     ),
                 ]),
@@ -597,7 +597,7 @@ async fn portable_backend_runs_windows_command_and_powershell_shims() {
         std::fs::write(
             &executable,
             format!(
-                "@echo off\r\nping -n 2 127.0.0.1 >nul\r\necho {extension}:%~1:%~2:%~3:%~4:%BIBCODE_INTERNAL_BATCH_SCRIPT%\r\n"
+                "@echo off\r\nping -n 2 127.0.0.1 >nul\r\necho {extension}:%~1:%~2:%~3:%~4:%CODDY_STUDIO_INTERNAL_BATCH_SCRIPT%\r\n"
             ),
         )
         .unwrap();
@@ -605,7 +605,7 @@ async fn portable_backend_runs_windows_command_and_powershell_shims() {
             &executable,
             &arguments,
             BTreeMap::from([(
-                "BIBCODE_INTERNAL_BATCH_SCRIPT".to_owned(),
+                "CODDY_STUDIO_INTERNAL_BATCH_SCRIPT".to_owned(),
                 "user-controlled-value".to_owned(),
             )]),
             &format!(
@@ -637,7 +637,7 @@ async fn killing_a_batch_terminal_terminates_its_descendant_process() {
     let script = directory.path().join("long running provider.cmd");
     std::fs::write(
         &script,
-        "@echo off\r\npowershell.exe -NoLogo -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllText($env:BIBCODE_TEST_CHILD_PID, [string]$PID); Start-Sleep -Seconds 30\"\r\n",
+        "@echo off\r\npowershell.exe -NoLogo -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllText($env:CODDY_STUDIO_TEST_CHILD_PID, [string]$PID); Start-Sleep -Seconds 30\"\r\n",
     )
     .unwrap();
     assert_terminal_kills_descendant(
@@ -648,7 +648,7 @@ async fn killing_a_batch_terminal_terminates_its_descendant_process() {
             cols: 80,
             rows: 24,
             env: BTreeMap::from([(
-                "BIBCODE_TEST_CHILD_PID".to_owned(),
+                "CODDY_STUDIO_TEST_CHILD_PID".to_owned(),
                 child_pid_file.to_string_lossy().into_owned(),
             )]),
         },
@@ -672,7 +672,7 @@ async fn killing_a_powershell_shim_terminal_terminates_its_descendant_process() 
             cols: 80,
             rows: 24,
             env: BTreeMap::from([(
-                "BIBCODE_TEST_CHILD_PID".to_owned(),
+                "CODDY_STUDIO_TEST_CHILD_PID".to_owned(),
                 child_pid_file.to_string_lossy().into_owned(),
             )]),
         },
@@ -700,7 +700,7 @@ async fn killing_a_native_windows_terminal_terminates_its_descendant_process() {
             cols: 80,
             rows: 24,
             env: BTreeMap::from([(
-                "BIBCODE_TEST_CHILD_PID".to_owned(),
+                "CODDY_STUDIO_TEST_CHILD_PID".to_owned(),
                 child_pid_file.to_string_lossy().into_owned(),
             )]),
         },

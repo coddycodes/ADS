@@ -43,7 +43,7 @@ impl<'a> From<&'a mut portable_pty::CommandBuilder> for ChildCommand<'a> {
 }
 
 /// Isolate a user-facing child from AppImage launcher state, after configuring
-/// its environment. Never call for BiBCode binaries or the desktop/WebKitGTK
+/// its environment. Never call for Coddy Studio binaries or the desktop/WebKitGTK
 /// process itself. A no-op off Linux; does not change process-global state.
 ///
 /// # Warning
@@ -97,7 +97,7 @@ mod linux {
 
     /// Child-only overrides for user-facing commands, evaluated from their effective
     /// environment. Never mutate std::env: the desktop and its WebKitGTK children,
-    /// and BiBCode's own binaries, need the bundled environment.
+    /// and Coddy Studio's own binaries, need the bundled environment.
     pub(crate) fn child_environment_overrides(
         environment: &BTreeMap<OsString, OsString>,
         appdir: &Path,
@@ -253,12 +253,12 @@ mod linux {
 
             let mut command = portable_pty::CommandBuilder::new("/usr/bin/env");
             command.env_clear();
-            command.env("APPDIR", "/tmp/bibcode-raw-appdir");
-            command.env("APPIMAGE", "/opt/bibcode.AppImage");
-            let name = OsString::from_vec(b"BIBCODE_RAW_\xff".to_vec());
+            command.env("APPDIR", "/tmp/coddy-studio-raw-appdir");
+            command.env("APPIMAGE", "/opt/coddy-studio.AppImage");
+            let name = OsString::from_vec(b"CODDY_STUDIO_RAW_\xff".to_vec());
             command.env(
                 &name,
-                OsString::from_vec(b"/tmp/bibcode-raw-appdir/usr/lib:/host/\xff".to_vec()),
+                OsString::from_vec(b"/tmp/coddy-studio-raw-appdir/usr/lib:/host/\xff".to_vec()),
             );
             super::super::isolate_appimage_environment(&mut command);
             assert_eq!(
@@ -296,7 +296,7 @@ mod linux {
             let appdir = fixture.path().join("squashfs-root");
             std::fs::create_dir(&appdir).unwrap();
             std::fs::write(appdir.join("AppRun"), "launcher").unwrap();
-            let executable = appdir.join("usr/bin/bibcode-desktop");
+            let executable = appdir.join("usr/bin/coddy-studio-desktop");
             for marker in [None, Some("")] {
                 let environment = environment(&appdir, marker);
                 let overrides = gated_overrides(&environment, Some(&executable));
@@ -307,8 +307,8 @@ mod linux {
                     "extracted AppRun must isolate Python without APPIMAGE"
                 );
                 for outside in [
-                    fixture.path().join("bibcode"),
-                    fixture.path().join("squashfs-root-host/bin/bibcode"),
+                    fixture.path().join("coddy-studio"),
+                    fixture.path().join("squashfs-root-host/bin/coddy-studio"),
                 ] {
                     assert!(gated_overrides(&environment, Some(&outside)).is_empty());
                 }
@@ -324,14 +324,17 @@ mod linux {
         #[test]
         fn appimage_marker_keeps_existing_gate_independent_of_executable_location() {
             let fixture = tempfile::tempdir().unwrap();
-            let environment = environment(fixture.path(), Some("/opt/bibcode.AppImage"));
+            let environment = environment(fixture.path(), Some("/opt/coddy-studio.AppImage"));
             assert!(!gated_overrides(&environment, None).is_empty());
-            assert!(!gated_overrides(&environment, Some(Path::new("/usr/bin/bibcode"))).is_empty());
+            assert!(
+                !gated_overrides(&environment, Some(Path::new("/usr/bin/coddy-studio"))).is_empty()
+            );
             for invalid in ["", "/", "relative/AppDir"] {
                 let mut environment = environment.clone();
                 environment.insert("APPDIR".into(), invalid.into());
                 assert!(
-                    gated_overrides(&environment, Some(Path::new("/usr/bin/bibcode"))).is_empty()
+                    gated_overrides(&environment, Some(Path::new("/usr/bin/coddy-studio")))
+                        .is_empty()
                 );
             }
         }
@@ -347,14 +350,14 @@ mod linux {
                 // inherited fixture variable must stay out of this command.
                 command.env("APPDIR", std::env::var_os("APPDIR").unwrap());
                 command.env("APPIMAGE", std::env::var_os("APPIMAGE").unwrap());
-                command.env("BIBCODE_EXPLICIT_ONLY", "yes");
+                command.env("CODDY_STUDIO_EXPLICIT_ONLY", "yes");
                 super::super::isolate_appimage_environment(ChildCommand::Process {
                     command: &mut command,
                     inheritance: EnvironmentInheritance::Cleared,
                 });
                 let output = command.output().unwrap();
                 assert!(output.status.success());
-                assert_eq!(output.stdout, b"BIBCODE_EXPLICIT_ONLY=yes\0");
+                assert_eq!(output.stdout, b"CODDY_STUDIO_EXPLICIT_ONLY=yes\0");
             });
         }
     }

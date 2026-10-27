@@ -69,7 +69,7 @@ pub(crate) const TICKET_WAIT: Duration = Duration::from_secs(5);
 /// The E2EE route's Noise prologue. It binds a handshake to this route, so a media
 /// handshake cannot be replayed into `/ws-e2ee` or the reverse; clients must use the same
 /// bytes.
-pub(crate) const DEVICE_MEDIA_NOISE_PROLOGUE: &[u8] = b"bibcode-device-media/1";
+pub(crate) const DEVICE_MEDIA_NOISE_PROLOGUE: &[u8] = b"coddy-studio-device-media/1";
 /// How long one frame may wait for the client before the socket closes as `slow`.
 pub(crate) const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long closing may take outside tests ([`MediaSocketState::close_linger`]): sending

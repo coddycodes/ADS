@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import { type EnvironmentId, ThreadId } from "@coddy/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { createJSONStorage } from "zustand/middleware";
 
@@ -1046,7 +1046,7 @@ describe("rightPanelStore", () => {
     const originalStorage = useRightPanelStore.persist.getOptions().storage;
     expect(originalStorage).toBeDefined();
     const serializedStorage = new Map([
-      ["bibcode:right-panel-state:v2", JSON.stringify({ state: persistedState, version: 9 })],
+      ["coddy-studio:right-panel-state:v2", JSON.stringify({ state: persistedState, version: 9 })],
     ]);
     const hydrationStorage = createJSONStorage(() => ({
       getItem: (name: string) => serializedStorage.get(name) ?? null,
@@ -1482,7 +1482,7 @@ describe("rightPanelStore", () => {
 describe("rightPanelStore device surface", () => {
   async function hydrate(persisted: { state: unknown; version: number }) {
     const originalStorage = useRightPanelStore.persist.getOptions().storage;
-    const serialized = new Map([["bibcode:right-panel-state:v2", JSON.stringify(persisted)]]);
+    const serialized = new Map([["coddy-studio:right-panel-state:v2", JSON.stringify(persisted)]]);
     const storage = createJSONStorage(() => ({
       getItem: (name: string) => serialized.get(name) ?? null,
       setItem: (name: string, value: string) => {

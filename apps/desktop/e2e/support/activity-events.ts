@@ -2,27 +2,27 @@
 
 export const desktopActivityFixture = {
   actor: {
-    id: "bibcode-ui-reviewer-thread",
+    id: "coddy-studio-ui-reviewer-thread",
     name: "Fixture reviewer",
     role: "reviewer",
   },
   backgroundTask: {
-    id: "bibcode-ui-background-task",
+    id: "coddy-studio-ui-background-task",
     command: "fixture background task",
   },
   project: {
-    id: "bibcode-ui-activity-project",
-    title: "BiBCode UI Fixture",
+    id: "coddy-studio-ui-activity-project",
+    title: "Coddy Studio UI Fixture",
   },
-  rootThreadId: "bibcode-ui-provider-thread",
+  rootThreadId: "coddy-studio-ui-provider-thread",
   thread: {
-    id: "bibcode-ui-activity-thread",
+    id: "coddy-studio-ui-activity-thread",
     title: "Activity acceptance fixture",
   },
 } as const;
 
 export const desktopActivityMarkerFileName =
-  `.bibcode-task4-activity-${desktopActivityFixture.rootThreadId}` as const;
+  `.coddy-studio-task4-activity-${desktopActivityFixture.rootThreadId}` as const;
 
 const desktopActivityModelSelection = {
   instanceId: "codex",
@@ -46,7 +46,7 @@ export function desktopActivitySessionCommands(
   return [
     {
       type: "project.create",
-      commandId: "bibcode-ui-activity-project-create",
+      commandId: "coddy-studio-ui-activity-project-create",
       projectId: desktopActivityFixture.project.id,
       title: desktopActivityFixture.project.title,
       workspaceRoot: projectPath,
@@ -55,7 +55,7 @@ export function desktopActivitySessionCommands(
     },
     {
       type: "thread.create",
-      commandId: "bibcode-ui-activity-thread-create",
+      commandId: "coddy-studio-ui-activity-thread-create",
       threadId: desktopActivityFixture.thread.id,
       projectId: desktopActivityFixture.project.id,
       title: desktopActivityFixture.thread.title,
@@ -68,10 +68,10 @@ export function desktopActivitySessionCommands(
     },
     {
       type: "thread.turn.start",
-      commandId: "bibcode-ui-activity-turn-start",
+      commandId: "coddy-studio-ui-activity-turn-start",
       threadId: desktopActivityFixture.thread.id,
       message: {
-        messageId: "bibcode-ui-activity-message",
+        messageId: "coddy-studio-ui-activity-message",
         role: "user",
         text: "load deterministic activity",
         attachments: [],
@@ -87,10 +87,10 @@ export function desktopActivitySessionCommands(
 export function desktopActivityFollowupTurnCommand(observedAtMs: number = Date.now()) {
   return {
     type: "thread.turn.start",
-    commandId: "bibcode-ui-activity-followup-turn-start",
+    commandId: "coddy-studio-ui-activity-followup-turn-start",
     threadId: desktopActivityFixture.thread.id,
     message: {
-      messageId: "bibcode-ui-activity-followup-message",
+      messageId: "coddy-studio-ui-activity-followup-message",
       role: "user",
       text: "publish deterministic live activity update",
       attachments: [],
@@ -105,10 +105,10 @@ export function desktopActivityFollowupTurnCommand(observedAtMs: number = Date.n
 export function desktopActivityComposerFollowupTurnCommand(observedAtMs: number = Date.now()) {
   return {
     type: "thread.turn.start",
-    commandId: "bibcode-ui-activity-composer-followup-turn-start",
+    commandId: "coddy-studio-ui-activity-composer-followup-turn-start",
     threadId: desktopActivityFixture.thread.id,
     message: {
-      messageId: "bibcode-ui-activity-composer-followup-message",
+      messageId: "coddy-studio-ui-activity-composer-followup-message",
       role: "user",
       text: "publish deterministic composer activity update",
       attachments: [],

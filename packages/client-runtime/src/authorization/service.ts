@@ -1,5 +1,5 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@bibcode/contracts";
-import type { RelayManagedEndpoint } from "@bibcode/contracts/relay";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@coddy/contracts";
+import type { RelayManagedEndpoint } from "@coddy/contracts/relay";
 import {
   exchangeRemoteDpopAccessToken,
   e2eeSocketUrl,
@@ -63,7 +63,7 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
       >;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
   }
->()("@bibcode/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
+>()("@coddy/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
 const TOKEN_EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const CACHED_ENDPOINT_FAILURE_THRESHOLD = 2;

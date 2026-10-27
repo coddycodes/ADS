@@ -5,8 +5,8 @@ import {
   type DesktopUpdateActionResult,
   type DesktopUpdateProtection,
   type DesktopUpdateState,
-} from "@bibcode/contracts";
-import { runAtomCommand } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/contracts";
+import { runAtomCommand } from "@coddy/client-runtime/state/runtime";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -186,7 +186,7 @@ export function UpdateProtectionDialog({
 
   const installLabel = (() => {
     if (restarting === "server") return "Restarting server…";
-    if (restarting === "app") return "Restarting BiBCode…";
+    if (restarting === "app") return "Restarting Coddy Studio…";
     if (working) return protecting ? "Protecting projects…" : "Installing update…";
     if (primaryFailure) return "Retry protection";
     if (failedSecondaries.length > 0) return "Install with exclusions";
@@ -194,7 +194,7 @@ export function UpdateProtectionDialog({
     return "Protect projects and install";
   })();
 
-  const restartBiBCode = async (fromToast = false) => {
+  const restartCoddyStudio = async (fromToast = false) => {
     const restartApp = bridge?.restartApp;
     if (!restartApp) return;
     await runDesktopUpdateAction(
@@ -206,14 +206,14 @@ export function UpdateProtectionDialog({
         } catch (error) {
           const message = getDesktopUpdateErrorMessage(
             error,
-            "BiBCode couldn't restart. Try again.",
+            "Coddy Studio couldn't restart. Try again.",
           );
           setAppRestartError(message);
           if (fromToast) {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Could not restart BiBCode",
+                title: "Could not restart Coddy Studio",
                 description: message,
               }),
             );
@@ -226,7 +226,7 @@ export function UpdateProtectionDialog({
   const showRecoveryToast = (entries: readonly DesktopBackendRecovery[], retryFailed = false) => {
     const actionProps = retryFailed
       ? bridge?.restartApp
-        ? { children: "Restart BiBCode", onClick: () => void restartBiBCode(true) }
+        ? { children: "Restart Coddy Studio", onClick: () => void restartCoddyStudio(true) }
         : undefined
       : { children: "Restart server", onClick: () => void restartServers(entries, true) };
     addRecoveryToast(
@@ -248,7 +248,7 @@ export function UpdateProtectionDialog({
         setAppRestartError(null);
         const errors: string[] = [];
         if (!bridge?.retryProjectData) {
-          errors.push("Restart server is unavailable. Restart BiBCode and try again.");
+          errors.push("Restart server is unavailable. Restart Coddy Studio and try again.");
         } else {
           // The native host admits only one project-data operation at a time.
           for (const entry of entries) {
@@ -257,7 +257,7 @@ export function UpdateProtectionDialog({
               void retryEnvironment(entry.environmentId);
             } catch (error) {
               errors.push(
-                getDesktopUpdateErrorMessage(error, "BiBCode's local server couldn't restart."),
+                getDesktopUpdateErrorMessage(error, "Coddy Studio's local server couldn't restart."),
               );
             }
           }
@@ -339,7 +339,7 @@ export function UpdateProtectionDialog({
                     {getDesktopBackendRecoveryMessage(entry)}
                   </span>
                 ))
-              : "BiBCode creates a verified project database backup by default before stopping each included local backend. Running tasks will be interrupted."}
+              : "Coddy Studio creates a verified project database backup by default before stopping each included local backend. Running tasks will be interrupted."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3" data-text-surface="card">
@@ -469,8 +469,8 @@ export function UpdateProtectionDialog({
                   {restarting === "server" ? "Restarting server…" : "Restart server"}
                 </Button>
                 {canRestartApp ? (
-                  <Button disabled={working} onClick={() => void restartBiBCode()}>
-                    {restarting === "app" ? "Restarting BiBCode…" : "Restart BiBCode"}
+                  <Button disabled={working} onClick={() => void restartCoddyStudio()}>
+                    {restarting === "app" ? "Restarting Coddy Studio…" : "Restart Coddy Studio"}
                   </Button>
                 ) : null}
               </div>

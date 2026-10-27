@@ -36,7 +36,7 @@ use std::{
 #[cfg(not(unix))]
 use std::io::Read;
 
-use bibcode_server::{
+use coddy_studio_server::{
     RpcExit, RpcRegistry, RpcResult, ServerConfig, ServerMessage, ServerRuntime,
     activity::{ActivityProjection, ActivityRepository},
     cloud, diagnostics,
@@ -75,17 +75,19 @@ use tokio_util::sync::CancellationToken;
 mod websocket_frames;
 use websocket_frames::next_frame_past_heartbeat;
 
-const ATTACHMENT_ABORT_CHILD_STATE: &str = "BIBCODE_TURN_DELIVERY_ATTACHMENT_ABORT_CHILD_STATE";
-const ATTACHMENT_ABORT_CHILD_READY: &str = "BIBCODE_TURN_DELIVERY_ATTACHMENT_ABORT_CHILD_READY";
-const MISSING_ORIGIN_CHILD_TRACE: &str = "BIBCODE_TURN_DELIVERY_MISSING_ORIGIN_TRACE";
-const CRASH_BOUNDARY_CHILD_STATE: &str = "BIBCODE_TURN_DELIVERY_CRASH_STATE";
-const CRASH_BOUNDARY_CHILD_PROVIDER: &str = "BIBCODE_TURN_DELIVERY_CRASH_PROVIDER";
-const CRASH_BOUNDARY_CHILD_MODE: &str = "BIBCODE_TURN_DELIVERY_CRASH_MODE";
-const CRASH_BOUNDARY_CHILD_SENDS: &str = "BIBCODE_TURN_DELIVERY_CRASH_SENDS";
+const ATTACHMENT_ABORT_CHILD_STATE: &str =
+    "CODDY_STUDIO_TURN_DELIVERY_ATTACHMENT_ABORT_CHILD_STATE";
+const ATTACHMENT_ABORT_CHILD_READY: &str =
+    "CODDY_STUDIO_TURN_DELIVERY_ATTACHMENT_ABORT_CHILD_READY";
+const MISSING_ORIGIN_CHILD_TRACE: &str = "CODDY_STUDIO_TURN_DELIVERY_MISSING_ORIGIN_TRACE";
+const CRASH_BOUNDARY_CHILD_STATE: &str = "CODDY_STUDIO_TURN_DELIVERY_CRASH_STATE";
+const CRASH_BOUNDARY_CHILD_PROVIDER: &str = "CODDY_STUDIO_TURN_DELIVERY_CRASH_PROVIDER";
+const CRASH_BOUNDARY_CHILD_MODE: &str = "CODDY_STUDIO_TURN_DELIVERY_CRASH_MODE";
+const CRASH_BOUNDARY_CHILD_SENDS: &str = "CODDY_STUDIO_TURN_DELIVERY_CRASH_SENDS";
 const BOOTSTRAP_RECOVERY_INTEGRATION_DEADLINE: Duration = Duration::from_secs(30);
 const CHILD_PROCESS_DEADLINE: Duration = Duration::from_secs(30);
 #[cfg(target_os = "linux")]
-const DETACHED_PIPE_HOLDER_PID: &str = "BIBCODE_TURN_DELIVERY_DETACHED_PIPE_HOLDER_PID";
+const DETACHED_PIPE_HOLDER_PID: &str = "CODDY_STUDIO_TURN_DELIVERY_DETACHED_PIPE_HOLDER_PID";
 
 fn child_process_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -757,7 +759,7 @@ fn configure_crash_provider(state: &Path, provider: &str) {
 async fn cursor_crash_launch_matches_the_persisted_provider_route() {
     let state = TempDir::new().expect("crash settings");
     configure_crash_provider(state.path(), "cursor");
-    let settings = bibcode_server::server_settings::ProviderSettingsStore::new(state.path())
+    let settings = coddy_studio_server::server_settings::ProviderSettingsStore::new(state.path())
         .get()
         .await
         .expect("persisted crash settings");
@@ -1199,9 +1201,9 @@ struct CrashBoundaryDriver {
     sends: PathBuf,
     crash_on_delivery: bool,
     reconciliation: ProviderReconciliationOutcome,
-    _event_sender: mpsc::Sender<bibcode_server::production::provider_runtime::ProviderEvent>,
+    _event_sender: mpsc::Sender<coddy_studio_server::production::provider_runtime::ProviderEvent>,
     events: tokio::sync::Mutex<
-        mpsc::Receiver<bibcode_server::production::provider_runtime::ProviderEvent>,
+        mpsc::Receiver<coddy_studio_server::production::provider_runtime::ProviderEvent>,
     >,
 }
 
@@ -1215,7 +1217,7 @@ impl ProviderDriver for CrashBoundaryDriver {
                     serde_json::json!({"sessionId":"crash-provider-session"})
                 }),
                 runtime_payload: None,
-                activity_capabilities: bibcode_server::activity::ActivityCapabilities::none(),
+                activity_capabilities: coddy_studio_server::activity::ActivityCapabilities::none(),
             })
         })
     }
@@ -1318,8 +1320,10 @@ impl ProviderDriver for CrashBoundaryDriver {
 
     fn next_event(
         &self,
-    ) -> BoxRuntimeFuture<'_, Option<bibcode_server::production::provider_runtime::ProviderEvent>>
-    {
+    ) -> BoxRuntimeFuture<
+        '_,
+        Option<coddy_studio_server::production::provider_runtime::ProviderEvent>,
+    > {
         Box::pin(async move { self.events.lock().await.recv().await })
     }
 
@@ -1457,10 +1461,10 @@ fn git(cwd: &Path, args: &[&str]) -> String {
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "BiBCode Test")
-        .env("GIT_AUTHOR_EMAIL", "bibcode@example.invalid")
-        .env("GIT_COMMITTER_NAME", "BiBCode Test")
-        .env("GIT_COMMITTER_EMAIL", "bibcode@example.invalid")
+        .env("GIT_AUTHOR_NAME", "Coddy Studio Test")
+        .env("GIT_AUTHOR_EMAIL", "coddy-studio@example.invalid")
+        .env("GIT_COMMITTER_NAME", "Coddy Studio Test")
+        .env("GIT_COMMITTER_EMAIL", "coddy-studio@example.invalid")
         .output()
         .expect("git starts");
     assert!(
@@ -1540,7 +1544,7 @@ async fn bootstrap_restart_after_setup_launch_reuses_worktree_and_terminal_for_p
                 },
                 "prepareWorktree":{
                     "projectCwd":repository_root.path(), "baseBranch":"main",
-                    "branch":"bibcode/restart"
+                    "branch":"coddy-studio/restart"
                 },
                 "runSetupScript":true
             },
@@ -1693,7 +1697,7 @@ async fn bootstrap_restart_after_setup_launch_reuses_worktree_and_terminal_for_p
             .await
             .expect("thread")
             .expect("persisted thread");
-        assert_eq!(thread.branch.as_deref(), Some("bibcode/restart"));
+        assert_eq!(thread.branch.as_deref(), Some("coddy-studio/restart"));
         assert_eq!(
             thread.worktree_path.as_deref(),
             Some(worktree_path.as_str())
@@ -1709,7 +1713,7 @@ async fn bootstrap_restart_after_setup_launch_reuses_worktree_and_terminal_for_p
     let worktrees = git(repository_root.path(), &["worktree", "list", "--porcelain"]);
     assert_eq!(
         worktrees
-            .matches("branch refs/heads/bibcode/restart")
+            .matches("branch refs/heads/coddy-studio/restart")
             .count(),
         1
     );
@@ -1719,7 +1723,10 @@ async fn bootstrap_restart_after_setup_launch_reuses_worktree_and_terminal_for_p
         repository_root.path(),
         &["worktree", "remove", "--force", &worktree_path],
     );
-    git(repository_root.path(), &["branch", "-D", "bibcode/restart"]);
+    git(
+        repository_root.path(),
+        &["branch", "-D", "coddy-studio/restart"],
+    );
 }
 
 #[test]
@@ -1863,7 +1870,7 @@ async fn missing_origin_delivery_child() {
             },
             "prepareWorktree":{
                 "projectCwd":repository_root.path(), "baseBranch":"main",
-                "branch":"bibcode/missing-origin", "startFromOrigin":true
+                "branch":"coddy-studio/missing-origin", "startFromOrigin":true
             },
             "runSetupScript":true
         },
@@ -1989,7 +1996,7 @@ async fn missing_origin_delivery_child() {
     assert!(
         git(
             repository_root.path(),
-            &["branch", "--list", "bibcode/missing-origin"]
+            &["branch", "--list", "coddy-studio/missing-origin"]
         )
         .is_empty()
     );
@@ -2160,7 +2167,7 @@ async fn queued_deliveries_survive_restart_without_provider_launch() {
             engine
                 .repositories()
                 .upsert_provider_session_runtime(
-                    bibcode_server::persistence::ProviderSessionRuntime {
+                    coddy_studio_server::persistence::ProviderSessionRuntime {
                         thread_id: "crash-thread".into(),
                         provider_name: "codex".into(),
                         provider_instance_id: Some("codex".into()),
@@ -2230,7 +2237,7 @@ async fn queued_deliveries_survive_restart_without_provider_launch() {
         );
         assert_eq!(
             row.mode,
-            bibcode_server::orchestration::TurnDeliveryMode::Start
+            coddy_studio_server::orchestration::TurnDeliveryMode::Start
         );
         assert_eq!(row.payload, payload);
         assert_eq!(row.attempts, 0);
@@ -2267,7 +2274,7 @@ async fn queued_deliveries_survive_restart_without_provider_launch() {
             assert_eq!(
                 session.last_error.as_deref(),
                 Some(
-                    "Provider session ended when BiBCode stopped. Review delivery status before continuing."
+                    "Provider session ended when Coddy Studio stopped. Review delivery status before continuing."
                 )
             );
             assert_eq!(session.last_error_class.as_deref(), Some("session_stopped"));
@@ -2310,7 +2317,7 @@ async fn queued_deliveries_survive_restart_without_provider_launch() {
 }
 
 async fn sending_steer_restart(provider: &str, expected: TurnDeliveryState) {
-    use bibcode_server::orchestration::TurnDeliveryMode;
+    use coddy_studio_server::orchestration::TurnDeliveryMode;
     use serde_json::json;
 
     let state = TempDir::new().unwrap();
@@ -2455,10 +2462,13 @@ async fn claude_sending_steer_recovers_as_uncertain_without_resend() {
     sending_steer_restart("claudeAgent", TurnDeliveryState::Uncertain).await;
 }
 
-fn attachment_upload_registry() -> bibcode_server::transfer::staging::UploadRegistry {
-    bibcode_server::transfer::staging::UploadRegistry::new(
-        std::env::temp_dir().join(format!("bibcode-test-uploads-{}", uuid::Uuid::new_v4())),
-        bibcode_server::transfer::staging::UploadLimits::default(),
+fn attachment_upload_registry() -> coddy_studio_server::transfer::staging::UploadRegistry {
+    coddy_studio_server::transfer::staging::UploadRegistry::new(
+        std::env::temp_dir().join(format!(
+            "coddy-studio-test-uploads-{}",
+            uuid::Uuid::new_v4()
+        )),
+        coddy_studio_server::transfer::staging::UploadLimits::default(),
         std::sync::Arc::new(tokio::time::Instant::now),
     )
 }

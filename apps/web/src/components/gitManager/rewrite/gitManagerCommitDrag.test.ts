@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { GitManagerCommitEntry } from "@bibcode/contracts";
+import type { GitManagerCommitEntry } from "@coddy/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";

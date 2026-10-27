@@ -3,7 +3,7 @@ import {
   type GitCancelCloneResult,
   type GitCloneResult,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";

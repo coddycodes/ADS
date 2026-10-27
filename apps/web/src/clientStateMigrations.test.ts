@@ -22,19 +22,19 @@ function memoryStorage(seed: Record<string, string>): Storage {
 
 it("removes only the retired drawer and sidebar-width keys without closing sessions", () => {
   const storage = memoryStorage({
-    "bibcode:terminal-state:v1": "legacy",
+    "coddy-studio:terminal-state:v1": "legacy",
     chat_thread_sidebar_width: "613",
-    "bibcode:sidebar-width:v2": "300",
-    "bibcode:center-panel-state:v1": "center",
-    "bibcode:right-panel-state:v2": "right",
+    "coddy-studio:sidebar-width:v2": "300",
+    "coddy-studio:center-panel-state:v1": "center",
+    "coddy-studio:right-panel-state:v2": "right",
   });
 
   runClientStateMigrationsV1(storage);
   runClientStateMigrationsV1(storage);
 
-  expect(storage.getItem("bibcode:terminal-state:v1")).toBeNull();
+  expect(storage.getItem("coddy-studio:terminal-state:v1")).toBeNull();
   expect(storage.getItem("chat_thread_sidebar_width")).toBeNull();
-  expect(storage.getItem("bibcode:sidebar-width:v2")).toBe("300");
-  expect(storage.getItem("bibcode:center-panel-state:v1")).toBe("center");
-  expect(storage.getItem("bibcode:right-panel-state:v2")).toBe("right");
+  expect(storage.getItem("coddy-studio:sidebar-width:v2")).toBe("300");
+  expect(storage.getItem("coddy-studio:center-panel-state:v1")).toBe("center");
+  expect(storage.getItem("coddy-studio:right-panel-state:v2")).toBe("right");
 });

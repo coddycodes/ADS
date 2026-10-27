@@ -57,7 +57,7 @@ pub(crate) fn relaunch_outside_service_unit<R: tauri::Runtime>(app: &tauri::AppH
             .args(["--user", "--scope", "--collect", "--quiet", "--"])
             .arg(binary)
             .args(env.args_os.iter().skip(1));
-        bibcode_server::process::isolate_appimage_environment(&mut command);
+        coddy_studio_server::process::isolate_appimage_environment(&mut command);
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
@@ -171,7 +171,7 @@ mod tests {
     fn only_a_service_unit_needs_its_own_relaunch_scope() {
         use super::linux::runs_in_service_unit;
         assert!(runs_in_service_unit(
-            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/bibcode-desktop.service\n"
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/coddy-studio-desktop.service\n"
         ));
         assert!(!runs_in_service_unit(
             "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-foot-1234.scope\n"

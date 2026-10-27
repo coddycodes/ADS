@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EventId, type OrchestrationThreadActivity, TurnId } from "@bibcode/contracts";
+import { EventId, type OrchestrationThreadActivity, TurnId } from "@coddy/contracts";
 
 import {
   deriveLatestContextWindowSnapshot,

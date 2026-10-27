@@ -1,4 +1,4 @@
-import type { PullRequestsContext, PullRequestsDetail, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsContext, PullRequestsDetail, ScopedProjectRef } from "@coddy/contracts";
 import { CircleCheckIcon, CircleDotIcon, CircleXIcon, TriangleAlertIcon } from "lucide-react";
 import { memo } from "react";
 import {

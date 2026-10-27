@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { terminalInputKey } from "@bibcode/client-runtime/state/terminal";
+import { terminalInputKey } from "@coddy/client-runtime/state/terminal";
 import {
   proposeTerminalDimensions,
   readTerminalFittedSize,

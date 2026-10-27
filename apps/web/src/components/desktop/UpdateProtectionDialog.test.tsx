@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { DesktopBridge, DesktopUpdateState } from "@bibcode/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@coddy/contracts";
 import { act } from "react";
 import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -185,7 +185,7 @@ describe("UpdateProtectionDialog", () => {
 
     expect(container.textContent).toContain("Update not installed");
     expect(container.textContent).toContain(
-      "BiBCode's local server couldn't restart: port 14373 is in use by another program. Quit that program, then choose Restart server.",
+      "Coddy Studio's local server couldn't restart: port 14373 is in use by another program. Quit that program, then choose Restart server.",
     );
     expect(button("Retry installation").disabled).toBe(true);
     expect(container.textContent).toContain("Restart the server before retrying the installation.");
@@ -261,7 +261,7 @@ describe("UpdateProtectionDialog", () => {
   });
 
   it("continues after a rejected restart and shows the new reason, raw error and application restart refusal", async () => {
-    const newError = "BiBCode's local server couldn't restart: access denied";
+    const newError = "Coddy Studio's local server couldn't restart: access denied";
     harness.retryProjectData.mockRejectedValueOnce(newError).mockResolvedValueOnce(undefined);
     await render({
       ...recoveryState,
@@ -278,19 +278,19 @@ describe("UpdateProtectionDialog", () => {
       backendRecovery: [{ environmentId: "primary", label: "Local", reason: "other", port: 14373 }],
     });
     expect(container.textContent).toContain(
-      "BiBCode's local server couldn't restart. Choose Restart server. If that fails, restart BiBCode.",
+      "Coddy Studio's local server couldn't restart. Choose Restart server. If that fails, restart Coddy Studio.",
     );
     expect(button("Restart server").getAttribute("variant")).toBe("outline");
     await act(async () => button("Details").click());
     expect(container.textContent).toContain(newError);
     expect(container.textContent).not.toContain(recoveryState.message);
     harness.restartApp.mockRejectedValueOnce(
-      "BiBCode can't restart while an update or project-data operation is running.",
+      "Coddy Studio can't restart while an update or project-data operation is running.",
     );
-    await act(async () => button("Restart BiBCode").click());
+    await act(async () => button("Restart Coddy Studio").click());
     expect(harness.restartApp).toHaveBeenCalledOnce();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      "BiBCode can't restart while an update or project-data operation is running.",
+      "Coddy Studio can't restart while an update or project-data operation is running.",
     );
   });
 
@@ -301,7 +301,7 @@ describe("UpdateProtectionDialog", () => {
     await act(async () => button("Restart server").click());
     expect(
       [...container.querySelectorAll("button")].some(
-        (entry) => entry.textContent === "Restart BiBCode",
+        (entry) => entry.textContent === "Restart Coddy Studio",
       ),
     ).toBe(false);
     await act(async () => button("Details").click());
@@ -322,7 +322,7 @@ describe("UpdateProtectionDialog", () => {
         title: "Update not installed",
         timeout: 0,
         description:
-          "BiBCode's local server couldn't restart: port 14373 is in use by another program. Quit that program, then choose Restart server.",
+          "Coddy Studio's local server couldn't restart: port 14373 is in use by another program. Quit that program, then choose Restart server.",
         actionProps: expect.objectContaining({ children: "Restart server" }),
       }),
     );
@@ -455,7 +455,7 @@ describe("UpdateProtectionDialog", () => {
       await act(async () => restartButtons[1]!.click());
       expect(harness.retryProjectData).toHaveBeenCalledOnce();
       expect(container.querySelector('[role="alert"]')).toBeNull();
-      expect(container.textContent).not.toContain("Restart BiBCode");
+      expect(container.textContent).not.toContain("Restart Coddy Studio");
       expect(harness.toastAdd).not.toHaveBeenCalled();
     } finally {
       await act(async () => {
@@ -515,7 +515,7 @@ describe("UpdateProtectionDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
     expect(harness.toastAdd).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        title: "Could not restart BiBCode",
+        title: "Could not restart Coddy Studio",
         description: "Restart refused.",
       }),
     );
@@ -533,12 +533,12 @@ describe("UpdateProtectionDialog", () => {
       const command = target === "server" ? harness.retryProjectData : harness.restartApp;
       command.mockImplementation(() => new Promise<void>((resolve) => (finishRestart = resolve)));
       await act(async () =>
-        button(target === "server" ? "Restart server" : "Restart BiBCode").click(),
+        button(target === "server" ? "Restart server" : "Restart Coddy Studio").click(),
       );
       try {
         await render({ ...baseState, backendRecovery: [] });
         expect(container.textContent).toContain(
-          target === "server" ? "Restarting server…" : "Restarting BiBCode…",
+          target === "server" ? "Restarting server…" : "Restarting Coddy Studio…",
         );
         expect(container.textContent).not.toContain("Installing update…");
         expect([...container.querySelectorAll("button")].every((entry) => entry.disabled)).toBe(
@@ -567,14 +567,14 @@ describe("UpdateProtectionDialog", () => {
     "announces a failed retry even when the reason is unchanged: $message",
     async ({ entries, message }) => {
       harness.retryProjectData.mockRejectedValue(
-        "BiBCode's local server couldn't restart: address in use.",
+        "Coddy Studio's local server couldn't restart: address in use.",
       );
       await render({ ...recoveryState, backendRecovery: entries });
       await act(async () => button("Restart server").click());
 
       expect(container.querySelector('[role="alert"]')?.textContent).toBe(message);
       expect(button("Details").disabled).toBe(false);
-      expect(button("Restart BiBCode").disabled).toBe(false);
+      expect(button("Restart Coddy Studio").disabled).toBe(false);
       expect(button("Restart server").disabled).toBe(false);
     },
   );
@@ -624,7 +624,7 @@ describe("UpdateProtectionDialog", () => {
     };
     harness.getUpdateState.mockResolvedValue(updatedState);
     harness.retryProjectData.mockRejectedValueOnce(
-      "BiBCode's local server couldn't restart: access denied",
+      "Coddy Studio's local server couldn't restart: access denied",
     );
     const installUpdate = vi
       .fn()
@@ -641,8 +641,8 @@ describe("UpdateProtectionDialog", () => {
         title: "Update not installed",
         timeout: 0,
         description:
-          "BiBCode's local server couldn't restart. Choose Restart server. If that fails, restart BiBCode.",
-        actionProps: expect.objectContaining({ children: "Restart BiBCode" }),
+          "Coddy Studio's local server couldn't restart. Choose Restart server. If that fails, restart Coddy Studio.",
+        actionProps: expect.objectContaining({ children: "Restart Coddy Studio" }),
       }),
     );
     await act(async () => harness.toastAdd.mock.lastCall![0].actionProps.onClick());

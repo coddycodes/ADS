@@ -10,8 +10,8 @@
  * switching or closing the terminal, disposes the old lifetime before interrupting its
  * fiber, so no failure is published.
  */
-import { EMPTY_TERMINAL_ATTACH_SNAPSHOT } from "@bibcode/client-runtime/state/terminal";
-import { EnvironmentId, ThreadId, type TerminalAttachInput } from "@bibcode/contracts";
+import { EMPTY_TERMINAL_ATTACH_SNAPSHOT } from "@coddy/client-runtime/state/terminal";
+import { EnvironmentId, ThreadId, type TerminalAttachInput } from "@coddy/contracts";
 import { RegistryContext } from "@effect/atom-react";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";

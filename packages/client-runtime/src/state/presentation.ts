@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerConfig } from "@bibcode/contracts";
+import type { EnvironmentId, ServerConfig } from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 

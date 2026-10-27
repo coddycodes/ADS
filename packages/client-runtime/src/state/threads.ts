@@ -4,7 +4,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadStreamItem,
   type ThreadId as ThreadIdType,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

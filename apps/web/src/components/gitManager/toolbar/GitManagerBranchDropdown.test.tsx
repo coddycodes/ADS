@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { GitManagerRefEntry, ScopedProjectRef } from "@bibcode/contracts";
+import type { GitManagerRefEntry, ScopedProjectRef } from "@coddy/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

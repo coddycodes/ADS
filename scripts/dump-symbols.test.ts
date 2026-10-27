@@ -106,7 +106,7 @@ describe("dump-symbols", () => {
   });
 
   it("writes a deflated ZIP whose single entry round-trips", () => {
-    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-dump-symbols-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-dump-symbols-"));
     temporaryRoots.push(root);
     const zipPath = NodePath.join(root, "nested", "symbols.zip");
     const name = symbolStorePath(LINUX_SYM);

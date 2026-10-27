@@ -1,4 +1,4 @@
-import type { OrchestrationThreadActivity } from "@bibcode/contracts";
+import type { OrchestrationThreadActivity } from "@coddy/contracts";
 import { CircleIcon, PlugIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";

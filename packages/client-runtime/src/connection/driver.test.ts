@@ -1,4 +1,4 @@
-import { EnvironmentId, type ServerConfig } from "@bibcode/contracts";
+import { EnvironmentId, type ServerConfig } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 
 import * as Persistence from "../platform/persistence.ts";
 import type { EstablishingRpcSession } from "../rpc/session.ts";

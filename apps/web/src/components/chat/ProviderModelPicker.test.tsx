@@ -4,7 +4,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   act,
   cloneElement,

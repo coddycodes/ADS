@@ -1,4 +1,4 @@
-import { TerminalInputError, WS_METHODS } from "@bibcode/contracts";
+import { TerminalInputError, WS_METHODS } from "@coddy/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -6,7 +6,7 @@ import type { WsRpcProtocolClient } from "./protocol.ts";
 
 /** Cancels admission before dispatch while allowing a begun lease reply to be cleaned up. */
 export class TerminalInputAdmissionSignal extends Context.Reference<AbortSignal | undefined>(
-  "@bibcode/client-runtime/rpc/TerminalInputAdmissionSignal",
+  "@coddy/client-runtime/rpc/TerminalInputAdmissionSignal",
   { defaultValue: () => undefined },
 ) {}
 

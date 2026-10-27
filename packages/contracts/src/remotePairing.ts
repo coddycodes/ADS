@@ -8,7 +8,7 @@ export const REMOTE_PAIRING_CODE_VERSION = 1;
 export const RemotePairingReach = Schema.Literals(["another-device", "this-computer", "custom"]);
 export type RemotePairingReach = typeof RemotePairingReach.Type;
 
-/** JSON payload carried by `bibcode://pair?code=<base64url(JSON)>`. */
+/** JSON payload carried by `coddy-studio://pair?code=<base64url(JSON)>`. */
 export const RemotePairingCodePayload = Schema.Struct({
   v: Schema.Literal(REMOTE_PAIRING_CODE_VERSION),
   endpoint: TrimmedNonEmptyString,

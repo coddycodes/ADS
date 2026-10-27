@@ -7,7 +7,7 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@bibcode/contracts";
+import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@coddy/contracts";
 import { isQueuedTimelineMessage, type QueuedCardStatus } from "../ChatView.logic";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -154,7 +154,7 @@ export type MessagesTimelineRow =
        * waiting for the provider to close it. Codex routinely takes tens of
        * seconds to send `turn/completed` after the final answer (measured
        * 19.8s-114.9s; claude and cursor are ~0s), and reporting that as an
-       * undifferentiated wait made the provider's lag look like BiBCode hanging.
+       * undifferentiated wait made the provider's lag look like Coddy Studio hanging.
        */
       answerDelivered: boolean;
     };

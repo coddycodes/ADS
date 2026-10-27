@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/reactivity";

@@ -1,4 +1,4 @@
-import { ProviderDriverKind } from "@bibcode/contracts";
+import { ProviderDriverKind } from "@coddy/contracts";
 import {
   ACTIVITY_PAGE_MAX_LENGTH,
   type ActivityScopeRef,
@@ -10,9 +10,9 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { DEFAULT_SERVER_SETTINGS } from "@bibcode/contracts/settings";
+import { DEFAULT_SERVER_SETTINGS } from "@coddy/contracts/settings";
 import { applyProviderInstanceSettings, deriveProviderInstanceEntries } from "../providerInstances";
 
 import type { ChatMessage, Thread } from "../types";
@@ -74,7 +74,7 @@ import {
 } from "./ChatView.logic";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
-import type { AttachmentStagingResult } from "@bibcode/client-runtime/operations";
+import type { AttachmentStagingResult } from "@coddy/client-runtime/operations";
 
 describe("staged attachment send seams", () => {
   const attachment = {
@@ -439,11 +439,11 @@ describe("local draft and attachment helpers", () => {
         hasServerThread: true,
         envMode: "worktree" as const,
         projectCwd: "/repo",
-        worktreePath: "/repo/.bibcode/worktrees/feature",
+        worktreePath: "/repo/.coddy/studio/worktrees/feature",
       },
       expected: {
-        cwd: "/repo/.bibcode/worktrees/feature",
-        worktreePath: "/repo/.bibcode/worktrees/feature",
+        cwd: "/repo/.coddy/studio/worktrees/feature",
+        worktreePath: "/repo/.coddy/studio/worktrees/feature",
       },
     },
   ])(
@@ -1090,7 +1090,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
 
   it("does not mistake a pre-existing thread error for acknowledgement of a new send", () => {
     const localDispatch = createLocalDispatchSnapshot(makeThread(), {
-      threadError: "Provider session ended when BiBCode stopped.",
+      threadError: "Provider session ended when Coddy Studio stopped.",
     });
     const common = {
       localDispatch,
@@ -1104,7 +1104,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(
       hasServerAcknowledgedLocalDispatch({
         ...common,
-        threadError: "Provider session ended when BiBCode stopped.",
+        threadError: "Provider session ended when Coddy Studio stopped.",
       }),
     ).toBe(false);
     expect(
@@ -1412,34 +1412,34 @@ describe("threadErrorAttribution", () => {
   it("names the provider that reported the failure", () => {
     expect(
       threadErrorAttribution({
-        isBiBCodeAction: false,
+        isCoddyStudioAction: false,
         errorClass: "provider_error",
         providerName: "claudeAgent",
       }),
     ).toBe("Claude reported an error");
   });
 
-  it("attributes a failed BiBCode command to BiBCode without blaming it", () => {
-    // The command is BiBCode's, but it may have failed because the provider
-    // refused it, so the wording says what BiBCode could not do, not whose
+  it("attributes a failed Coddy Studio command to Coddy Studio without blaming it", () => {
+    // The command is Coddy Studio's, but it may have failed because the provider
+    // refused it, so the wording says what Coddy Studio could not do, not whose
     // fault it was.
     expect(
       threadErrorAttribution({
-        isBiBCodeAction: true,
+        isCoddyStudioAction: true,
         errorClass: "provider_error",
         providerName: "codex",
       }),
-    ).toBe("BiBCode could not complete this action");
+    ).toBe("Coddy Studio could not complete this action");
   });
 
   it("distinguishes a lost connection from a provider failure", () => {
     expect(
       threadErrorAttribution({
-        isBiBCodeAction: false,
+        isCoddyStudioAction: false,
         errorClass: "transport_error",
         providerName: "codex",
       }),
-    ).toBe("BiBCode lost its connection to Codex");
+    ).toBe("Coddy Studio lost its connection to Codex");
   });
 
   it.each(["codex", "claudeAgent", null])(
@@ -1447,18 +1447,18 @@ describe("threadErrorAttribution", () => {
     (providerName) => {
       expect(
         threadErrorAttribution({
-          isBiBCodeAction: false,
+          isCoddyStudioAction: false,
           errorClass: "session_stopped",
           providerName,
         }),
-      ).toBe("BiBCode stopped this session");
+      ).toBe("Coddy Studio stopped this session");
     },
   );
 
   it("separates credential rejection from a generic provider error", () => {
     expect(
       threadErrorAttribution({
-        isBiBCodeAction: false,
+        isCoddyStudioAction: false,
         errorClass: "permission_error",
         providerName: "opencode",
       }),
@@ -1468,7 +1468,7 @@ describe("threadErrorAttribution", () => {
   it("says when the conversation no longer fits the provider's context window", () => {
     expect(
       threadErrorAttribution({
-        isBiBCodeAction: false,
+        isCoddyStudioAction: false,
         errorClass: "context_limit",
         providerName: "claudeAgent",
       }),
@@ -1478,25 +1478,25 @@ describe("threadErrorAttribution", () => {
   it("offers to compact only a provider's context-limit failure", () => {
     expect(
       threadErrorCompactAction({
-        isBiBCodeAction: false,
+        isCoddyStudioAction: false,
         errorClass: "context_limit",
         busy: false,
       }),
     ).toEqual({ disabledReason: null });
     for (const errorClass of ["provider_error", "unknown", null, undefined]) {
       expect(
-        threadErrorCompactAction({ isBiBCodeAction: false, errorClass, busy: false }),
+        threadErrorCompactAction({ isCoddyStudioAction: false, errorClass, busy: false }),
       ).toBeNull();
     }
-    // A failed BiBCode command shown over a context-limit session is not the provider's failure.
+    // A failed Coddy Studio command shown over a context-limit session is not the provider's failure.
     expect(
-      threadErrorCompactAction({ isBiBCodeAction: true, errorClass: "context_limit", busy: false }),
+      threadErrorCompactAction({ isCoddyStudioAction: true, errorClass: "context_limit", busy: false }),
     ).toBeNull();
   });
 
   it("is disabled with its reason while the thread is working, such as compacting", () => {
     expect(
-      threadErrorCompactAction({ isBiBCodeAction: false, errorClass: "context_limit", busy: true }),
+      threadErrorCompactAction({ isCoddyStudioAction: false, errorClass: "context_limit", busy: true }),
     ).toEqual({ disabledReason: "Wait for the current work to finish, then compact." });
     expect(COMPACT_CONVERSATION_COMMAND).toBe("/compact");
   });
@@ -1505,7 +1505,7 @@ describe("threadErrorAttribution", () => {
     for (const errorClass of [null, undefined, "unknown", "a_class_from_a_newer_server"]) {
       expect(
         threadErrorAttribution({
-          isBiBCodeAction: false,
+          isCoddyStudioAction: false,
           errorClass,
           providerName: "claudeAgent",
         }),
@@ -1516,7 +1516,7 @@ describe("threadErrorAttribution", () => {
   it("falls back to a generic agent noun when the provider is unknown", () => {
     expect(
       threadErrorAttribution({
-        isBiBCodeAction: false,
+        isCoddyStudioAction: false,
         errorClass: "provider_error",
         providerName: null,
       }),
@@ -1770,7 +1770,7 @@ describe("describeUnavailableEnvironment", () => {
 
   it("keeps a retrying failure's reason out of the title", () => {
     const reason =
-      "The remote host did not issue a pairing credential within 30 seconds. Check the connection; BiBCode keeps trying.";
+      "The remote host did not issue a pairing credential within 30 seconds. Check the connection; Coddy Studio keeps trying.";
     const copy = describeUnavailableEnvironment({
       label: "devbox",
       connection: { phase: "reconnecting", error: reason, traceId: null },

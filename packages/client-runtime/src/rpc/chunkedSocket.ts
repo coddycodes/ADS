@@ -1,4 +1,4 @@
-import { isLoopbackHost } from "@bibcode/shared/preview";
+import { isLoopbackHost } from "@coddy/shared/preview";
 import * as Effect from "effect/Effect";
 import * as Socket from "effect/socket/Socket";
 
@@ -7,12 +7,12 @@ import { RecordAssembler } from "../e2ee/frame.ts";
 import { makeRawSocket, runRaw } from "../e2ee/rawSocket.ts";
 
 /** Subprotocol a plain `/ws` client offers to receive large messages as records. */
-export const CHUNKED_RPC_SUBPROTOCOL = "bibcode.rpc.chunked.v1";
+export const CHUNKED_RPC_SUBPROTOCOL = "coddy-studio.rpc.chunked.v1";
 /**
  * {@link CHUNKED_RPC_SUBPROTOCOL} whose large server messages may also arrive
  * raw-deflate compressed, every record carrying `0x10` (as E2EE `deflate-v1`).
  */
-export const DEFLATE_RPC_SUBPROTOCOL = "bibcode.rpc.chunked-deflate.v1";
+export const DEFLATE_RPC_SUBPROTOCOL = "coddy-studio.rpc.chunked-deflate.v1";
 
 /**
  * The subprotocols a plain socket offers, most preferred first. Compression is

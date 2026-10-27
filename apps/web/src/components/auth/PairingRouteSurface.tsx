@@ -1,5 +1,5 @@
-import type { AuthSessionState } from "@bibcode/contracts";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+import type { AuthSessionState } from "@coddy/contracts";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import React, { startTransition, useEffect, useRef, useState, useCallback } from "react";
 
 import { APP_DISPLAY_NAME } from "../../branding";

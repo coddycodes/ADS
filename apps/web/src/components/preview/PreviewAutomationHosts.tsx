@@ -1,7 +1,7 @@
 "use client";
 
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import {
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_AUTOMATION_OPERATIONS,
@@ -16,9 +16,9 @@ import {
   type PreviewRenderedViewportSize,
   type PreviewViewportSetting,
   type ScopedThreadRef,
-} from "@bibcode/contracts";
-import { normalizePreviewUrl } from "@bibcode/shared/preview";
-import { resolvePreviewViewport } from "@bibcode/shared/previewViewport";
+} from "@coddy/contracts";
+import { normalizePreviewUrl } from "@coddy/shared/preview";
+import { resolvePreviewViewport } from "@coddy/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Atom } from "effect/reactivity";
 

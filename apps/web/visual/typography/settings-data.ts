@@ -12,7 +12,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerTraceDiagnosticsResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -68,8 +68,8 @@ export const resourceProcesses: ServerProcessDiagnosticsResult = {
       processKey: "100:1",
       scope: "core",
       kind: "server",
-      label: "BiBCode Server",
-      command: "bibcode server",
+      label: "Coddy Studio Server",
+      command: "coddy-studio server",
       rssBytes: 200 * MiB,
       cpuPercent: 2,
       depth: 0,
@@ -90,8 +90,8 @@ export const resourceProcesses: ServerProcessDiagnosticsResult = {
       processKey: "300:1",
       scope: "core",
       kind: "ui",
-      label: "BiBCode UI",
-      command: "BiBCode WebContent",
+      label: "Coddy Studio UI",
+      command: "Coddy Studio WebContent",
       rssBytes: 120 * MiB,
     }),
   ],
@@ -105,11 +105,11 @@ function historyProcess(
     processKey: "100:1",
     pid: 100,
     ppid: 1,
-    command: "bibcode server",
+    command: "coddy-studio server",
     depth: 0,
     scope: "core",
     kind: "server",
-    label: "BiBCode Server",
+    label: "Coddy Studio Server",
     confidence: "exact",
     firstSeenAt: readAt,
     lastSeenAt: nextReadAt,

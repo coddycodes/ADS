@@ -1,4 +1,4 @@
-import type { ServerProviderUsageSnapshot } from "@bibcode/contracts";
+import type { ServerProviderUsageSnapshot } from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 

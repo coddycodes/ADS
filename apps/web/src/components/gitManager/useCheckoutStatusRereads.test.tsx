@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { act, StrictMode } from "react";

@@ -1,4 +1,4 @@
-import type { DeviceOrientation } from "@bibcode/contracts";
+import type { DeviceOrientation } from "@coddy/contracts";
 
 /** Where the device screen sits inside its container, in container pixels. */
 export interface Letterbox {

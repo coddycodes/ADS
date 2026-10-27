@@ -5,7 +5,7 @@ import type {
   GitManagerOperationRequest,
   GitManagerRefEntry,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { GitMergeIcon, SearchIcon } from "lucide-react";
 import {

@@ -1,4 +1,4 @@
-import type { ServerConfig, ServerConfigStreamEvent } from "@bibcode/contracts";
+import type { ServerConfig, ServerConfigStreamEvent } from "@coddy/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";

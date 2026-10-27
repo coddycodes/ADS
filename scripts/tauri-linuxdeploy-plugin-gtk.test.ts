@@ -8,10 +8,10 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 const REPOSITORY_ROOT = NodePath.resolve(import.meta.dirname, "..");
 const WRAPPER_SOURCE = NodePath.join(REPOSITORY_ROOT, "scripts/tauri/linuxdeploy-plugin-gtk.sh");
-const UPSTREAM_FILENAME = "bibcode-linuxdeploy-gtk-upstream.sh";
+const UPSTREAM_FILENAME = "coddy-studio-linuxdeploy-gtk-upstream.sh";
 const UPSTREAM_BACKEND_LINE =
   "export GDK_BACKEND=x11 # Crash with Wayland backend on Wayland - https://github.com/tauri-apps/tauri/issues/8541";
-const BACKEND_LINE = 'export GDK_BACKEND="${BIBCODE_GDK_BACKEND:-wayland,x11}"';
+const BACKEND_LINE = 'export GDK_BACKEND="${CODDY_STUDIO_GDK_BACKEND:-wayland,x11}"';
 const UPSTREAM_THEME_VARIANT_LINE =
   'gsettings get org.gnome.desktop.interface gtk-theme 2> /dev/null | grep -qi "dark" && GTK_THEME_VARIANT="dark" || GTK_THEME_VARIANT="light"';
 const UPSTREAM_THEME_DEFAULT_LINE =
@@ -37,7 +37,7 @@ ${THEME_OVERRIDE_LINE}
 const temporaryDirectories: Array<string> = [];
 
 function makeToolDirectory(): string {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-linuxdeploy-gtk-"));
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-linuxdeploy-gtk-"));
   temporaryDirectories.push(directory);
   NodeFS.copyFileSync(WRAPPER_SOURCE, NodePath.join(directory, "linuxdeploy-plugin-gtk.sh"));
   NodeFS.chmodSync(NodePath.join(directory, "linuxdeploy-plugin-gtk.sh"), 0o755);
@@ -80,7 +80,7 @@ afterEach(() => {
 
 // These preflight cases exit before the Linux-only GNU sed hook rewrite, so
 // macOS can also exercise the real shell's error and discovery paths.
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- Requires a Unix shell.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- Requires a Unix shell.
 describe.skipIf(process.platform === "win32")("GdkPixbuf build-host preflight", () => {
   it("rejects an advertised but absent loader directory before the upstream plugin mutates the AppDir", () => {
     const directory = makeToolDirectory();
@@ -135,13 +135,13 @@ describe.skipIf(process.platform === "win32")("GdkPixbuf build-host preflight", 
   });
 });
 
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- This integration test runs a Linux shell wrapper.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- This integration test runs a Linux shell wrapper.
 describe.runIf(process.platform === "linux")("linuxdeploy GTK wrapper", () => {
   it.each(["separate", "equals"] as const)(
     "normalizes the %s AppDir argument form before deployment and cleans the AppDir",
     (argumentForm) => {
       const toolDirectory = makeToolDirectory();
-      const appDirectory = NodePath.join(toolDirectory, "BiBCode.AppDir");
+      const appDirectory = NodePath.join(toolDirectory, "Coddy Studio.AppDir");
       const markerPath = NodePath.join(toolDirectory, "upstream-arguments.txt");
       writeUpstream(
         toolDirectory,
@@ -216,7 +216,7 @@ ${UPSTREAM_HOOK}HOOK
 
   it("rewrites the hook even when the AppDir has no library directories", () => {
     const toolDirectory = makeToolDirectory();
-    const appDirectory = NodePath.join(toolDirectory, "BiBCode.AppDir");
+    const appDirectory = NodePath.join(toolDirectory, "Coddy Studio.AppDir");
     const hookPath = NodePath.join(appDirectory, "apprun-hooks/linuxdeploy-plugin-gtk.sh");
     NodeFS.mkdirSync(NodePath.dirname(hookPath), { recursive: true });
     NodeFS.writeFileSync(hookPath, UPSTREAM_HOOK);
@@ -259,7 +259,7 @@ ${UPSTREAM_HOOK}HOOK
     "honours $name without consulting the session theme",
     ({ gtkTheme, appimageTheme, expected }) => {
       const toolDirectory = makeToolDirectory();
-      const appDirectory = NodePath.join(toolDirectory, "BiBCode.AppDir");
+      const appDirectory = NodePath.join(toolDirectory, "Coddy Studio.AppDir");
       const hookPath = NodePath.join(appDirectory, "apprun-hooks/linuxdeploy-plugin-gtk.sh");
       const gsettingsMarker = NodePath.join(toolDirectory, "gsettings-called");
       NodeFS.mkdirSync(NodePath.dirname(hookPath), { recursive: true });
@@ -291,7 +291,7 @@ ${UPSTREAM_HOOK}HOOK
               GTK_THEME: gtkTheme,
               APPIMAGE_GTK_THEME: appimageTheme,
               GSETTINGS_MARKER: gsettingsMarker,
-              BIBCODE_GDK_BACKEND: backend,
+              CODDY_STUDIO_GDK_BACKEND: backend,
             },
           },
         );
@@ -332,7 +332,7 @@ ${UPSTREAM_HOOK}HOOK
     ]),
   ])("rejects a hook $name without mutating the AppDir", ({ hook, diagnostic }) => {
     const toolDirectory = makeToolDirectory();
-    const appDirectory = NodePath.join(toolDirectory, "BiBCode.AppDir");
+    const appDirectory = NodePath.join(toolDirectory, "Coddy Studio.AppDir");
     const hookPath = NodePath.join(appDirectory, "apprun-hooks/linuxdeploy-plugin-gtk.sh");
     const libraryDirectory = NodePath.join(appDirectory, "usr/lib");
     NodeFS.mkdirSync(libraryDirectory, { recursive: true });
@@ -350,7 +350,7 @@ ${UPSTREAM_HOOK}HOOK
     const result = runWrapper(toolDirectory, ["--appdir", appDirectory], { encoding: "utf8" });
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("BiBCode AppImage packaging error");
+    expect(result.stderr).toContain("Coddy Studio AppImage packaging error");
     expect(result.stderr).toContain(diagnostic);
     expect(result.stderr).toContain(hookPath);
     expect(NodeFS.readdirSync(appDirectory, { recursive: true }).sort()).toEqual(entriesBefore);
@@ -388,7 +388,7 @@ exit 91
 
   it("propagates an upstream failure without mutating the AppDir", () => {
     const toolDirectory = makeToolDirectory();
-    const appDirectory = NodePath.join(toolDirectory, "BiBCode.AppDir");
+    const appDirectory = NodePath.join(toolDirectory, "Coddy Studio.AppDir");
     const libraryPath = NodePath.join(appDirectory, "usr/lib/libwayland-client.so.0");
     NodeFS.mkdirSync(NodePath.dirname(libraryPath), { recursive: true });
     NodeFS.writeFileSync(libraryPath, "preexisting");

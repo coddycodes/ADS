@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     CauseItem, RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     git::{
         GitCommandError, GitPrunableWorktree, GitRepository, GitWorktreeInventory,
@@ -1682,7 +1682,7 @@ async fn detach_interrupt_after_engine_handoff_retains_removal_lifecycle_until_t
     request(
         fixture.socket(),
         "45",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({
             "commandId":"interrupted-detach-handoff",
             "projectId":"project-1",
@@ -1714,7 +1714,7 @@ async fn detach_interrupt_after_engine_handoff_retains_removal_lifecycle_until_t
             .await
             .expect_err("detach remains guarded while persistence is paused")
             .state,
-        bibcode_server::worktree_catalog::WorkspaceGuardState::Removing
+        coddy_studio_server::worktree_catalog::WorkspaceGuardState::Removing
     );
     let catalog = fixture.catalog.clone();
     let probe = tokio::spawn(async move {
@@ -1815,7 +1815,7 @@ async fn destructive_remove_socket_close_after_engine_handoff_retains_lifecycle_
             .await
             .expect_err("removal stays guarded while persistence is paused")
             .state,
-        bibcode_server::worktree_catalog::WorkspaceGuardState::Removing
+        coddy_studio_server::worktree_catalog::WorkspaceGuardState::Removing
     );
     let catalog = fixture.catalog.clone();
     let probe = tokio::spawn(async move {
@@ -2332,7 +2332,7 @@ async fn adopt_public_admission_replays_exactly_and_conflicts_on_changed_payload
     request(
         fixture.socket(),
         "919",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({
             "commandId":"delete-admitted-owner",
             "projectId":"project-1",
@@ -3825,7 +3825,7 @@ async fn removal_dirty_requires_confirmation_and_detach_only_ignores_quiesce_out
     request(
         fixture.socket(),
         "1205",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({
             "commandId":"remove-detach-only",
             "projectId":"project-1",
@@ -4271,7 +4271,7 @@ async fn removal_locked_missing_registration_is_protected_but_detach_only_remain
     request(
         fixture.socket(),
         "1204",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({"commandId":"detach-locked","projectId":"project-1","threadId":thread_id}),
     )
     .await;
@@ -4543,7 +4543,8 @@ impl WorktreeRemovalQuiescer for CapacityRejectingQuiescer {
     fn live_session_thread_ids(
         &self,
         _thread_ids: Vec<String>,
-    ) -> bibcode_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture {
+    ) -> coddy_studio_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture
+    {
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -4585,7 +4586,8 @@ impl WorktreeRemovalQuiescer for RecordingPendingQuiescer {
     fn live_session_thread_ids(
         &self,
         _thread_ids: Vec<String>,
-    ) -> bibcode_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture {
+    ) -> coddy_studio_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture
+    {
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -4614,7 +4616,7 @@ struct CatalogRpcFixture {
     availability: WorkspaceAvailabilityRegistry,
     operations: WorktreeCatalogOperationRuntime,
     engine: OrchestrationEngine,
-    handle: Option<bibcode_server::ServerHandle>,
+    handle: Option<coddy_studio_server::ServerHandle>,
     socket: Option<TestSocket>,
 }
 
@@ -4868,7 +4870,8 @@ impl WorktreeRemovalQuiescer for TestNoopQuiescer {
     fn live_session_thread_ids(
         &self,
         _thread_ids: Vec<String>,
-    ) -> bibcode_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture {
+    ) -> coddy_studio_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture
+    {
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -4889,7 +4892,8 @@ impl WorktreeRemovalQuiescer for SwitchingAnchorQuiescer {
     fn live_session_thread_ids(
         &self,
         _thread_ids: Vec<String>,
-    ) -> bibcode_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture {
+    ) -> coddy_studio_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture
+    {
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -5720,7 +5724,7 @@ fn branch_reconciliation_command_id(
     branch: Option<&str>,
     head: Option<&str>,
 ) -> String {
-    let mut identity = b"bibcode.worktree.branch-reconcile.v1\0".to_vec();
+    let mut identity = b"coddy-studio.worktree.branch-reconcile.v1\0".to_vec();
     identity.extend_from_slice(branch.unwrap_or("<detached>").as_bytes());
     identity.push(0);
     identity.extend_from_slice(head.unwrap_or("<unknown>").as_bytes());

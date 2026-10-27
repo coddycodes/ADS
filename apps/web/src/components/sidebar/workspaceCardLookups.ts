@@ -1,11 +1,11 @@
-import { scopeThreadRef, scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@coddy/client-runtime/environment";
 import {
   ThreadId,
   type DiscoveredLocalServer,
   type EnvironmentId,
   type TerminalSummary,
   type VcsAdoptedWorktreeStatus,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { SidebarThreadSummary } from "../../types";
 
 export type CardKeyThread = Pick<SidebarThreadSummary, "id" | "environmentId">;

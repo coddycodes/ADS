@@ -1,4 +1,4 @@
-import type { GitManagerImageDiffSide } from "@bibcode/contracts";
+import type { GitManagerImageDiffSide } from "@coddy/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import {
   memo,

@@ -1,5 +1,5 @@
-use bibcode_server::orchestration::engine::{EngineOptions, TestHooks};
-use bibcode_server::orchestration::{
+use coddy_studio_server::orchestration::engine::{EngineOptions, TestHooks};
+use coddy_studio_server::orchestration::{
     OrchestrationCommand, OrchestrationEngine, TurnDeliveryState, load_snapshot,
 };
 use serde_json::{Value, json};
@@ -450,13 +450,13 @@ async fn dismissing_an_ambiguous_head_does_not_auto_start_the_tail() {
     }
 }
 
-use bibcode_server::activity::{ActivityCapabilities, ActivityProjection, ActivityRepository};
-use bibcode_server::production::provider_runtime::{
+use coddy_studio_server::activity::{ActivityCapabilities, ActivityProjection, ActivityRepository};
+use coddy_studio_server::production::provider_runtime::{
     BoxRuntimeFuture, ProviderDeliveryOutcome, ProviderDriver, ProviderDriverFactory,
     ProviderEvent, ProviderLaunchRequest, ProviderRuntimeError, ProviderRuntimeSupervisor,
     StartedSession, SupervisorOptions, deliver_orchestration_turn, freeze_delivery_route,
 };
-use bibcode_server::production::turn_delivery::TurnDeliveryService;
+use coddy_studio_server::production::turn_delivery::TurnDeliveryService;
 use std::sync::{
     Arc, Mutex as StdMutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -588,7 +588,7 @@ impl ProviderDriver for SteerDriver {
 }
 
 /// Refuses every launch as an incompatible provider version while `incompatible` is set, as the
-/// OpenCode driver does for a version BiBCode cannot drive, and launches `driver` otherwise.
+/// OpenCode driver does for a version Coddy Studio cannot drive, and launches `driver` otherwise.
 struct VersionGateFactory {
     driver: Arc<SteerDriver>,
     incompatible: AtomicBool,
@@ -617,7 +617,7 @@ impl ProviderDriverFactory for VersionGateFactory {
 async fn settled_row(
     engine: &OrchestrationEngine,
     id: &str,
-) -> bibcode_server::orchestration::ProviderTurnDelivery {
+) -> coddy_studio_server::orchestration::ProviderTurnDelivery {
     let settled = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let row = engine
@@ -817,7 +817,7 @@ impl SteerFixture {
             self.settings.path().to_path_buf(),
         )
     }
-    async fn settled_delivery(&self) -> bibcode_server::orchestration::ProviderTurnDelivery {
+    async fn settled_delivery(&self) -> coddy_studio_server::orchestration::ProviderTurnDelivery {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let row = self
@@ -928,7 +928,7 @@ async fn steer_rejected_by_provider_requeues() {
     assert_eq!(row.state, TurnDeliveryState::Queued);
     assert_eq!(
         row.mode,
-        bibcode_server::orchestration::TurnDeliveryMode::Start
+        coddy_studio_server::orchestration::TurnDeliveryMode::Start
     );
     assert_eq!(row.attempts, 0);
     assert_eq!(fixture.driver.calls.lock().unwrap().len(), 1);

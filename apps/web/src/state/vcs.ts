@@ -1,7 +1,7 @@
 import {
   createVcsActionManager,
   createVcsEnvironmentAtoms,
-} from "@bibcode/client-runtime/state/vcs";
+} from "@coddy/client-runtime/state/vcs";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

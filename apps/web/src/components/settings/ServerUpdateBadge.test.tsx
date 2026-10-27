@@ -5,13 +5,13 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import type { RemoteUpdateSnapshot } from "@bibcode/contracts";
-import type { RemoteUpdateRunState } from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+import type { RemoteUpdateSnapshot } from "@coddy/contracts";
+import type { RemoteUpdateRunState } from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import {
   IDLE_REMOTE_UPDATE_CHECK_STATE,
   type RemoteUpdateCheckState,
-} from "@bibcode/client-runtime/state/remoteUpdates";
-import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
+} from "@coddy/client-runtime/state/remoteUpdates";
+import { EnvironmentRpcUnavailableError } from "@coddy/client-runtime/rpc";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
@@ -479,7 +479,7 @@ describe("ServerUpdateBadge while an update runs", () => {
           onCheckAgain={vi.fn()}
         />,
       );
-      const expected = `${name ?? "The server"} hasn't come back after the update. Check BiBCode on ${name ?? "The server"}; it may be on a different port.`;
+      const expected = `${name ?? "The server"} hasn't come back after the update. Check Coddy Studio on ${name ?? "The server"}; it may be on a different port.`;
       const badge = container.querySelector('[data-variant="error"]');
       expect(badge?.textContent).toBe(`Update failed: ${expected}`);
       expect(badge?.querySelector(".sr-only")?.textContent).toBe(`: ${expected}`);

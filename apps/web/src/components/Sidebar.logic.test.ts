@@ -50,7 +50,7 @@ import {
   type OrchestrationSessionStatus,
   type VcsStatusResult,
   type VcsStatusSummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -300,7 +300,7 @@ describe("createThreadJumpHintVisibilityController", () => {
 
 describe("getSidebarThreadIdsToPrewarm", () => {
   it("returns only the first visible thread ids up to the prewarm limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2", "bibcode"], 2)).toEqual(["t1", "t2"]);
+    expect(getSidebarThreadIdsToPrewarm(["t1", "t2", "coddy-studio"], 2)).toEqual(["t1", "t2"]);
   });
 
   it("returns all visible thread ids when they fit within the limit", () => {
@@ -386,12 +386,12 @@ describe("resolveSidebarNewThreadSeedContext", () => {
         activeThread: {
           projectId: "project-1",
           branch: "feature/existing",
-          worktreePath: "/repo/.bibcode/worktrees/existing",
+          worktreePath: "/repo/.coddy/studio/worktrees/existing",
         },
         activeDraftThread: {
           projectId: "project-1",
           branch: "feature/draft",
-          worktreePath: "/repo/.bibcode/worktrees/draft",
+          worktreePath: "/repo/.coddy/studio/worktrees/draft",
           envMode: "worktree",
           startFromOrigin: true,
         },

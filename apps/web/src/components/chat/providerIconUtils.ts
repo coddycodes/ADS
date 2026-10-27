@@ -1,4 +1,4 @@
-import { ProviderDriverKind } from "@bibcode/contracts";
+import { ProviderDriverKind } from "@coddy/contracts";
 import { ClaudeAI, CursorIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 

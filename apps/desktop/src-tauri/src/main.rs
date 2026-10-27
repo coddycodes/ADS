@@ -3,30 +3,31 @@
 fn main() {
     // The crash monitor is this binary re-executed: no Tauri, no window, and the
     // single-instance plugin never sees it.
-    if let Some(code) = bibcode_server::diagnostics::profiler::crash::dispatch_crash_monitor() {
+    if let Some(code) = coddy_studio_server::diagnostics::profiler::crash::dispatch_crash_monitor()
+    {
         std::process::exit(code);
     }
     // Once, before WebKit installs its signal handlers, so they chain real crashes down to it.
-    bibcode_server::diagnostics::profiler::crash::attach();
-    // The open-url shim, or the Windows `bibcode-open-url.exe` alias: no Tauri, no window,
+    coddy_studio_server::diagnostics::profiler::crash::attach();
+    // The open-url shim, or the Windows `coddy-studio-open-url.exe` alias: no Tauri, no window,
     // and the single-instance plugin never sees it.
-    if let Some(url) = bibcode_server::open_url::current_open_url_invocation() {
+    if let Some(url) = coddy_studio_server::open_url::current_open_url_invocation() {
         attach_parent_console();
         let code = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("open-url runtime")
-            .block_on(bibcode_server::open_url::run_open_url(&url));
+            .block_on(coddy_studio_server::open_url::run_open_url(&url));
         std::process::exit(code);
     }
-    // `<desktop exe> profiler …`: the desktop install ships no separate `bibcode`, so the
+    // `<desktop exe> profiler …`: the desktop install ships no separate `coddy-studio`, so the
     // profiler CLI runs here, with no Tauri, no window and no single-instance check.
     if let Some(code) =
-        bibcode_server::diagnostics::profiler::cli::desktop_dispatch(attach_parent_console)
+        coddy_studio_server::diagnostics::profiler::cli::desktop_dispatch(attach_parent_console)
     {
         std::process::exit(code);
     }
-    bibcode_desktop_lib::run();
+    coddy_studio_desktop_lib::run();
 }
 
 /// A release build is a GUI-subsystem executable with no console of its own, so open-url's

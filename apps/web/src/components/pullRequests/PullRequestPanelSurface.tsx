@@ -1,5 +1,5 @@
-import { resolveChangeRequestPresentationForKind } from "@bibcode/shared/sourceControl";
-import type { ScopedProjectRef, ScopedThreadRef } from "@bibcode/contracts";
+import { resolveChangeRequestPresentationForKind } from "@coddy/shared/sourceControl";
+import type { ScopedProjectRef, ScopedThreadRef } from "@coddy/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { usePrimarySettings } from "../../hooks/useSettings";

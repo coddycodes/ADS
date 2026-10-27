@@ -13,17 +13,17 @@ import {
   setDesktopUiWindowSize,
 } from "../support/ui-state.ts";
 
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
 if (!artifactDirectory) {
-  throw new Error("BIBCODE_E2E_ARTIFACT_DIR is required.");
+  throw new Error("CODDY_STUDIO_E2E_ARTIFACT_DIR is required.");
 }
-const stateRoot = process.env.BIBCODE_HOME;
+const stateRoot = process.env.CODDY_STUDIO_HOME;
 if (!stateRoot) {
-  throw new Error("BIBCODE_HOME is required.");
+  throw new Error("CODDY_STUDIO_HOME is required.");
 }
-const projectPath = process.env.BIBCODE_E2E_PROJECT_PATH;
+const projectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH;
 if (!projectPath) {
-  throw new Error("BIBCODE_E2E_PROJECT_PATH is required.");
+  throw new Error("CODDY_STUDIO_E2E_PROJECT_PATH is required.");
 }
 
 const terminalInputMarkerPath = NodePath.join(projectPath, "terminal-input-smoke.txt");
@@ -89,14 +89,14 @@ describe("packaged project session and terminal", () => {
       }),
     ).toBe(true);
     const outputEventsBeforeInput = terminalOutputEventCount(stateRoot);
-    await sendTerminalCommand("echo BIBCODE_TERMINAL_SMOKE > terminal-input-smoke.txt");
+    await sendTerminalCommand("echo CODDY_STUDIO_TERMINAL_SMOKE > terminal-input-smoke.txt");
     await browser.waitUntil(() => terminalOutputEventCount(stateRoot) > outputEventsBeforeInput, {
       timeoutMsg: "The terminal did not produce output after WebDriver keyboard input.",
     });
     await browser.waitUntil(
       () =>
         NodeFS.existsSync(terminalInputMarkerPath) &&
-        NodeFS.readFileSync(terminalInputMarkerPath, "utf8").trim() === "BIBCODE_TERMINAL_SMOKE",
+        NodeFS.readFileSync(terminalInputMarkerPath, "utf8").trim() === "CODDY_STUDIO_TERMINAL_SMOKE",
       {
         timeout: 5_000,
         timeoutMsg: "The terminal command was not delivered exactly once to the fixture shell.",

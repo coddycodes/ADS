@@ -1,4 +1,4 @@
-import type { PullRequestsFile } from "@bibcode/contracts";
+import type { PullRequestsFile } from "@coddy/contracts";
 import { FileDiff } from "@pierre/diffs/react";
 import type { DiffLineAnnotation, FileDiffOptions } from "@pierre/diffs";
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";

@@ -1,12 +1,12 @@
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
-} from "@bibcode/contracts/relay";
+} from "@coddy/contracts/relay";
 import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
-} from "@bibcode/contracts/relay";
-import { decodeRelayJwt } from "@bibcode/shared/relayJwt";
+} from "@coddy/contracts/relay";
+import { decodeRelayJwt } from "@coddy/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
@@ -123,7 +123,7 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
         try: () => readCachedClerkToken(nowMillis),
         catch: (cause) =>
           new ManagedRelaySessionError({
-            message: "Could not obtain the BiBCode Cloud session token.",
+            message: "Could not obtain the Coddy Studio Cloud session token.",
             cause,
           }),
       });
@@ -181,7 +181,7 @@ function readSessionClerkToken(
         ? Effect.succeed(token)
         : Effect.fail(
             new ManagedRelaySessionError({
-              message: "The BiBCode Cloud session token is unavailable.",
+              message: "The Coddy Studio Cloud session token is unavailable.",
             }),
           ),
     ),
@@ -226,7 +226,7 @@ function requireClerkToken(
   if (!session || session.accountId !== accountId) {
     return Effect.fail(
       new ManagedRelaySessionError({
-        message: "Sign in to BiBCode Cloud before loading relay data.",
+        message: "Sign in to Coddy Studio Cloud before loading relay data.",
       }),
     );
   }
@@ -296,7 +296,7 @@ export function readManagedRelaySnapshotState<A>(
   let errorTraceId: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
-    error = cause instanceof Error ? cause.message : "Could not load BiBCode Cloud data.";
+    error = cause instanceof Error ? cause.message : "Could not load Coddy Studio Cloud data.";
     errorTraceId = findErrorTraceId(cause);
   }
   return {

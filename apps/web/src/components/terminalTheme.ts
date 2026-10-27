@@ -1,4 +1,4 @@
-import type { TerminalThemePreference } from "@bibcode/contracts/settings";
+import type { TerminalThemePreference } from "@coddy/contracts/settings";
 
 export type TerminalThemeMode = "light" | "dark";
 
@@ -12,11 +12,11 @@ const TERMINAL_OSC_COLORS = {
   light: { background: "255,255,255", foreground: "28,33,41", cursor: "38,56,78" },
 } as const;
 
-const WINDOWS_CONSOLE_THEME = "BIBCODE_WINDOWS_CONSOLE_THEME";
+const WINDOWS_CONSOLE_THEME = "CODDY_STUDIO_WINDOWS_CONSOLE_THEME";
 const RESERVED_TERMINAL_THEME_ENV = new Set([
-  "BIBCODE_OSC_BACKGROUND",
-  "BIBCODE_OSC_FOREGROUND",
-  "BIBCODE_OSC_CURSOR",
+  "CODDY_STUDIO_OSC_BACKGROUND",
+  "CODDY_STUDIO_OSC_FOREGROUND",
+  "CODDY_STUDIO_OSC_CURSOR",
   WINDOWS_CONSOLE_THEME,
 ]);
 
@@ -89,9 +89,9 @@ export function terminalExtendedAnsiPalette(mode: TerminalThemeMode): Array<stri
 export function terminalOscColorEnv(mode: TerminalThemeMode): Record<string, string> {
   const colors = TERMINAL_OSC_COLORS[mode];
   return {
-    BIBCODE_OSC_BACKGROUND: colors.background,
-    BIBCODE_OSC_FOREGROUND: colors.foreground,
-    BIBCODE_OSC_CURSOR: colors.cursor,
+    CODDY_STUDIO_OSC_BACKGROUND: colors.background,
+    CODDY_STUDIO_OSC_FOREGROUND: colors.foreground,
+    CODDY_STUDIO_OSC_CURSOR: colors.cursor,
   };
 }
 

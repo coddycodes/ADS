@@ -4,11 +4,11 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingWhenExpression,
-} from "@bibcode/shared/keybindings";
+} from "@coddy/shared/keybindings";
 
 import { isMacPlatform } from "../../lib/utils";
 

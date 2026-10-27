@@ -1,5 +1,5 @@
 //! Single-use, short-lived capability tokens that bootstrap a gateway session. A token is
-//! bound to the gateway listener, upstream port, thread, and BiBCode session it was minted
+//! bound to the gateway listener, upstream port, thread, and Coddy Studio session it was minted
 //! for; redeeming it consumes it.
 
 use std::collections::HashMap;

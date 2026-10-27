@@ -1,5 +1,5 @@
-import { EnvironmentId, ProjectId } from "@bibcode/contracts";
-import type { EnvironmentProject } from "@bibcode/client-runtime/state/shell";
+import { EnvironmentId, ProjectId } from "@coddy/contracts";
+import type { EnvironmentProject } from "@coddy/client-runtime/state/shell";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildSidebarProjectSnapshots } from "./sidebarProjectGrouping";

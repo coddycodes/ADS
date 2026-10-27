@@ -4,11 +4,11 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerSettings,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   resolveProviderSessionDefault,
   type ResolvedProviderSessionDefault,
-} from "@bibcode/shared/providerSessionDefaults";
+} from "@coddy/shared/providerSessionDefaults";
 
 type ProviderSessionSelectionSettings = Pick<
   ServerSettings,

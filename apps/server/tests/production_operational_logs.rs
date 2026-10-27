@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use bibcode_server::production::{
+use coddy_studio_server::production::{
     operational_logs::{OperationalLogOptions, ProviderOperationalLog},
     provider_runtime::ProviderEvent,
 };
-use bibcode_server::{
+use coddy_studio_server::{
     production::operational_logs::TerminalOperationalLog, terminal::TerminalEvent,
 };
 use serde_json::json;

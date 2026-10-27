@@ -3,7 +3,7 @@ import {
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
-} from "@bibcode/shared/path";
+} from "@coddy/shared/path";
 
 const isWindowsPlatform = (platform: string): boolean => {
   return /^win(dows)?/i.test(platform);

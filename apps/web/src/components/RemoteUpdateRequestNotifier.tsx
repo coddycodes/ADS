@@ -12,7 +12,7 @@ export function remoteUpdateRequestToast(
       : `${requestedBy.label} on ${requestedBy.detail}`;
   return {
     title: "Update requested from another device",
-    description: `${device} is installing ${version === null ? "an update" : `v${version}`}. BiBCode restarts when it's done.`,
+    description: `${device} is installing ${version === null ? "an update" : `v${version}`}. Coddy Studio restarts when it's done.`,
   };
 }
 

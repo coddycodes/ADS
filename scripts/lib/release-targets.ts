@@ -109,7 +109,7 @@ export function symbolArchiveName(
   version: string,
   target: ReleaseTarget,
 ): string {
-  return `bibcode-${family}-symbols-${version}-${target.serverOs}-${target.serverArch}.zip`;
+  return `coddy-studio-${family}-symbols-${version}-${target.serverOs}-${target.serverArch}.zip`;
 }
 
 export function findReleaseTarget(

@@ -2,14 +2,14 @@ import {
   scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/environment";
 import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_SERVER_SETTINGS,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {

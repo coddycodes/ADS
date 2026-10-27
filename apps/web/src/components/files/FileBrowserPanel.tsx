@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@bibcode/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@coddy/contracts";
 import type {
   EditorId,
   EnvironmentId,
@@ -6,11 +6,11 @@ import type {
   ScopedThreadRef,
   VcsStatusResult,
   VcsWorkingTreeFileStatus,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import type { FileTreeDropResult, GitStatus, GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { FolderClosed, FolderOpen, RefreshCw, Search } from "lucide-react";
@@ -23,7 +23,7 @@ import { usePreferredEditor } from "~/editorPreferences";
 import { useTheme } from "~/hooks/useTheme";
 import { inferProjectTitleFromPath } from "~/lib/projectPaths";
 import { cn, newProjectId } from "~/lib/utils";
-import { BIBCODE_PIERRE_ICONS } from "~/pierre-icons";
+import { CODDY_STUDIO_PIERRE_ICONS } from "~/pierre-icons";
 import { canPreviewAnyUrlInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { assetEnvironment } from "~/state/assets";
@@ -708,7 +708,7 @@ export default function FileBrowserPanel({
     flattenEmptyDirectories: false,
     gitStatus,
     initialExpansion: 0,
-    icons: BIBCODE_PIERRE_ICONS,
+    icons: CODDY_STUDIO_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {

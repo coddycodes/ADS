@@ -1,4 +1,4 @@
-use bibcode_server::mcp::preview_automation;
+use coddy_studio_server::mcp::preview_automation;
 
 use preview_automation::{
     PreviewAutomationBroker, PreviewAutomationHost, PreviewAutomationInvokeInput,

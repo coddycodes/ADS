@@ -4,7 +4,7 @@ import type {
   GitManagerOperationEvent,
   GitManagerOperationRequest,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { TagIcon } from "lucide-react";
 import {

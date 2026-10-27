@@ -3,7 +3,7 @@ import type {
   DeviceJpegFrame,
   DeviceSnapshot,
   EnvironmentId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useAtomRefresh, useAtomSubscribe } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import {

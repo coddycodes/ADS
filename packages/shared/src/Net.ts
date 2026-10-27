@@ -63,7 +63,7 @@ export interface NetServiceShape {
  * NetService - Service tag for startup networking helpers.
  */
 export class NetService extends Context.Service<NetService, NetServiceShape>()(
-  "@bibcode/shared/Net/NetService",
+  "@coddy/shared/Net/NetService",
 ) {}
 
 export const make = () => {

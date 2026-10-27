@@ -2,8 +2,8 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
-import * as NetService from "@bibcode/shared/Net";
-import { HostProcessPlatform } from "@bibcode/shared/hostProcess";
+import * as NetService from "@coddy/shared/Net";
+import { HostProcessPlatform } from "@coddy/shared/hostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -62,7 +62,7 @@ function mockProcess(
 
 const devServerInput = {
   mode: "dev:server",
-  homeDir: "/tmp/bibcode-dev-runner",
+  homeDir: "/tmp/coddy-studio-dev-runner",
   noBrowser: undefined,
   autoBootstrapProjectFromCwd: undefined,
   logWebSocketEvents: undefined,
@@ -79,9 +79,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.sync(() => {
         assert.deepStrictEqual(getDevRunnerModeArgs("dev"), [
           "run",
-          "--filter=@bibcode/contracts",
-          "--filter=@bibcode/web",
-          "--filter=bibcode",
+          "--filter=@coddy/contracts",
+          "--filter=@coddy/web",
+          "--filter=coddy-studio",
           "--parallel",
           "dev",
         ]);
@@ -90,12 +90,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("resolveOffset", () => {
-    it.effect("uses explicit BIBCODE_PORT_OFFSET when provided", () =>
+    it.effect("uses explicit CODDY_STUDIO_PORT_OFFSET when provided", () =>
       Effect.gen(function* () {
         const result = yield* resolveOffset({ portOffset: 12, devInstance: undefined });
         assert.deepStrictEqual(result, {
           offset: 12,
-          source: "BIBCODE_PORT_OFFSET=12",
+          source: "CODDY_STUDIO_PORT_OFFSET=12",
         });
       }),
     );
@@ -119,7 +119,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         );
         assert.deepStrictEqual(
           yield* resolveOffset({ portOffset: undefined, devInstance: " 42 " }),
-          { offset: 42, source: "numeric BIBCODE_DEV_INSTANCE=42" },
+          { offset: 42, source: "numeric CODDY_STUDIO_DEV_INSTANCE=42" },
         );
       }),
     );
@@ -131,7 +131,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         );
 
         assert.equal(error._tag, "DevRunnerInvalidPortOffsetError");
-        assert.equal(error.configKey, "BIBCODE_PORT_OFFSET");
+        assert.equal(error.configKey, "CODDY_STUDIO_PORT_OFFSET");
         assert.equal(error.portOffset, -1);
         assert.equal(error.minimum, 0);
         assert.include(error.message, "must be at least 0");
@@ -158,7 +158,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             devUrl: undefined,
           });
 
-          assert.equal(env.BIBCODE_CLAUDE_KEYCHAIN_ACCESS, "disabled");
+          assert.equal(env.CODDY_STUDIO_CLAUDE_KEYCHAIN_ACCESS, "disabled");
         }
       }),
     );
@@ -168,7 +168,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
-            BIBCODE_CLAUDE_KEYCHAIN_ACCESS: "enabled",
+            CODDY_STUDIO_CLAUDE_KEYCHAIN_ACCESS: "enabled",
           },
           serverOffset: 0,
           webOffset: 0,
@@ -181,11 +181,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.BIBCODE_CLAUDE_KEYCHAIN_ACCESS, "enabled");
+        assert.equal(env.CODDY_STUDIO_CLAUDE_KEYCHAIN_ACCESS, "enabled");
       }),
     );
 
-    it.effect("defaults BIBCODE_HOME to ~/.bibcode when not provided", () =>
+    it.effect("defaults CODDY_STUDIO_HOME to ~/.coddy/studio when not provided", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const env = yield* createDevRunnerEnv({
@@ -202,7 +202,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.BIBCODE_HOME, path.resolve(NodeOS.homedir(), ".bibcode"));
+        assert.equal(env.CODDY_STUDIO_HOME, path.resolve(NodeOS.homedir(), ".coddy/studio"));
       }),
     );
 
@@ -214,7 +214,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          homeDir: "/tmp/custom-bibcode",
+          homeDir: "/tmp/custom-coddy-studio",
           noBrowser: true,
           autoBootstrapProjectFromCwd: false,
           logWebSocketEvents: true,
@@ -223,14 +223,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: new URL("http://localhost:7331"),
         });
 
-        assert.equal(env.BIBCODE_HOME, path.resolve("/tmp/custom-bibcode"));
-        assert.equal(env.BIBCODE_PORT, "4222");
+        assert.equal(env.CODDY_STUDIO_HOME, path.resolve("/tmp/custom-coddy-studio"));
+        assert.equal(env.CODDY_STUDIO_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
-        assert.equal(env.BIBCODE_NO_BROWSER, "true");
-        assert.equal(env.BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
-        assert.equal(env.BIBCODE_LOG_WS_EVENTS, "1");
-        assert.equal(env.BIBCODE_HOST, "0.0.0.0");
+        assert.equal(env.CODDY_STUDIO_NO_BROWSER, "true");
+        assert.equal(env.CODDY_STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
+        assert.equal(env.CODDY_STUDIO_LOG_WS_EVENTS, "1");
+        assert.equal(env.CODDY_STUDIO_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
       }),
     );
@@ -240,7 +240,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
-            BIBCODE_LOG_WS_EVENTS: "keep-me-out",
+            CODDY_STUDIO_LOG_WS_EVENTS: "keep-me-out",
           },
           serverOffset: 0,
           webOffset: 0,
@@ -253,8 +253,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.BIBCODE_MODE, "web");
-        assert.equal(env.BIBCODE_LOG_WS_EVENTS, undefined);
+        assert.equal(env.CODDY_STUDIO_MODE, "web");
+        assert.equal(env.CODDY_STUDIO_LOG_WS_EVENTS, undefined);
       }),
     );
 
@@ -263,7 +263,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
-            BIBCODE_LOG_WS_EVENTS: "1",
+            CODDY_STUDIO_LOG_WS_EVENTS: "1",
           },
           serverOffset: 0,
           webOffset: 0,
@@ -276,7 +276,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.BIBCODE_LOG_WS_EVENTS, "0");
+        assert.equal(env.CODDY_STUDIO_LOG_WS_EVENTS, "0");
       }),
     );
 
@@ -286,7 +286,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         Effect.gen(function* () {
           const env = yield* createDevRunnerEnv({
             mode: "dev:web",
-            baseEnv: { BIBCODE_DESKTOP_WS_URL: "ws://desktop", BIBCODE_NO_BROWSER: "stale" },
+            baseEnv: { CODDY_STUDIO_DESKTOP_WS_URL: "ws://desktop", CODDY_STUDIO_NO_BROWSER: "stale" },
             serverOffset: 2,
             webOffset: 3,
             homeDir: undefined,
@@ -297,9 +297,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             port: undefined,
             devUrl: undefined,
           });
-          assert.equal(env.BIBCODE_NO_BROWSER, "false");
-          assert.equal(env.BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "1");
-          assert.equal(env.BIBCODE_DESKTOP_WS_URL, undefined);
+          assert.equal(env.CODDY_STUDIO_NO_BROWSER, "false");
+          assert.equal(env.CODDY_STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "1");
+          assert.equal(env.CODDY_STUDIO_DESKTOP_WS_URL, undefined);
           assert.equal(env.PORT, "5736");
         }),
     );
@@ -312,7 +312,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          homeDir: "/tmp/my-bibcode",
+          homeDir: "/tmp/my-coddy-studio",
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -321,7 +321,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.BIBCODE_HOME, path.resolve("/tmp/my-bibcode"));
+        assert.equal(env.CODDY_STUDIO_HOME, path.resolve("/tmp/my-coddy-studio"));
       }),
     );
 
@@ -341,7 +341,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.BIBCODE_PORT, "13773");
+        assert.equal(env.CODDY_STUDIO_PORT, "13773");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
         assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
       }),
@@ -636,7 +636,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             Layer.merge(
               netServiceLayer,
               ConfigProvider.layer(
-                ConfigProvider.fromEnv({ env: { BIBCODE_PORT_OFFSET: "not-an-integer" } }),
+                ConfigProvider.fromEnv({ env: { CODDY_STUDIO_PORT_OFFSET: "not-an-integer" } }),
               ),
             ),
           ),
@@ -646,7 +646,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         if (error._tag !== "DevRunnerConfigurationError") {
           assert.fail(`Unexpected error: ${error._tag}`);
         }
-        assert.deepStrictEqual(error.configKeys, ["BIBCODE_PORT_OFFSET", "BIBCODE_DEV_INSTANCE"]);
+        assert.deepStrictEqual(error.configKeys, ["CODDY_STUDIO_PORT_OFFSET", "CODDY_STUDIO_DEV_INSTANCE"]);
         assert.ok(error.cause !== undefined);
         assert.ok(!error.message.includes(String((error.cause as Error).message)));
       }),
@@ -750,7 +750,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 });
 
 it("applies repository environment only for the direct CLI entrypoint", () => {
-  const key = "BIBCODE_DEV_RUNNER_TEST_ENV";
+  const key = "CODDY_STUDIO_DEV_RUNNER_TEST_ENV";
   const previous = process.env[key];
   const launched: unknown[] = [];
   const applied: Array<Readonly<Record<string, string | undefined>>> = [];
@@ -785,11 +785,11 @@ it("applies repository environment only for the direct CLI entrypoint", () => {
 });
 
 it("does not stringify unset repository configuration", () => {
-  const keys = ["BIBCODE_PORT", "BIBCODE_PORT_OFFSET"] as const;
+  const keys = ["CODDY_STUDIO_PORT", "CODDY_STUDIO_PORT_OFFSET"] as const;
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   try {
     for (const key of keys) delete process.env[key];
-    applyDevRunnerRepoEnv({ BIBCODE_PORT: undefined, BIBCODE_PORT_OFFSET: undefined });
+    applyDevRunnerRepoEnv({ CODDY_STUDIO_PORT: undefined, CODDY_STUDIO_PORT_OFFSET: undefined });
     for (const key of keys) assert.equal(process.env[key], undefined);
   } finally {
     for (const key of keys) {
@@ -801,7 +801,7 @@ it("does not stringify unset repository configuration", () => {
 
 it("runs a dry dev CLI without a configured server port", () => {
   const env = { ...process.env };
-  Reflect.deleteProperty(env, "BIBCODE_PORT");
+  Reflect.deleteProperty(env, "CODDY_STUDIO_PORT");
   Reflect.deleteProperty(env, "PORT");
 
   const result = NodeChildProcess.spawnSync(

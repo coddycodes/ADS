@@ -16,7 +16,7 @@
     "gid": 1000,
     "sig": 6,
     "corefile": "present",
-    "exe": "/work/workspaces/orca/BibCode/main/target/debug/deps/bibcode_server-fe771ab9e6f4b1bc",
+    "exe": "/work/workspaces/orca/CoddyStudio/main/target/debug/deps/coddy_studio_server-fe771ab9e6f4b1bc",
     "size": 739904
   }
 ]

@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     activity::{
         ActivityCapabilities, ActivityEntry, ActivityEntryKind, ActivityEntryTone,
@@ -1041,7 +1041,7 @@ async fn assert_same_scope_publication_order(database: &Database) {
             .await
             .expect("publication must arrive")
             .expect("publication receiver");
-        let bibcode_server::activity::ActivityProjectionEvent::Delta(delta) = event else {
+        let coddy_studio_server::activity::ActivityProjectionEvent::Delta(delta) = event else {
             panic!("expected same-scope delta");
         };
         assert_eq!(delta.scope_id, scope.scope_id);
@@ -1159,7 +1159,7 @@ async fn assert_exact_delta_limit_split(database: &Database) {
     for expected in &deltas {
         assert_eq!(
             receiver.recv().await.expect("split publication"),
-            bibcode_server::activity::ActivityProjectionEvent::Delta(expected.clone())
+            coddy_studio_server::activity::ActivityProjectionEvent::Delta(expected.clone())
         );
     }
 }
@@ -1201,7 +1201,7 @@ impl ProcessRssSampler {
         let baseline_rss_bytes = current_process_rss_bytes(&mut system, process_id);
         let (stop_sender, stop_receiver) = mpsc::sync_channel(1);
         let sampler_thread = std::thread::Builder::new()
-            .name("bibcode-activity-load-rss".to_owned())
+            .name("coddy-studio-activity-load-rss".to_owned())
             .spawn(move || {
                 let mut peak_rss_bytes = baseline_rss_bytes;
                 loop {
@@ -1870,7 +1870,7 @@ struct RpcFixture {
     _directory: TempDir,
     database: Database,
     projection: ActivityProjection,
-    handle: bibcode_server::ServerHandle,
+    handle: coddy_studio_server::ServerHandle,
 }
 
 impl RpcFixture {
@@ -1971,16 +1971,16 @@ where
     request(socket, id, tag, payload).await;
     match next_message(socket).await {
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Success { value: Some(value) },
+            exit: coddy_studio_server::RpcExit::Success { value: Some(value) },
             ..
         } => Ok(value),
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Failure { cause },
+            exit: coddy_studio_server::RpcExit::Failure { cause },
             ..
         } => Err(cause
             .into_iter()
             .find_map(|item| match item {
-                bibcode_server::CauseItem::Fail { error } => Some(error),
+                coddy_studio_server::CauseItem::Fail { error } => Some(error),
                 _ => None,
             })
             .expect("RPC error")),

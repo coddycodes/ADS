@@ -4,7 +4,7 @@ import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Stream from "effect/Stream";
 
-import type { TerminalAttachStreamEvent, TerminalSessionSnapshot } from "@bibcode/contracts";
+import type { TerminalAttachStreamEvent, TerminalSessionSnapshot } from "@coddy/contracts";
 
 import {
   acquireTerminalMetadataStream,

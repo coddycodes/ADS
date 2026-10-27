@@ -5,9 +5,9 @@ import { installDesktopUiMotionGuard, setDesktopUiMotionMode } from "./motion-gu
 afterEach(() => {
   document.body.replaceChildren();
   document
-    .querySelectorAll("style[data-bibcode-desktop-ui-automation]")
+    .querySelectorAll("style[data-coddy-studio-desktop-ui-automation]")
     .forEach((style) => style.remove());
-  Reflect.deleteProperty(document.documentElement.dataset, "bibcodeDesktopUiMotion");
+  Reflect.deleteProperty(document.documentElement.dataset, "coddyStudioDesktopUiMotion");
   vi.unstubAllGlobals();
 });
 
@@ -21,12 +21,12 @@ it("installs once per document and lets explicit native-motion checks retain rea
   document.body.append(element);
   await installDesktopUiMotionGuard();
   await installDesktopUiMotionGuard();
-  expect(document.querySelectorAll("style[data-bibcode-desktop-ui-automation]")).toHaveLength(1);
+  expect(document.querySelectorAll("style[data-coddy-studio-desktop-ui-automation]")).toHaveLength(1);
   expect(getComputedStyle(element).transitionDuration).toBe("0s");
   await setDesktopUiMotionMode("native");
-  expect(document.documentElement.dataset.bibcodeDesktopUiMotion).toBe("native");
+  expect(document.documentElement.dataset.coddyStudioDesktopUiMotion).toBe("native");
   expect(
-    document.querySelectorAll('html:not([data-bibcode-desktop-ui-motion="native"]) div'),
+    document.querySelectorAll('html:not([data-coddy-studio-desktop-ui-motion="native"]) div'),
   ).toHaveLength(0);
   // Use a fresh probe to avoid happy-dom's cached ancestor-selector styles.
   // The native acceptance suite checks live computed transition changes.

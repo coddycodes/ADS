@@ -1,6 +1,6 @@
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import type { EnvironmentId, ScopedProjectRef } from "@bibcode/contracts";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import type { EnvironmentId, ScopedProjectRef } from "@coddy/contracts";
 import type { SelectedLineRange } from "@pierre/diffs";
 import {
   lazy,

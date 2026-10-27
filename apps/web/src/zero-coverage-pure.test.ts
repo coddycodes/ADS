@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 
-import { type AssetCreateUrlResult, EnvironmentId, ThreadId } from "@bibcode/contracts";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { type AssetCreateUrlResult, EnvironmentId, ThreadId } from "@coddy/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -45,9 +45,9 @@ import {
   subscribePreviewAction,
 } from "./components/preview/previewActionBus";
 import { isPreviewFocused } from "./lib/previewFocus";
-import { createEnvironmentPresentationAtoms } from "@bibcode/client-runtime/state/presentation";
-import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
-import type { SupervisorConnectionState } from "@bibcode/client-runtime/connection";
+import { createEnvironmentPresentationAtoms } from "@coddy/client-runtime/state/presentation";
+import type { AtomCommandResult } from "@coddy/client-runtime/state/runtime";
+import type { SupervisorConnectionState } from "@coddy/client-runtime/connection";
 
 const environmentId = EnvironmentId.make("environment-local");
 const threadId = ThreadId.make("thread-1");
@@ -222,7 +222,7 @@ describe("preview browser UI helpers", () => {
     const listener = vi.fn();
     const unsubscribe = subscribePreviewAction(listener);
     dispatchPreviewAction("refresh");
-    window.dispatchEvent(new CustomEvent("bibcode:preview-action", { detail: 42 }));
+    window.dispatchEvent(new CustomEvent("coddy-studio:preview-action", { detail: 42 }));
     expect(listener).toHaveBeenCalledOnce();
     expect(listener).toHaveBeenCalledWith("refresh");
     unsubscribe();

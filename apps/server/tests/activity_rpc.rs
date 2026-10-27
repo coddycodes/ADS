@@ -1,6 +1,6 @@
 use std::{sync::mpsc as std_mpsc, time::Duration};
 
-use bibcode_server::{
+use coddy_studio_server::{
     ACTIVE_RPC_METHODS, MethodMode, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     activity::{
         ActivityActorSummary, ActivityCapabilities, ActivityEntry, ActivityEntryKind,
@@ -482,8 +482,8 @@ async fn feature_disabled_stream_emits_one_error_completes_and_unary_reads_reser
     assert!(matches!(
         next_message(&mut socket).await,
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Failure { ref cause }, ..
-        } if cause == &vec![bibcode_server::CauseItem::Fail {
+            exit: coddy_studio_server::RpcExit::Failure { ref cause }, ..
+        } if cause == &vec![coddy_studio_server::CauseItem::Fail {
             error: json!({
                 "_tag": "ActivityError",
                 "reason": "featureDisabled",
@@ -519,8 +519,8 @@ async fn feature_disabled_stream_emits_one_error_completes_and_unary_reads_reser
     assert!(matches!(
         next_message(&mut socket).await,
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Failure { ref cause }, ..
-        } if cause == &vec![bibcode_server::CauseItem::Fail {
+            exit: coddy_studio_server::RpcExit::Failure { ref cause }, ..
+        } if cause == &vec![coddy_studio_server::CauseItem::Fail {
             error: json!({
                 "_tag": "ActivityError",
                 "reason": "featureDisabled",
@@ -585,7 +585,7 @@ async fn source_specific_chat_disable_leaves_terminal_rpc_and_stream_running() {
     assert!(matches!(
         next_message(&mut chat_socket).await,
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Failure { .. },
+            exit: coddy_studio_server::RpcExit::Failure { .. },
             ..
         }
     ));
@@ -698,7 +698,7 @@ async fn source_specific_terminal_disable_leaves_chat_rpc_and_stream_running() {
     assert!(matches!(
         next_message(&mut terminal_socket).await,
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Failure { .. },
+            exit: coddy_studio_server::RpcExit::Failure { .. },
             ..
         }
     ));
@@ -952,9 +952,9 @@ fn assert_activity_feature_disabled(message: &ServerMessage, request_id: &str, m
             message,
             ServerMessage::Exit {
                 request_id: actual_request_id,
-                exit: bibcode_server::RpcExit::Failure { cause },
+                exit: coddy_studio_server::RpcExit::Failure { cause },
             } if actual_request_id.as_str() == request_id
-                && cause == &vec![bibcode_server::CauseItem::Fail {
+                && cause == &vec![coddy_studio_server::CauseItem::Fail {
                     error: json!({
                         "_tag": "ActivityError",
                         "reason": "featureDisabled",
@@ -1461,7 +1461,7 @@ struct Fixture {
     _directory: TempDir,
     chat_projection: ActivityProjection,
     terminal_projection: ActivityProjection,
-    handle: bibcode_server::ServerHandle,
+    handle: coddy_studio_server::ServerHandle,
 }
 
 struct SourceSpecificFixture {
@@ -1469,12 +1469,12 @@ struct SourceSpecificFixture {
     projections: ActivityProjections,
     chat_controller: AgentActivityController,
     terminal_controller: AgentActivityController,
-    handle: bibcode_server::ServerHandle,
+    handle: coddy_studio_server::ServerHandle,
 }
 
 struct AuthRequiredFixture {
     _directory: TempDir,
-    handle: bibcode_server::ServerHandle,
+    handle: coddy_studio_server::ServerHandle,
 }
 
 impl AuthRequiredFixture {
@@ -1655,7 +1655,7 @@ fn actor(
     status: ActivityLifecycle,
     updated_at: &str,
     terminal_at: Option<&str>,
-) -> Result<ActivityActorSummary, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityActorSummary, coddy_studio_server::activity::ActivityModelError> {
     ActivityActorSummary::try_new(
         id,
         None,
@@ -1673,7 +1673,7 @@ fn actor(
 fn work_item(
     id: &str,
     owner_actor_id: &str,
-) -> Result<ActivityWorkItemSummary, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityWorkItemSummary, coddy_studio_server::activity::ActivityModelError> {
     ActivityWorkItemSummary::try_new(
         id,
         Some(owner_actor_id),
@@ -1693,7 +1693,7 @@ fn entry(
     id: &str,
     owner_id: &str,
     created_at: &str,
-) -> Result<ActivityEntry, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityEntry, coddy_studio_server::activity::ActivityModelError> {
     ActivityEntry::try_new(
         id,
         ActivityRecordKind::Actor,
@@ -1718,16 +1718,16 @@ where
     request(socket, id, tag, payload).await;
     match next_message(socket).await {
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Success { value: Some(value) },
+            exit: coddy_studio_server::RpcExit::Success { value: Some(value) },
             ..
         } => Ok(value),
         ServerMessage::Exit {
-            exit: bibcode_server::RpcExit::Failure { cause },
+            exit: coddy_studio_server::RpcExit::Failure { cause },
             ..
         } => Err(cause
             .into_iter()
             .find_map(|item| match item {
-                bibcode_server::CauseItem::Fail { error } => Some(error),
+                coddy_studio_server::CauseItem::Fail { error } => Some(error),
                 _ => None,
             })
             .expect("typed RPC error")),

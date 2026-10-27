@@ -1,4 +1,4 @@
-import type { RelayManagedEndpoint } from "@bibcode/contracts/relay";
+import type { RelayManagedEndpoint } from "@coddy/contracts/relay";
 import { and, eq, exists, gt, isNotNull, sql } from "drizzle-orm";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -170,7 +170,7 @@ export class ManagedEndpointAllocations extends Context.Service<
       input: OwnedManagedEndpointAllocationKey,
     ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
   }
->()("bibcode-relay/environments/ManagedEndpointAllocations") {}
+>()("coddy-studio-relay/environments/ManagedEndpointAllocations") {}
 
 const allocationSelection = {
   userId: relayManagedEndpointAllocations.userId,

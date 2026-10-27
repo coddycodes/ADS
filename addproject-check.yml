@@ -156,7 +156,7 @@
                     - button ".sbx-denybin" [ref=f37e190]
                     - button ".serena" [ref=f37e191]
                     - button ".ssh" [ref=f37e192]
-                    - button ".bibcode" [ref=f37e193]
+                    - button ".coddy/studio" [ref=f37e193]
                     - button ".templateengine" [ref=f37e194]
                     - button ".vite-plus" [ref=f37e195]
                     - button ".vscode" [ref=f37e196]

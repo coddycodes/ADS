@@ -339,7 +339,7 @@
         "ResourceHistoryChart",
         "HistoryProcessTable"
       ],
-      "visible_text": ["Resource History", "BiBCode Core average", "External Tooling average"]
+      "visible_text": ["Resource History", "Coddy Studio Core average", "External Tooling average"]
     },
     {
       "state": "cpu-history",
@@ -420,7 +420,7 @@
         }
       ],
       "owners": ["ResourceUsageSegment", "ResourceTotalsCard"],
-      "visible_text": ["Resource Manager", "BiBCode Core", "External Tooling", "Highest consumers"]
+      "visible_text": ["Resource Manager", "Coddy Studio Core", "External Tooling", "Highest consumers"]
     }
   ],
   "status-resource-unavailable": [
@@ -435,7 +435,7 @@
         }
       ],
       "owners": ["ResourceUsageSegment", "ResourceTotalsCard"],
-      "visible_text": ["Unavailable", "BiBCode Core", "External Tooling"]
+      "visible_text": ["Unavailable", "Coddy Studio Core", "External Tooling"]
     }
   ]
 }

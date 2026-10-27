@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { HostProcessPlatform } from "@bibcode/shared/hostProcess";
+import { HostProcessPlatform } from "@coddy/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { vi } from "vite-plus/test";
@@ -28,7 +28,7 @@ const releasePackageJsonFiles = [
 const releaseRustFiles = ["apps/server/Cargo.toml", "apps/desktop/src-tauri/Cargo.toml"] as const;
 
 function makeFixtureRoot(includePatches = true): string {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-release-source-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-source-"));
   for (const relativePath of releaseSmokeWorkspaceFiles) {
     const filePath = NodePath.join(root, relativePath);
     NodeFS.mkdirSync(NodePath.dirname(filePath), { recursive: true });
@@ -38,12 +38,12 @@ function makeFixtureRoot(includePatches = true): string {
         `${JSON.stringify({ name: relativePath, version: "1.2.3" })}\n`,
       );
     } else if (relativePath.endsWith("Cargo.toml")) {
-      const packageName = relativePath.includes("desktop") ? "bibcode-desktop" : "bibcode-server";
+      const packageName = relativePath.includes("desktop") ? "coddy-studio-desktop" : "coddy-studio-server";
       NodeFS.writeFileSync(filePath, `[package]\nname = "${packageName}"\nversion = "1.2.3"\n`);
     } else if (relativePath === "Cargo.lock") {
       NodeFS.writeFileSync(
         filePath,
-        'version = 4\n\n[[package]]\nname = "bibcode-desktop"\nversion = "1.2.3"\n\n[[package]]\nname = "bibcode-server"\nversion = "1.2.3"\n',
+        'version = 4\n\n[[package]]\nname = "coddy-studio-desktop"\nversion = "1.2.3"\n\n[[package]]\nname = "coddy-studio-server"\nversion = "1.2.3"\n',
       );
     } else {
       NodeFS.writeFileSync(filePath, `${relativePath}\n`);
@@ -98,7 +98,7 @@ function successfulRuntime(
         NodeFS.writeFileSync(
           cargoLockPath,
           NodeFS.readFileSync(cargoLockPath, "utf8").replace(
-            /(\[\[package\]\]\r?\nname = "bibcode-(?:desktop|server)"\r?\nversion = ")[^"]+("\r?$)/gm,
+            /(\[\[package\]\]\r?\nname = "coddy-studio-(?:desktop|server)"\r?\nversion = ")[^"]+("\r?$)/gm,
             (_match, prefix: string, suffix: string) => `${prefix}9.9.9-smoke.0${suffix}`,
           ),
         );
@@ -107,7 +107,7 @@ function successfulRuntime(
       return [
         "version=9.9.10-nightly.20260413.321",
         "tag=v9.9.10-nightly.20260413.321",
-        "name=BiBCode Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
+        "name=Coddy Studio Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
       ].join("\n");
     },
     spawn(command, args, options) {
@@ -124,10 +124,10 @@ function successfulRuntime(
 
 it("copies the complete workspace fixture with optional patches", () => {
   const source = makeFixtureRoot(true);
-  const target = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-release-copy-"));
+  const target = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-copy-"));
   const sourceWithoutPatches = makeFixtureRoot(false);
   const targetWithoutPatches = NodeFS.mkdtempSync(
-    NodePath.join(NodeOS.tmpdir(), "bibcode-release-copy-no-patches-"),
+    NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-copy-no-patches-"),
   );
   try {
     copyWorkspaceManifestFixture(source, target);
@@ -192,7 +192,7 @@ it.effect("lists the legacy diagnostic archive with the platform archive tool", 
 
 it("executes the release command plan and always removes its temporary workspace", () => {
   const source = makeFixtureRoot();
-  const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-release-run-"));
+  const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-run-"));
   const calls: string[] = [];
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -345,7 +345,7 @@ it("propagates process and validation failures without leaking temporary workspa
 
   for (const testCase of cases) {
     const source = makeFixtureRoot();
-    const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-release-fail-"));
+    const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-fail-"));
     const runtime = testCase.mutate(successfulRuntime([]));
     try {
       assert.throws(
@@ -371,7 +371,7 @@ it("propagates process and validation failures without leaking temporary workspa
 
 it("runs the smoke workflow only for the direct CLI entrypoint", () => {
   const source = makeFixtureRoot();
-  const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-release-main-"));
+  const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-main-"));
   try {
     assert.equal(runReleaseSmokeMain(false, { runtime: successfulRuntime([]) }), false);
     assert.equal(

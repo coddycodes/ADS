@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
-import { type ServerProviderAgent, type ServerProviderSkill, ThreadId } from "@bibcode/contracts";
-import { serializeComposerReference } from "@bibcode/shared/composerReferences";
-import { serializeComposerFileLink } from "@bibcode/shared/composerTrigger";
+import { type ServerProviderAgent, type ServerProviderSkill, ThreadId } from "@coddy/contracts";
+import { serializeComposerReference } from "@coddy/shared/composerReferences";
+import { serializeComposerFileLink } from "@coddy/shared/composerTrigger";
 import {
   $createRangeSelection,
   $createTextNode,

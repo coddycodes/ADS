@@ -4,8 +4,8 @@ import type {
   ActivityActorControl,
   ActivityActorSummary,
   ActivitySnapshot,
-} from "@bibcode/contracts";
-import { ActivityScopeId, ThreadId } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { ActivityScopeId, ThreadId } from "@coddy/contracts";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

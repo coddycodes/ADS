@@ -1,8 +1,8 @@
 import {
   mapAtomCommandResult,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
-import type { ScopedThreadRef } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/runtime";
+import type { ScopedThreadRef } from "@coddy/contracts";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { useRightPanelStore } from "~/rightPanelStore";

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessArchitecture, HostProcessPlatform } from "@bibcode/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@coddy/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
 import * as ByteSize from "effect/ByteSize";
 import * as Deferred from "effect/Deferred";
@@ -131,7 +131,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         args: [
           "run",
           "--filter",
-          "@bibcode/desktop",
+          "@coddy/desktop",
           "build",
           "--no-bundle",
           "--target",
@@ -144,7 +144,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         args: [
           "run",
           "--filter",
-          "@bibcode/desktop",
+          "@coddy/desktop",
           "bundle",
           "--bundles",
           "nsis",
@@ -176,7 +176,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepEqual(plan.buildCommand.args, [
         "run",
         "--filter",
-        "@bibcode/desktop",
+        "@coddy/desktop",
         "build",
         "--no-bundle",
         "--config",
@@ -187,7 +187,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepEqual(plan.bundleCommand.args, [
         "run",
         "--filter",
-        "@bibcode/desktop",
+        "@coddy/desktop",
         "bundle",
         "--config",
         path.join(repoRoot, "apps/desktop/src-tauri/tauri.release.conf.json"),
@@ -239,7 +239,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepEqual(plan.bundleCommand.args, [
         "run",
         "--filter",
-        "@bibcode/desktop",
+        "@coddy/desktop",
         "bundle",
         "--bundles",
         "dmg",
@@ -257,12 +257,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const plan = yield* resolveTauriBuildPlan(
         {},
         {
-          BIBCODE_TAURI_DESKTOP_PLATFORM: "linux",
-          BIBCODE_TAURI_DESKTOP_TARGET: "deb",
-          BIBCODE_TAURI_DESKTOP_ARCH: "arm64",
-          BIBCODE_TAURI_DESKTOP_OUTPUT_DIR: "release/custom-tauri",
-          BIBCODE_TAURI_DESKTOP_SKIP_BUILD: "1",
-          BIBCODE_TAURI_DESKTOP_VERBOSE: "true",
+          CODDY_STUDIO_TAURI_DESKTOP_PLATFORM: "linux",
+          CODDY_STUDIO_TAURI_DESKTOP_TARGET: "deb",
+          CODDY_STUDIO_TAURI_DESKTOP_ARCH: "arm64",
+          CODDY_STUDIO_TAURI_DESKTOP_OUTPUT_DIR: "release/custom-tauri",
+          CODDY_STUDIO_TAURI_DESKTOP_SKIP_BUILD: "1",
+          CODDY_STUDIO_TAURI_DESKTOP_VERBOSE: "true",
         },
         { platform: "linux", arch: "x64" },
         repoRoot,
@@ -330,7 +330,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
       const plan = yield* resolveTauriBuildPlan(
         { skipBuild: true },
-        { UNUSED: undefined, BIBCODE_TAURI_DESKTOP_VERBOSE: "no" },
+        { UNUSED: undefined, CODDY_STUDIO_TAURI_DESKTOP_VERBOSE: "no" },
         { platform: "linux", arch: "arm64" },
       );
 
@@ -368,12 +368,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-tauri-artifact-",
+        prefix: "coddy-studio-tauri-artifact-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "out");
       yield* fs.makeDirectory(path.join(bundleDir, "nested"), { recursive: true });
-      yield* fs.writeFileString(path.join(bundleDir, "BiBCode_0.2.996_x64-setup.exe"), "installer");
+      yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio_0.2.996_x64-setup.exe"), "installer");
       yield* fs.writeFileString(path.join(bundleDir, "nested", "manifest.json"), "{}");
 
       const artifacts = yield* copyTauriBundleArtifacts({ bundleDir, outputDir });
@@ -381,12 +381,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(
         artifacts.toSorted(),
         [
-          path.join(outputDir, "BiBCode_0.2.996_x64-setup.exe"),
+          path.join(outputDir, "Coddy Studio_0.2.996_x64-setup.exe"),
           path.join(outputDir, "nested"),
         ].toSorted(),
       );
       assert.equal(
-        yield* fs.readFileString(path.join(outputDir, "BiBCode_0.2.996_x64-setup.exe")),
+        yield* fs.readFileString(path.join(outputDir, "Coddy Studio_0.2.996_x64-setup.exe")),
         "installer",
       );
       assert.equal(yield* fs.readFileString(path.join(outputDir, "nested", "manifest.json")), "{}");
@@ -398,25 +398,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-release-boundary-periods-",
+        prefix: "coddy-studio-release-boundary-periods-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
       yield* fs.makeDirectory(bundleDir);
-      yield* fs.writeFileString(path.join(bundleDir, ".BiBCode_0.2.996_aarch64.dmg"), "leading");
-      yield* fs.writeFileString(path.join(bundleDir, "BiBCode_0.2.996_x64-setup.exe."), "trailing");
+      yield* fs.writeFileString(path.join(bundleDir, ".Coddy Studio_0.2.996_aarch64.dmg"), "leading");
+      yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio_0.2.996_x64-setup.exe."), "trailing");
 
       const artifacts = yield* copyTauriBundleArtifacts({ bundleDir, outputDir });
 
       assert.deepStrictEqual(
         artifacts.toSorted(),
         [
-          path.join(outputDir, "BiBCode_0.2.996_aarch64.dmg"),
-          path.join(outputDir, "BiBCode_0.2.996_x64-setup.exe"),
+          path.join(outputDir, "Coddy Studio_0.2.996_aarch64.dmg"),
+          path.join(outputDir, "Coddy Studio_0.2.996_x64-setup.exe"),
         ].toSorted(),
       );
       for (const entry of yield* fs.readDirectory(outputDir)) {
-        if (entry === ".bibcode-publication-owner") continue;
+        if (entry === ".coddy-studio-publication-owner") continue;
         assert.match(entry, /^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/);
       }
     }),
@@ -426,15 +426,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-macos-updater-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-macos-updater-" });
       const bundleDir = path.join(tempDir, "bundle", "dmg");
       const updaterBundleDir = path.join(tempDir, "bundle", "macos");
       const outputDir = path.join(tempDir, "out");
       yield* fs.makeDirectory(bundleDir, { recursive: true });
       yield* fs.makeDirectory(updaterBundleDir, { recursive: true });
-      yield* fs.writeFileString(path.join(bundleDir, "BiBCode_0.2.996_aarch64.dmg"), "dmg");
-      yield* fs.writeFileString(path.join(updaterBundleDir, "BiBCode.app.tar.gz"), "archive");
-      yield* fs.writeFileString(path.join(updaterBundleDir, "BiBCode.app.tar.gz.sig"), "signature");
+      yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio_0.2.996_aarch64.dmg"), "dmg");
+      yield* fs.writeFileString(path.join(updaterBundleDir, "Coddy Studio.app.tar.gz"), "archive");
+      yield* fs.writeFileString(path.join(updaterBundleDir, "Coddy Studio.app.tar.gz.sig"), "signature");
 
       yield* copyTauriBundleArtifacts({
         bundleDir,
@@ -449,21 +449,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
         {
           target: "darwin-aarch64",
-          artifact: "bibcode-update-darwin-aarch64.app.tar.gz",
-          signature: "bibcode-update-darwin-aarch64.app.tar.gz.sig",
+          artifact: "coddy-studio-update-darwin-aarch64.app.tar.gz",
+          signature: "coddy-studio-update-darwin-aarch64.app.tar.gz.sig",
         },
       );
       assert.equal(
-        yield* fs.exists(path.join(outputDir, "bibcode-update-darwin-aarch64.app.tar.gz")),
+        yield* fs.exists(path.join(outputDir, "coddy-studio-update-darwin-aarch64.app.tar.gz")),
         true,
       );
       assert.equal(
-        yield* fs.readFileString(path.join(outputDir, "BiBCode_0.2.996_aarch64.dmg")),
+        yield* fs.readFileString(path.join(outputDir, "Coddy Studio_0.2.996_aarch64.dmg")),
         "dmg",
       );
-      assert.equal(yield* fs.exists(path.join(outputDir, "BiBCode.app.tar.gz")), false);
+      assert.equal(yield* fs.exists(path.join(outputDir, "Coddy Studio.app.tar.gz")), false);
       for (const entry of yield* fs.readDirectory(outputDir)) {
-        if (entry === ".bibcode-publication-owner") continue;
+        if (entry === ".coddy-studio-publication-owner") continue;
         const info = yield* fs.stat(path.join(outputDir, entry));
         if (info.type === "File") {
           assert.match(entry, /^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/);
@@ -476,16 +476,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-linux-updater-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-linux-updater-" });
       const bundleDir = path.join(tempDir, "bundle", "appimage");
       const outputDir = path.join(tempDir, "out");
-      const artifact = ".BiBCode_0.2.996_amd64.AppImage";
-      const publishedArtifact = "BiBCode_0.2.996_amd64.AppImage";
-      const appDir = path.join(bundleDir, "BiBCode.AppDir");
+      const artifact = ".Coddy Studio_0.2.996_amd64.AppImage";
+      const publishedArtifact = "Coddy Studio_0.2.996_amd64.AppImage";
+      const appDir = path.join(bundleDir, "Coddy Studio.AppDir");
       yield* fs.makeDirectory(path.join(appDir, "usr", "bin"), { recursive: true });
       yield* fs.writeFileString(path.join(appDir, "AppRun"), "launcher");
       yield* fs.writeFileString(path.join(appDir, "usr.desktop"), "desktop entry");
-      yield* fs.writeFileString(path.join(appDir, "usr", "bin", "bibcode-desktop"), "binary");
+      yield* fs.writeFileString(path.join(appDir, "usr", "bin", "coddy-studio-desktop"), "binary");
       yield* fs.writeFileString(path.join(bundleDir, artifact), "appimage");
       yield* fs.writeFileString(path.join(bundleDir, `${artifact}.sig`), "signature");
 
@@ -500,7 +500,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         [
           path.join(outputDir, publishedArtifact),
           path.join(outputDir, `${publishedArtifact}.sig`),
-          path.join(outputDir, "BiBCode.AppDir"),
+          path.join(outputDir, "Coddy Studio.AppDir"),
           path.join(outputDir, "updater-linux-x86_64.json"),
         ].toSorted(),
       );
@@ -521,12 +521,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
       assert.equal(
         yield* fs.readFileString(
-          path.join(outputDir, "BiBCode.AppDir", "usr", "bin", "bibcode-desktop"),
+          path.join(outputDir, "Coddy Studio.AppDir", "usr", "bin", "coddy-studio-desktop"),
         ),
         "binary",
       );
       for (const entry of yield* fs.readDirectory(outputDir)) {
-        if (entry === ".bibcode-publication-owner") continue;
+        if (entry === ".coddy-studio-publication-owner") continue;
         const info = yield* fs.stat(path.join(outputDir, entry));
         if (info.type === "File") {
           assert.match(entry, /^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/);
@@ -539,11 +539,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-windows-updater-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-windows-updater-" });
       const bundleDir = path.join(tempDir, "bundle", "nsis");
       const outputDir = path.join(tempDir, "out");
-      const artifact = "BiBCode_0.2.996_x64-setup.exe";
-      const publishedArtifact = "BiBCode_0.2.996_x64-setup.exe";
+      const artifact = "Coddy Studio_0.2.996_x64-setup.exe";
+      const publishedArtifact = "Coddy Studio_0.2.996_x64-setup.exe";
       yield* fs.makeDirectory(bundleDir, { recursive: true });
       yield* fs.writeFileString(path.join(bundleDir, artifact), "installer");
       yield* fs.writeFileString(path.join(bundleDir, `${artifact}.sig`), "signature");
@@ -573,7 +573,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         },
       );
       for (const entry of yield* fs.readDirectory(outputDir)) {
-        if (entry === ".bibcode-publication-owner") continue;
+        if (entry === ".coddy-studio-publication-owner") continue;
         const info = yield* fs.stat(path.join(outputDir, entry));
         if (info.type === "File") {
           assert.match(entry, /^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/);
@@ -587,15 +587,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-release-basename-collision-",
+        prefix: "coddy-studio-release-basename-collision-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-normalization-collision.stage");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-normalization-collision.stage");
       let stagingAttempted = false;
       yield* fs.makeDirectory(bundleDir);
-      yield* fs.writeFileString(path.join(bundleDir, "BiBCode (Dev).dmg"), "first");
-      yield* fs.writeFileString(path.join(bundleDir, "BiBCode [Dev].dmg"), "second");
+      yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio (Dev).dmg"), "first");
+      yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio [Dev].dmg"), "second");
 
       const error = yield* copyTauriBundleArtifacts(
         { bundleDir, outputDir },
@@ -609,7 +609,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ).pipe(Effect.flip);
 
       assert.instanceOf(error, TauriDesktopBuildPublicationError);
-      assert.include(String(error.cause), "Duplicate artifact basename BiBCode_Dev_.dmg.");
+      assert.include(String(error.cause), "Duplicate artifact basename CoddyStudio_Dev_.dmg.");
       assert.isFalse(stagingAttempted);
       assert.isFalse(yield* fs.exists(outputDir));
     }),
@@ -620,11 +620,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-release-meaningless-basename-",
+        prefix: "coddy-studio-release-meaningless-basename-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-meaningless-basename.stage");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-meaningless-basename.stage");
       let stagingAttempted = false;
       yield* fs.makeDirectory(bundleDir);
       yield* fs.writeFileString(path.join(bundleDir, "((("), "artifact");
@@ -652,15 +652,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-release-boundary-collision-",
+        prefix: "coddy-studio-release-boundary-collision-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-boundary-collision.stage");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-boundary-collision.stage");
       let stagingAttempted = false;
       yield* fs.makeDirectory(bundleDir);
-      yield* fs.writeFileString(path.join(bundleDir, ".BiBCode.dmg"), "hidden");
-      yield* fs.writeFileString(path.join(bundleDir, "BiBCode.dmg"), "visible");
+      yield* fs.writeFileString(path.join(bundleDir, ".Coddy Studio.dmg"), "hidden");
+      yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio.dmg"), "visible");
 
       const error = yield* copyTauriBundleArtifacts(
         { bundleDir, outputDir },
@@ -674,7 +674,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ).pipe(Effect.flip);
 
       assert.instanceOf(error, TauriDesktopBuildPublicationError);
-      assert.include(String(error.cause), "Duplicate artifact basename BiBCode.dmg.");
+      assert.include(String(error.cause), "Duplicate artifact basename Coddy Studio.dmg.");
       assert.isFalse(stagingAttempted);
       assert.isFalse(yield* fs.exists(outputDir));
     }),
@@ -685,17 +685,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-updater-descriptor-collision-",
+        prefix: "coddy-studio-updater-descriptor-collision-",
       });
       const bundleDir = path.join(tempDir, "bundle", "dmg");
       const updaterBundleDir = path.join(tempDir, "bundle", "macos");
       const outputDir = path.join(tempDir, "out");
       yield* fs.makeDirectory(bundleDir, { recursive: true });
       yield* fs.makeDirectory(updaterBundleDir, { recursive: true });
-      yield* fs.writeFileString(path.join(bundleDir, "BiBCode.dmg"), "dmg");
+      yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio.dmg"), "dmg");
       yield* fs.writeFileString(path.join(bundleDir, "updater-darwin-aarch64.json"), "artifact");
-      yield* fs.writeFileString(path.join(updaterBundleDir, "BiBCode.app.tar.gz"), "archive");
-      yield* fs.writeFileString(path.join(updaterBundleDir, "BiBCode.app.tar.gz.sig"), "signature");
+      yield* fs.writeFileString(path.join(updaterBundleDir, "Coddy Studio.app.tar.gz"), "archive");
+      yield* fs.writeFileString(path.join(updaterBundleDir, "Coddy Studio.app.tar.gz.sig"), "signature");
 
       const error = yield* copyTauriBundleArtifacts({
         bundleDir,
@@ -718,32 +718,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         readonly files: ReadonlyArray<string>;
         readonly duplicatePrimary?: string;
       }> = [
-        { name: "missing signature", files: ["BiBCode.app.tar.gz"] },
+        { name: "missing signature", files: ["Coddy Studio.app.tar.gz"] },
         {
           name: "multiple signatures",
           files: [
-            "BiBCode.app.tar.gz",
-            "BiBCode.app.tar.gz.sig",
+            "Coddy Studio.app.tar.gz",
+            "Coddy Studio.app.tar.gz.sig",
             "Other.app.tar.gz",
             "Other.app.tar.gz.sig",
           ],
         },
-        { name: "signature without payload", files: ["BiBCode.app.tar.gz.sig"] },
+        { name: "signature without payload", files: ["Coddy Studio.app.tar.gz.sig"] },
         {
           name: "duplicate basename",
-          files: ["BiBCode.app.tar.gz", "BiBCode.app.tar.gz.sig"],
-          duplicatePrimary: "BiBCode.app.tar.gz",
+          files: ["Coddy Studio.app.tar.gz", "Coddy Studio.app.tar.gz.sig"],
+          duplicatePrimary: "Coddy Studio.app.tar.gz",
         },
       ] as const;
 
       for (const testCase of cases) {
-        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-invalid-updater-" });
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-invalid-updater-" });
         const bundleDir = path.join(tempDir, "bundle", "dmg");
         const updaterBundleDir = path.join(tempDir, "bundle", "macos");
         const outputDir = path.join(tempDir, "out");
         yield* fs.makeDirectory(bundleDir, { recursive: true });
         yield* fs.makeDirectory(updaterBundleDir, { recursive: true });
-        yield* fs.writeFileString(path.join(bundleDir, "BiBCode.dmg"), "dmg");
+        yield* fs.writeFileString(path.join(bundleDir, "Coddy Studio.dmg"), "dmg");
         if (testCase.duplicatePrimary) {
           yield* fs.writeFileString(path.join(bundleDir, testCase.duplicatePrimary), "duplicate");
         }
@@ -768,7 +768,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-missing-tauri-bundle-",
+        prefix: "coddy-studio-missing-tauri-bundle-",
       });
       const bundleDir = path.join(tempDir, "missing");
       const error = yield* copyTauriBundleArtifacts({
@@ -785,7 +785,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-empty-tauri-bundle-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-empty-tauri-bundle-" });
       const bundleDir = path.join(tempDir, "bundle");
       yield* fs.makeDirectory(bundleDir);
 
@@ -804,7 +804,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-overwrite-tauri-bundle-",
+        prefix: "coddy-studio-overwrite-tauri-bundle-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
@@ -823,7 +823,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-unsafe-publication-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-unsafe-publication-" });
       const bundleDir = path.join(tempDir, "bundle");
       yield* fs.makeDirectory(path.join(bundleDir, "nested"), { recursive: true });
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "artifact");
@@ -844,7 +844,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-publication-failures-",
+        prefix: "coddy-studio-publication-failures-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
@@ -870,7 +870,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(copyError.operation, "copy");
       assert.strictEqual(copyError.cause, copyCause);
       assert.equal(yield* fs.readFileString(path.join(outputDir, "artifact.txt")), "old");
-      assert.isFalse(yield* fs.exists(path.join(tempDir, ".output.bibcode-copy-failure.stage")));
+      assert.isFalse(yield* fs.exists(path.join(tempDir, ".output.coddy-studio-copy-failure.stage")));
 
       const validationError = yield* copyTauriBundleArtifacts(
         { bundleDir, outputDir },
@@ -881,7 +881,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               .stat(target)
               .pipe(
                 Effect.map((info) =>
-                  target.includes(".bibcode-validation-failure.stage") && info.type === "File"
+                  target.includes(".coddy-studio-validation-failure.stage") && info.type === "File"
                     ? { ...info, size: ByteSize.bytes(Number(info.size) + 1) }
                     : info,
                 ),
@@ -892,7 +892,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(validationError.operation, "validate-staging");
       assert.equal(yield* fs.readFileString(path.join(outputDir, "artifact.txt")), "old");
       assert.isFalse(
-        yield* fs.exists(path.join(tempDir, ".output.bibcode-validation-failure.stage")),
+        yield* fs.exists(path.join(tempDir, ".output.coddy-studio-validation-failure.stage")),
       );
 
       const checksumError = yield* copyTauriBundleArtifacts(
@@ -900,7 +900,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         {
           transactionId: () => "checksum-failure",
           stream: (target, options) =>
-            target.includes(".bibcode-checksum-failure.stage")
+            target.includes(".coddy-studio-checksum-failure.stage")
               ? Stream.make(new TextEncoder().encode("bad"))
               : fs.stream(target, options),
         },
@@ -909,7 +909,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(checksumError.operation, "validate-staging");
       assert.equal(yield* fs.readFileString(path.join(outputDir, "artifact.txt")), "old");
       assert.isFalse(
-        yield* fs.exists(path.join(tempDir, ".output.bibcode-checksum-failure.stage")),
+        yield* fs.exists(path.join(tempDir, ".output.coddy-studio-checksum-failure.stage")),
       );
     }),
   );
@@ -919,12 +919,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-publication-rollback-",
+        prefix: "coddy-studio-publication-rollback-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-swap-failure.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-swap-failure.backup");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-swap-failure.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-swap-failure.backup");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.makeDirectory(outputDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -969,12 +969,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-first-publish-failure-",
+        prefix: "coddy-studio-first-publish-failure-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-first-failure.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-first-failure.backup");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-first-failure.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-first-failure.backup");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
       const cause = PlatformError.systemError({
@@ -1007,12 +1007,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-first-publish-interrupt-",
+        prefix: "coddy-studio-first-publish-interrupt-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-first-interrupt.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-first-interrupt.backup");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-first-interrupt.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-first-interrupt.backup");
       const swapped = yield* Deferred.make<void>();
       yield* fs.makeDirectory(bundleDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -1045,17 +1045,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-owner-read-race-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-owner-read-race-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-owner-read-race.stage");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-owner-read-race.stage");
       const capturedDir = path.join(tempDir, "captured-publication");
-      const ownerFile = ".bibcode-publication-owner";
+      const ownerFile = ".coddy-studio-publication-owner";
       const outputOwner = path.join(outputDir, ownerFile);
       const stageOwner = path.join(stageDir, ownerFile);
       const quarantineOwner = path.join(
         tempDir,
-        ".output.bibcode-owner-read-race.quarantine",
+        ".output.coddy-studio-owner-read-race.quarantine",
         ownerFile,
       );
       let ownershipReads = 0;
@@ -1111,12 +1111,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-competing-publish-fail-",
+        prefix: "coddy-studio-competing-publish-fail-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-race-failure.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-race-failure.backup");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-race-failure.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-race-failure.backup");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "ours");
       const raceCause = PlatformError.systemError({
@@ -1137,7 +1137,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                   yield* fs.makeDirectory(outputDir);
                   yield* fs.writeFileString(path.join(outputDir, "artifact.txt"), "competitor");
                   yield* fs.writeFileString(
-                    path.join(outputDir, ".bibcode-publication-owner"),
+                    path.join(outputDir, ".coddy-studio-publication-owner"),
                     "competitor",
                   );
                   return yield* raceCause;
@@ -1149,7 +1149,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.instanceOf(error, TauriDesktopBuildPublicationError);
       assert.equal(yield* fs.readFileString(path.join(outputDir, "artifact.txt")), "competitor");
       assert.equal(
-        yield* fs.readFileString(path.join(outputDir, ".bibcode-publication-owner")),
+        yield* fs.readFileString(path.join(outputDir, ".coddy-studio-publication-owner")),
         "competitor",
       );
       assert.isFalse(yield* fs.exists(stageDir));
@@ -1161,10 +1161,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-competing-no-owner-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-competing-no-owner-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-race-no-owner.stage");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-race-no-owner.stage");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "ours");
       const raceCause = PlatformError.systemError({
@@ -1199,12 +1199,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-foreign-quarantine-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-foreign-quarantine-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-foreign-quarantine.stage");
-      const quarantineDir = path.join(tempDir, ".output.bibcode-foreign-quarantine.quarantine");
-      const ownerFile = ".bibcode-publication-owner";
+      const stageDir = path.join(tempDir, ".output.coddy-studio-foreign-quarantine.stage");
+      const quarantineDir = path.join(tempDir, ".output.coddy-studio-foreign-quarantine.quarantine");
+      const ownerFile = ".coddy-studio-publication-owner";
       yield* fs.makeDirectory(bundleDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "ours");
       const raceCause = PlatformError.systemError({
@@ -1258,12 +1258,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-competing-publish-stop-",
+        prefix: "coddy-studio-competing-publish-stop-",
       });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-race-interrupt.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-race-interrupt.backup");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-race-interrupt.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-race-interrupt.backup");
       const rollbackCheckingOutput = yield* Deferred.make<void>();
       const releaseRollbackCheck = yield* Deferred.make<void>();
       let outputExistsChecks = 0;
@@ -1298,7 +1298,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                   yield* fs.makeDirectory(outputDir);
                   yield* fs.writeFileString(path.join(outputDir, "artifact.txt"), "competitor");
                   yield* fs.writeFileString(
-                    path.join(outputDir, ".bibcode-publication-owner"),
+                    path.join(outputDir, ".coddy-studio-publication-owner"),
                     "competitor",
                   );
                   return yield* raceCause;
@@ -1317,7 +1317,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.equal(yield* fs.readFileString(path.join(outputDir, "artifact.txt")), "competitor");
       assert.equal(
-        yield* fs.readFileString(path.join(outputDir, ".bibcode-publication-owner")),
+        yield* fs.readFileString(path.join(outputDir, ".coddy-studio-publication-owner")),
         "competitor",
       );
       assert.isFalse(yield* fs.exists(stageDir));
@@ -1342,10 +1342,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "owner-marker",
         "backup",
       ] as const) {
-        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: `bibcode-${phase}-failure-` });
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: `coddy-studio-${phase}-failure-` });
         const bundleDir = path.join(tempDir, "bundle");
         const outputDir = path.join(tempDir, "output");
-        const stageDir = path.join(tempDir, `.output.bibcode-${phase}.stage`);
+        const stageDir = path.join(tempDir, `.output.coddy-studio-${phase}.stage`);
         yield* fs.makeDirectory(bundleDir);
         yield* fs.makeDirectory(outputDir);
         yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -1374,7 +1374,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                 ? Effect.fail(failureCause)
                 : fs.rename(source, target),
             writeFileString: (target, value, options) =>
-              phase === "owner-marker" && target.endsWith(".bibcode-publication-owner")
+              phase === "owner-marker" && target.endsWith(".coddy-studio-publication-owner")
                 ? Effect.fail(failureCause)
                 : fs.writeFileString(target, value, options),
           },
@@ -1399,10 +1399,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-stage-collision-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-stage-collision-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-collision.stage");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-collision.stage");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.makeDirectory(stageDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -1429,12 +1429,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ["backup-restore", 3],
       ] as const) {
         const tempDir = yield* fs.makeTempDirectoryScoped({
-          prefix: `bibcode-${probeName}-probe-`,
+          prefix: `coddy-studio-${probeName}-probe-`,
         });
         const bundleDir = path.join(tempDir, "bundle");
         const outputDir = path.join(tempDir, "output");
-        const stageDir = path.join(tempDir, `.output.bibcode-${probeName}.stage`);
-        const backupDir = path.join(tempDir, `.output.bibcode-${probeName}.backup`);
+        const stageDir = path.join(tempDir, `.output.coddy-studio-${probeName}.stage`);
+        const backupDir = path.join(tempDir, `.output.coddy-studio-${probeName}.backup`);
         yield* fs.makeDirectory(bundleDir);
         yield* fs.makeDirectory(outputDir);
         yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -1492,12 +1492,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-foreign-probe-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-foreign-probe-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-foreign-probe.stage");
-      const quarantineDir = path.join(tempDir, ".output.bibcode-foreign-probe.quarantine");
-      const ownerFile = ".bibcode-publication-owner";
+      const stageDir = path.join(tempDir, ".output.coddy-studio-foreign-probe.stage");
+      const quarantineDir = path.join(tempDir, ".output.coddy-studio-foreign-probe.quarantine");
+      const ownerFile = ".coddy-studio-publication-owner";
       yield* fs.makeDirectory(bundleDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "ours");
       const publicationCause = PlatformError.systemError({
@@ -1557,10 +1557,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-committed-backup-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-committed-backup-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const backupDir = path.join(tempDir, ".output.bibcode-committed-backup.backup");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-committed-backup.backup");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.makeDirectory(outputDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "published");
@@ -1598,11 +1598,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-rollback-fallback-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-rollback-fallback-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-rollback-fallback.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-rollback-fallback.backup");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-rollback-fallback.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-rollback-fallback.backup");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.makeDirectory(outputDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -1657,11 +1657,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-restore-race-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-restore-race-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-restore-race.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-restore-race.backup");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-restore-race.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-restore-race.backup");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.makeDirectory(outputDir);
       yield* fs.writeFileString(path.join(bundleDir, "new-artifact.txt"), "new");
@@ -1721,13 +1721,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const path = yield* Path.Path;
       for (const removeBeforeFailure of [true, false]) {
         const tempDir = yield* fs.makeTempDirectoryScoped({
-          prefix: "bibcode-rollback-exhausted-",
+          prefix: "coddy-studio-rollback-exhausted-",
         });
         const bundleDir = path.join(tempDir, "bundle");
         const outputDir = path.join(tempDir, "output");
-        const stageDir = path.join(tempDir, ".output.bibcode-exhausted.stage");
-        const backupDir = path.join(tempDir, ".output.bibcode-exhausted.backup");
-        const quarantineDir = path.join(tempDir, ".output.bibcode-exhausted.quarantine");
+        const stageDir = path.join(tempDir, ".output.coddy-studio-exhausted.stage");
+        const backupDir = path.join(tempDir, ".output.coddy-studio-exhausted.backup");
+        const quarantineDir = path.join(tempDir, ".output.coddy-studio-exhausted.quarantine");
         yield* fs.makeDirectory(bundleDir);
         yield* fs.makeDirectory(outputDir);
         yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -1794,12 +1794,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-quarantine-failure-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-quarantine-failure-" });
       const bundleDir = path.join(tempDir, "bundle");
       const outputDir = path.join(tempDir, "output");
-      const stageDir = path.join(tempDir, ".output.bibcode-quarantine-failure.stage");
-      const backupDir = path.join(tempDir, ".output.bibcode-quarantine-failure.backup");
-      const quarantineDir = path.join(tempDir, ".output.bibcode-quarantine-failure.quarantine");
+      const stageDir = path.join(tempDir, ".output.coddy-studio-quarantine-failure.stage");
+      const backupDir = path.join(tempDir, ".output.coddy-studio-quarantine-failure.backup");
+      const quarantineDir = path.join(tempDir, ".output.coddy-studio-quarantine-failure.quarantine");
       yield* fs.makeDirectory(bundleDir);
       yield* fs.makeDirectory(outputDir);
       yield* fs.writeFileString(path.join(bundleDir, "artifact.txt"), "new");
@@ -1848,7 +1848,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         [{ platform: "linux", target: "dmg", arch: "x64" }, {}, "Unsupported Tauri linux target"],
         [
           { platform: "win", arch: "x64" },
-          { BIBCODE_TAURI_DESKTOP_VERBOSE: "maybe" },
+          { CODDY_STUDIO_TAURI_DESKTOP_VERBOSE: "maybe" },
           "must be true/false",
         ],
       ] as const;
@@ -1880,7 +1880,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const repoRoot = yield* fs.makeTempDirectoryScoped({
-        prefix: "bibcode-build-tauri-artifact-",
+        prefix: "coddy-studio-build-tauri-artifact-",
       });
       const plan = yield* resolveTauriBuildPlan(
         { platform: "win", arch: "x64", target: "nsis", outputDir: "out", verbose: true },
@@ -1935,7 +1935,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-exit-" });
+      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-build-exit-" });
       const plan = yield* resolveTauriBuildPlan(
         { platform: "win", arch: "x64", target: "nsis" },
         {},
@@ -1985,7 +1985,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("keeps a macOS DMG build verbose so bundle_dmg.sh diagnostics are captured", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-dmg-plan-" });
+      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-build-dmg-plan-" });
       const dmg = yield* resolveTauriBuildPlan(
         { platform: "mac", arch: "arm64", target: "dmg" },
         {},
@@ -2007,10 +2007,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     const images = parseHdiutilImages(
       hdiutilInfoPlist([
         {
-          path: "/repo/target/aarch64-apple-darwin/release/bundle/dmg/rw.BiBCode_0.4.2_aarch64.dmg",
+          path: "/repo/target/aarch64-apple-darwin/release/bundle/dmg/rw.Coddy Studio_0.4.2_aarch64.dmg",
           device: "/dev/disk9",
         },
-        { path: "/Users/someone/Downloads/BiBCode_0.4.1_aarch64.dmg", device: "/dev/disk4" },
+        { path: "/Users/someone/Downloads/Coddy Studio_0.4.1_aarch64.dmg", device: "/dev/disk4" },
       ]),
     );
     assert.deepStrictEqual(
@@ -2018,10 +2018,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       [
         {
           imagePath:
-            "/repo/target/aarch64-apple-darwin/release/bundle/dmg/rw.BiBCode_0.4.2_aarch64.dmg",
+            "/repo/target/aarch64-apple-darwin/release/bundle/dmg/rw.Coddy Studio_0.4.2_aarch64.dmg",
           device: "/dev/disk9",
         },
-        { imagePath: "/Users/someone/Downloads/BiBCode_0.4.1_aarch64.dmg", device: "/dev/disk4" },
+        { imagePath: "/Users/someone/Downloads/Coddy Studio_0.4.1_aarch64.dmg", device: "/dev/disk4" },
       ],
     );
     assert.deepStrictEqual(parseHdiutilImages("not a plist"), []);
@@ -2033,7 +2033,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-dmg-leak-" });
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-build-dmg-leak-" });
         const plan = yield* resolveTauriBuildPlan(
           { platform: "mac", arch: "arm64", target: "dmg" },
           {},
@@ -2041,8 +2041,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           repoRoot,
         );
         yield* fs.makeDirectory(plan.bundleDir, { recursive: true });
-        yield* fs.writeFileString(path.join(plan.bundleDir, "BiBCode_0.4.2_aarch64.dmg"), "image");
-        const ownIntermediate = path.join(plan.bundleDir, "rw.BiBCode_0.4.2_aarch64.dmg");
+        yield* fs.writeFileString(path.join(plan.bundleDir, "Coddy Studio_0.4.2_aarch64.dmg"), "image");
+        const ownIntermediate = path.join(plan.bundleDir, "rw.Coddy Studio_0.4.2_aarch64.dmg");
         const foreignIntermediate = path.join(
           repoRoot,
           "other-worktree",
@@ -2051,7 +2051,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "release",
           "bundle",
           "dmg",
-          "rw.BiBCode_0.4.2_aarch64.dmg",
+          "rw.Coddy Studio_0.4.2_aarch64.dmg",
         );
         assert.isTrue(isRunOwnedIntermediateDmg(path, plan.bundleDir, ownIntermediate));
         assert.isFalse(isRunOwnedIntermediateDmg(path, plan.bundleDir, foreignIntermediate));
@@ -2059,7 +2059,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           isRunOwnedIntermediateDmg(
             path,
             plan.bundleDir,
-            path.join(plan.bundleDir, "BiBCode_0.4.2_aarch64.dmg"),
+            path.join(plan.bundleDir, "Coddy Studio_0.4.2_aarch64.dmg"),
           ),
         );
 
@@ -2078,7 +2078,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                 processHandle(
                   0,
                   hdiutilInfoPlist([
-                    { path: "/Volumes/Downloads/BiBCode_0.4.1_aarch64.dmg", device: "/dev/disk4" },
+                    { path: "/Volumes/Downloads/Coddy Studio_0.4.1_aarch64.dmg", device: "/dev/disk4" },
                     { path: ownIntermediate, device: "/dev/disk9" },
                     { path: foreignIntermediate, device: "/dev/disk11" },
                   ]),
@@ -2149,7 +2149,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-symbols-" });
+      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-build-symbols-" });
       yield* fs.makeDirectory(path.join(repoRoot, "apps", "desktop"), { recursive: true });
       yield* fs.writeFileString(
         path.join(repoRoot, "apps", "desktop", "package.json"),
@@ -2168,7 +2168,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const linuxRelease = path.join(repoRoot, "target", "x86_64-unknown-linux-gnu", "release");
       const linuxArchive = path.join(
         linuxRelease,
-        "bibcode-desktop-symbols-1.2.3-linux-x86_64.zip",
+        "coddy-studio-desktop-symbols-1.2.3-linux-x86_64.zip",
       );
       assert.equal(linux.symbols?.archive, linuxArchive);
       assert.deepStrictEqual(linux.symbols?.dumpCommand, {
@@ -2177,16 +2177,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         args: [
           dumpScript,
           "--binary",
-          path.join(linuxRelease, "bibcode-desktop"),
+          path.join(linuxRelease, "coddy-studio-desktop"),
           "--module-name",
-          "bibcode-desktop",
+          "coddy-studio-desktop",
           "--out",
           path.join(linuxRelease, "symbols"),
           "--zip",
           linuxArchive,
         ],
       });
-      assert.equal(linux.symbols?.binary, path.join(linuxRelease, "bibcode-desktop"));
+      assert.equal(linux.symbols?.binary, path.join(linuxRelease, "coddy-studio-desktop"));
       // A stripped copy replaces the binary, which Cargo hard-links to its cached artifact.
       assert.deepStrictEqual(linux.symbols?.strip, {
         command: {
@@ -2195,22 +2195,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           args: [
             "--strip-all",
             "-o",
-            path.join(linuxRelease, "bibcode-desktop.stripped"),
-            path.join(linuxRelease, "bibcode-desktop"),
+            path.join(linuxRelease, "coddy-studio-desktop.stripped"),
+            path.join(linuxRelease, "coddy-studio-desktop"),
           ],
         },
-        output: path.join(linuxRelease, "bibcode-desktop.stripped"),
+        output: path.join(linuxRelease, "coddy-studio-desktop.stripped"),
       });
 
       const mac = yield* planFor("mac", "darwin");
       const macRelease = path.join(repoRoot, "target", "x86_64-apple-darwin", "release");
       assert.equal(
         mac.symbols?.archive,
-        path.join(macRelease, "bibcode-desktop-symbols-1.2.3-darwin-x86_64.zip"),
+        path.join(macRelease, "coddy-studio-desktop-symbols-1.2.3-darwin-x86_64.zip"),
       );
       assert.includeMembers(
         [...(mac.symbols?.dumpCommand.args ?? [])],
-        ["--dsym", path.join(macRelease, "bibcode-desktop.dSYM")],
+        ["--dsym", path.join(macRelease, "coddy-studio-desktop.dSYM")],
       );
       // The DMG bundler deletes the app it builds unless `app` is requested too, and the check
       // after bundling reads the binary in it.
@@ -2218,8 +2218,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // Plain strip, rustc's level for executables (`-x` is for dynamic libraries).
       assert.deepStrictEqual(mac.symbols?.strip?.command.args, [
         "-o",
-        path.join(macRelease, "bibcode-desktop.stripped"),
-        path.join(macRelease, "bibcode-desktop"),
+        path.join(macRelease, "coddy-studio-desktop.stripped"),
+        path.join(macRelease, "coddy-studio-desktop"),
       ]);
 
       // Windows keeps the names in the PDB and ships the binary as linked.
@@ -2228,10 +2228,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.includeMembers(
         [...(win.symbols?.dumpCommand.args ?? [])],
         [
-          path.join(winRelease, "bibcode-desktop.exe"),
-          "bibcode-desktop.exe",
+          path.join(winRelease, "coddy-studio-desktop.exe"),
+          "coddy-studio-desktop.exe",
           "--pdb",
-          path.join(winRelease, "bibcode_desktop.pdb"),
+          path.join(winRelease, "coddy_studio_desktop.pdb"),
         ],
       );
       assert.isUndefined(win.symbols?.strip);
@@ -2297,7 +2297,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-symbols-run-" });
+    const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "coddy-studio-build-symbols-run-" });
     yield* fs.makeDirectory(path.join(repoRoot, "apps", "desktop"), { recursive: true });
     yield* fs.writeFileString(
       path.join(repoRoot, "apps", "desktop", "package.json"),
@@ -2320,7 +2320,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     const { archive, binary } = plan.symbols;
     yield* fs.makeDirectory(plan.bundleDir, { recursive: true });
     yield* fs.writeFileString(path.join(plan.bundleDir, options.bundleFile), "bundle");
-    const cached = path.join(path.dirname(binary), "deps", "bibcode_desktop-0123");
+    const cached = path.join(path.dirname(binary), "deps", "coddy_studio_desktop-0123");
     yield* fs.makeDirectory(path.dirname(cached), { recursive: true });
     yield* fs.writeFile(cached, options.unstripped);
     yield* fs.link(cached, binary);
@@ -2360,7 +2360,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             .pipe(
               Effect.andThen(
                 fs.writeFile(
-                  path.join(root, "bibcode-desktop"),
+                  path.join(root, "coddy-studio-desktop"),
                   options.extracted ?? options.stripped,
                 ),
               ),
@@ -2395,10 +2395,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     return {
       /** The app the DMG bundler builds (and keeps when `app` is requested), with its binary. */
       app: (binary: string, image: Buffer) => {
-        const macos = path.join(path.dirname(binary), "bundle", "macos", "BiBCode.app", "Contents");
+        const macos = path.join(path.dirname(binary), "bundle", "macos", "Coddy Studio.app", "Contents");
         return fs
           .makeDirectory(path.join(macos, "MacOS"), { recursive: true })
-          .pipe(Effect.andThen(fs.writeFile(path.join(macos, "MacOS", "bibcode-desktop"), image)));
+          .pipe(Effect.andThen(fs.writeFile(path.join(macos, "MacOS", "coddy-studio-desktop"), image)));
       },
       /** What Tauri's deb bundler leaves: the .deb and, beside it, its package tree. */
       deb: (bundleDir: string, base: string, binary: Buffer) => {
@@ -2406,7 +2406,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         return fs
           .makeDirectory(bin, { recursive: true })
           .pipe(
-            Effect.andThen(fs.writeFile(path.join(bin, "bibcode-desktop"), binary)),
+            Effect.andThen(fs.writeFile(path.join(bin, "coddy-studio-desktop"), binary)),
             Effect.andThen(fs.writeFileString(path.join(bundleDir, `${base}.deb`), "deb")),
           );
       },
@@ -2420,7 +2420,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const run = yield* symbolsBuild({
         platform: "linux",
         target: "appimage",
-        bundleFile: "BiBCode_1.2.3_amd64.AppImage",
+        bundleFile: "Coddy Studio_1.2.3_amd64.AppImage",
         ...ELF,
       });
 
@@ -2448,8 +2448,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         true,
       );
       assert.deepStrictEqual(run.result._tag === "Success" ? run.result.success : [], [
-        path.join(run.repoRoot, "out", "BiBCode_1.2.3_amd64.AppImage"),
-        path.join(run.repoRoot, "out", "bibcode-desktop-symbols-1.2.3-linux-x86_64.zip"),
+        path.join(run.repoRoot, "out", "Coddy Studio_1.2.3_amd64.AppImage"),
+        path.join(run.repoRoot, "out", "coddy-studio-desktop-symbols-1.2.3-linux-x86_64.zip"),
       ]);
     }),
   );
@@ -2461,9 +2461,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const deb = yield* symbolsBuild({
         platform: "linux",
         target: "deb",
-        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        bundleFile: "Coddy Studio_1.2.3_amd64.deb",
         ...ELF,
-        onBundle: ({ bundleDir }) => outputs.deb(bundleDir, "BiBCode_1.2.3_amd64", ELF.stripped),
+        onBundle: ({ bundleDir }) => outputs.deb(bundleDir, "Coddy Studio_1.2.3_amd64", ELF.stripped),
       });
       assert.equal(deb.result._tag, "Success");
 
@@ -2475,7 +2475,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = yield* symbolsBuild({
         platform: "mac",
         target: "dmg",
-        bundleFile: "BiBCode_1.2.3_x64.dmg",
+        bundleFile: "Coddy Studio_1.2.3_x64.dmg",
         ...machO,
         onBundle: ({ binary }) => outputs.app(binary, machO.stripped),
       });
@@ -2485,7 +2485,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const win = yield* symbolsBuild({
         platform: "win",
         target: "nsis",
-        bundleFile: "BiBCode_1.2.3_x64-setup.exe",
+        bundleFile: "Coddy Studio_1.2.3_x64-setup.exe",
         unstripped: Buffer.from("MZ pe image"),
         stripped: Buffer.from("MZ pe image"),
       });
@@ -2506,7 +2506,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const retried = yield* symbolsBuild({
         platform: "linux",
         target: "appimage",
-        bundleFile: "BiBCode_1.2.3_amd64.AppImage",
+        bundleFile: "Coddy Studio_1.2.3_amd64.AppImage",
         ...ELF,
         onBundle: ({ binary, attempt }) =>
           Effect.gen(function* () {
@@ -2524,13 +2524,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const rerun = yield* symbolsBuild({
         platform: "linux",
         target: "deb",
-        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        bundleFile: "Coddy Studio_1.2.3_amd64.deb",
         ...ELF,
         onBundle: ({ bundleDir }) =>
           Effect.gen(function* () {
             const older = syntheticElf({ buildId: "a".repeat(40), symbols: 0 });
-            yield* outputs.deb(bundleDir, "BiBCode_1.2.2_amd64", older);
-            yield* outputs.deb(bundleDir, "BiBCode_1.2.3_amd64", ELF.stripped);
+            yield* outputs.deb(bundleDir, "Coddy Studio_1.2.2_amd64", older);
+            yield* outputs.deb(bundleDir, "Coddy Studio_1.2.3_amd64", ELF.stripped);
           }),
       });
       assert.equal(rerun.result._tag, "Success");
@@ -2545,7 +2545,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const relinked = yield* symbolsBuild({
         platform: "linux",
         target: "deb",
-        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        bundleFile: "Coddy Studio_1.2.3_amd64.deb",
         ...ELF,
         onBundle: ({ binary, cached, attempt }) => {
           attempts = attempt;
@@ -2580,7 +2580,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const relinked = yield* symbolsBuild({
         platform: "linux",
         target: "deb",
-        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        bundleFile: "Coddy Studio_1.2.3_amd64.deb",
         ...ELF,
         onBundle: ({ binary, cached }) =>
           fs.remove(binary).pipe(Effect.andThen(fs.link(cached, binary))),
@@ -2591,11 +2591,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const sameBytes = yield* symbolsBuild({
         platform: "linux",
         target: "deb",
-        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        bundleFile: "Coddy Studio_1.2.3_amd64.deb",
         ...ELF,
         onBundle: ({ bundleDir, binary }) =>
           Effect.gen(function* () {
-            yield* outputs.deb(bundleDir, "BiBCode_1.2.3_amd64", ELF.stripped);
+            yield* outputs.deb(bundleDir, "Coddy Studio_1.2.3_amd64", ELF.stripped);
             yield* fs.copyFile(binary, `${binary}.twin`);
             yield* fs.remove(binary);
             yield* fs.link(`${binary}.twin`, binary);
@@ -2611,7 +2611,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const unstrippedApp = yield* symbolsBuild({
         platform: "mac",
         target: "dmg",
-        bundleFile: "BiBCode_1.2.3_x64.dmg",
+        bundleFile: "Coddy Studio_1.2.3_x64.dmg",
         ...machO,
         onBundle: ({ binary }) => outputs.app(binary, machO.unstripped),
       });
@@ -2621,7 +2621,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const unstrippedCopy = yield* symbolsBuild({
         platform: "linux",
         target: "appimage",
-        bundleFile: "BiBCode_1.2.3_amd64.AppImage",
+        bundleFile: "Coddy Studio_1.2.3_amd64.AppImage",
         ...ELF,
         extracted: ELF.unstripped,
       });
@@ -2631,7 +2631,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const noCopy = yield* symbolsBuild({
         platform: "linux",
         target: "deb",
-        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        bundleFile: "Coddy Studio_1.2.3_amd64.deb",
         ...ELF,
       });
       assert.include(failure(noCopy), "Found no copy");

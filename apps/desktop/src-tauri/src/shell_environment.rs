@@ -25,16 +25,16 @@ use std::{
 };
 
 #[cfg(unix)]
-const PATH_CAPTURE_START: &[u8] = b"__BIBCODE_PATH_START__";
+const PATH_CAPTURE_START: &[u8] = b"__CODDY_STUDIO_PATH_START__";
 #[cfg(unix)]
-const PATH_CAPTURE_END: &[u8] = b"__BIBCODE_PATH_END__";
+const PATH_CAPTURE_END: &[u8] = b"__CODDY_STUDIO_PATH_END__";
 #[cfg(unix)]
 const SUPPORTED_SHELLS: &[&str] = &["zsh", "bash", "fish", "sh", "dash"];
 #[cfg(unix)]
 const PATH_PROBE_COMMAND: &str = concat!(
-    "printf '%s' '__BIBCODE_PATH_START__'; ",
+    "printf '%s' '__CODDY_STUDIO_PATH_START__'; ",
     "command printenv PATH; ",
-    "printf '%s' '__BIBCODE_PATH_END__'"
+    "printf '%s' '__CODDY_STUDIO_PATH_END__'"
 );
 #[cfg(unix)]
 const PATH_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -591,8 +591,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn parses_path_between_delimiters_and_ignores_shell_output() {
-        let output = b"welcome\n__BIBCODE_PATH_START__/opt/homebrew/bin:/usr/bin\
-__BIBCODE_PATH_END__\nlogout";
+        let output = b"welcome\n__CODDY_STUDIO_PATH_START__/opt/homebrew/bin:/usr/bin\
+__CODDY_STUDIO_PATH_END__\nlogout";
         assert_eq!(
             parse_captured_path(output, false).unwrap(),
             OsString::from("/opt/homebrew/bin:/usr/bin")
@@ -609,16 +609,16 @@ __BIBCODE_PATH_END__\nlogout";
                 let host_bin = appdir.parent().expect("fixture parent").join("host-bin");
                 let result = probe_shell_path_with_command(
                     Path::new("/bin/sh"),
-                    r#"[ "$APPIMAGE" = "$OWD/BiBCode.AppImage" ] || exit 81
-[ "$APPDIR" = "$OWD/.mount_BiBCode" ] || exit 82
-[ "$ARGV0" = BiBCode.AppImage ] || exit 83
+                    r#"[ "$APPIMAGE" = "$OWD/Coddy Studio.AppImage" ] || exit 81
+[ "$APPDIR" = "$OWD/.mount_CoddyStudio" ] || exit 82
+[ "$ARGV0" = Coddy Studio.AppImage ] || exit 83
 [ "$LD_LIBRARY_PATH" = "$APPDIR/usr/lib:/usr/lib" ] || exit 84
 [ "$PYTHONHOME" = "$APPDIR/usr" ] || exit 85
-[ "$BIBCODE_FUTURE_PATH" = "$APPDIR/future:/opt/host/future" ] || exit 86
+[ "$CODDY_STUDIO_FUTURE_PATH" = "$APPDIR/future:/opt/host/future" ] || exit 86
 [ "$GTK_THEME" = Adwaita ] && [ "$GDK_BACKEND" = x11 ] || exit 87
 [ "$PYTHONDONTWRITEBYTECODE" = 1 ] || exit 88
-[ "$SSH_AUTH_SOCK" = /run/user/1000/bibcode-test-agent.sock ] || exit 89
-printf '%s%s%s' '__BIBCODE_PATH_START__' "$PATH" '__BIBCODE_PATH_END__'"#,
+[ "$SSH_AUTH_SOCK" = /run/user/1000/coddy-studio-test-agent.sock ] || exit 89
+printf '%s%s%s' '__CODDY_STUDIO_PATH_START__' "$PATH" '__CODDY_STUDIO_PATH_END__'"#,
                     Duration::from_secs(5),
                     4096,
                 );
@@ -643,15 +643,24 @@ printf '%s%s%s' '__BIBCODE_PATH_START__' "$PATH" '__BIBCODE_PATH_END__'"#,
             Err(PathHydrationFailure::MalformedOutput)
         );
         assert_eq!(
-            parse_captured_path(b"__BIBCODE_PATH_END__/usr/bin__BIBCODE_PATH_START__", false),
+            parse_captured_path(
+                b"__CODDY_STUDIO_PATH_END__/usr/bin__CODDY_STUDIO_PATH_START__",
+                false
+            ),
             Err(PathHydrationFailure::MalformedOutput)
         );
         assert_eq!(
-            parse_captured_path(b"__BIBCODE_PATH_START__  __BIBCODE_PATH_END__", false),
+            parse_captured_path(
+                b"__CODDY_STUDIO_PATH_START__  __CODDY_STUDIO_PATH_END__",
+                false
+            ),
             Err(PathHydrationFailure::EmptyPath)
         );
         assert_eq!(
-            parse_captured_path(b"__BIBCODE_PATH_START__/usr/bin__BIBCODE_PATH_END__", true),
+            parse_captured_path(
+                b"__CODDY_STUDIO_PATH_START__/usr/bin__CODDY_STUDIO_PATH_END__",
+                true
+            ),
             Err(PathHydrationFailure::OutputTooLarge)
         );
     }
@@ -774,8 +783,8 @@ printf '%s%s%s' '__BIBCODE_PATH_START__' "$PATH" '__BIBCODE_PATH_END__'"#,
         assert_eq!(
             probe_shell_path_with_command(
                 Path::new("/bin/sh"),
-                "printf 'banner\\n__BIBCODE_PATH_START__/user/bin:/usr/bin\
-__BIBCODE_PATH_END__\\nlogout\\n'",
+                "printf 'banner\\n__CODDY_STUDIO_PATH_START__/user/bin:/usr/bin\
+__CODDY_STUDIO_PATH_END__\\nlogout\\n'",
                 Duration::from_secs(5),
                 4096,
             )
@@ -800,9 +809,9 @@ __BIBCODE_PATH_END__\\nlogout\\n'",
         assert_eq!(
             probe_shell_path_with_command(
                 Path::new("/bin/sh"),
-                "printf '__BIBCODE_PATH_START__'; i=0; \
+                "printf '__CODDY_STUDIO_PATH_START__'; i=0; \
 while [ \"$i\" -lt 8192 ]; do printf x; i=$((i + 1)); done; \
-printf '__BIBCODE_PATH_END__'",
+printf '__CODDY_STUDIO_PATH_END__'",
                 Duration::from_secs(5),
                 128,
             ),
@@ -812,9 +821,9 @@ printf '__BIBCODE_PATH_END__'",
         assert_eq!(
             probe_shell_path_with_command(
                 Path::new("/bin/sh"),
-                "printf '__BIBCODE_PATH_START__'; i=0; \
+                "printf '__CODDY_STUDIO_PATH_START__'; i=0; \
 while [ \"$i\" -lt 8192 ]; do printf x; i=$((i + 1)); done; \
-printf '__BIBCODE_PATH_END__'; exit 7",
+printf '__CODDY_STUDIO_PATH_END__'; exit 7",
                 Duration::from_secs(5),
                 128,
             ),
@@ -827,7 +836,7 @@ printf '__BIBCODE_PATH_END__'; exit 7",
     fn probe_reports_spawn_failure_for_a_missing_shell() {
         assert_eq!(
             probe_shell_path_with_command(
-                Path::new("/definitely/missing/bibcode-shell"),
+                Path::new("/definitely/missing/coddy-studio-shell"),
                 "exit 0",
                 Duration::from_secs(5),
                 4096,
@@ -861,7 +870,7 @@ printf '__BIBCODE_PATH_END__'; exit 7",
         let pid_path = directory.path().join("descendant-pid");
         let command = format!(
             "/bin/sleep 30 & descendant=$!; printf '%s' \"$descendant\" > '{}'; \
-printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'",
+printf '__CODDY_STUDIO_PATH_START__/user/bin:/usr/bin__CODDY_STUDIO_PATH_END__'",
             pid_path.display()
         );
         let started = Instant::now();
@@ -896,7 +905,7 @@ printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'",
         let started = Instant::now();
         let (result, pid) = probe_shell_path_with_command_and_pid(
             Path::new("/bin/sh"),
-            "printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'; \
+            "printf '__CODDY_STUDIO_PATH_START__/user/bin:/usr/bin__CODDY_STUDIO_PATH_END__'; \
              exec /bin/sleep 30",
             Duration::from_secs(5),
             4096,
@@ -920,7 +929,7 @@ printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'",
         let started = Instant::now();
         let (result, pid) = probe_shell_path_with_command_and_pid(
             Path::new("/bin/sh"),
-            "printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'; \
+            "printf '__CODDY_STUDIO_PATH_START__/user/bin:/usr/bin__CODDY_STUDIO_PATH_END__'; \
              exec 1>&-; exec /bin/sleep 30",
             Duration::from_secs(5),
             4096,
@@ -943,8 +952,8 @@ printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'",
     fn stray_end_marker_does_not_preempt_a_later_complete_path_capture() {
         let (result, pid) = probe_shell_path_with_command_and_pid(
             Path::new("/bin/sh"),
-            "printf '__BIBCODE_PATH_END__'; /bin/sleep 1; \
-             printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'; \
+            "printf '__CODDY_STUDIO_PATH_END__'; /bin/sleep 1; \
+             printf '__CODDY_STUDIO_PATH_START__/user/bin:/usr/bin__CODDY_STUDIO_PATH_END__'; \
              exec /bin/sleep 30",
             Duration::from_secs(5),
             4096,
@@ -980,12 +989,12 @@ printf '__BIBCODE_PATH_START__/user/bin:/usr/bin__BIBCODE_PATH_END__'",
         let wrapper = zsh_config.path().join("controlling-terminal");
         crate::test_support::write_executable_fixture(
             &wrapper,
-            "#!/bin/sh\nexec /usr/bin/script -q /dev/null \"$BIBCODE_TEST_EXECUTABLE\" \"$@\"\n",
+            "#!/bin/sh\nexec /usr/bin/script -q /dev/null \"$CODDY_STUDIO_TEST_EXECUTABLE\" \"$@\"\n",
             0o755,
         );
         reexec::run(TEST_NAME, PHASE, Some(&wrapper), |command| {
             command
-                .env("BIBCODE_TEST_EXECUTABLE", executable)
+                .env("CODDY_STUDIO_TEST_EXECUTABLE", executable)
                 .env("ZDOTDIR", zsh_config.path());
         });
     }

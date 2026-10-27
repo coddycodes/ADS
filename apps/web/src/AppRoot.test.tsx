@@ -1,6 +1,6 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { RouterProvider } from "@tanstack/react-router";
-import type { DesktopPreviewBridge } from "@bibcode/contracts";
+import type { DesktopPreviewBridge } from "@coddy/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const h = vi.hoisted(() => ({ previewBridge: null as DesktopPreviewBridge | null }));

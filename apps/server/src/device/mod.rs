@@ -78,9 +78,9 @@ pub enum DeviceOpError {
         platform: Platform,
         image_id: String,
     },
-    /// The image is already running outside BiBCode.
+    /// The image is already running outside Coddy Studio.
     #[error(
-        "This simulator is already running outside BiBCode. Shut it down in Simulator, then open it here."
+        "This simulator is already running outside Coddy Studio. Shut it down in Simulator, then open it here."
     )]
     Busy { image_id: String },
     #[error("{0}")]
@@ -990,7 +990,7 @@ fn launch_failure(error: &LaunchFailure) -> (&'static str, String) {
             format!("did not report its display: {message}"),
         ),
         LaunchFailure::Cancelled => ("cancelled", "cancelled".to_owned()),
-        LaunchFailure::Busy => ("busy", "in use outside BiBCode".to_owned()),
+        LaunchFailure::Busy => ("busy", "in use outside Coddy Studio".to_owned()),
     }
 }
 
@@ -1552,7 +1552,10 @@ mod platform_tests {
         let (manager, _enabled) = fake_manager(vec![ios.clone()]);
         let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
         let failed = wait_state(&manager, &id, DeviceState::Failed).await;
-        assert_eq!(failed.failure.as_deref(), Some("in use outside BiBCode"));
+        assert_eq!(
+            failed.failure.as_deref(),
+            Some("in use outside Coddy Studio")
+        );
         assert_eq!(ios.stops(), 0);
     }
 
@@ -1565,9 +1568,12 @@ mod platform_tests {
         let a = manager.open(Platform::Android, "Pixel").await.unwrap();
         let i = manager.open(Platform::Ios, "UDID-1").await.unwrap();
         wait_state(&manager, &i, DeviceState::Ready).await;
-        ios.exit_running(0, "Shutdown outside BiBCode");
+        ios.exit_running(0, "Shutdown outside Coddy Studio");
         let failed = wait_state(&manager, &i, DeviceState::Failed).await;
-        assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BiBCode"));
+        assert_eq!(
+            failed.failure.as_deref(),
+            Some("Shutdown outside Coddy Studio")
+        );
         assert_eq!(ios.stops(), 1);
         assert!(capture.events().iter().any(|e| e["phase"] == "fail"
             && e["failureKind"] == "exited"
@@ -1733,7 +1739,7 @@ mod platform_tests {
             serde_json::json!({
                 "_tag": "DeviceBusyError",
                 "imageId": "UDID-1",
-                "message": "This simulator is already running outside BiBCode. Shut it down in Simulator, then open it here.",
+                "message": "This simulator is already running outside Coddy Studio. Shut it down in Simulator, then open it here.",
             })
         );
         let ios = DeviceOpError::UnknownImage {
@@ -1748,7 +1754,7 @@ mod platform_tests {
         );
         assert_eq!(
             launch_failure(&LaunchFailure::Busy),
-            ("busy", "in use outside BiBCode".to_owned())
+            ("busy", "in use outside Coddy Studio".to_owned())
         );
     }
 

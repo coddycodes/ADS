@@ -20,8 +20,8 @@ vi.mock("@effect/atom-react", () => ({
   useAtomRefresh: () => actions.refresh,
 }));
 vi.mock("react", () => ({ useCallback: (callback: () => void) => callback }));
-vi.mock("@bibcode/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bibcode/client-runtime/state/runtime")>()),
+vi.mock("@coddy/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@coddy/client-runtime/state/runtime")>()),
   retryEnvironmentQuery: actions.retry,
   isEnvironmentQueryAwaitingRetry: actions.awaitingRetry,
 }));

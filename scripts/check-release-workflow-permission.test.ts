@@ -25,7 +25,7 @@ function fixture() {
   const bin = NodePath.join(root, "bin");
   NodeFS.mkdirSync(remote);
   NodeFS.mkdirSync(bin);
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- Preserve only host command lookup; isolate every Git and home setting in the subprocess.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- Preserve only host command lookup; isolate every Git and home setting in the subprocess.
   const inheritedPath = process.env.PATH ?? "";
   const env = {
     PATH: `${bin}${NodePath.delimiter}${inheritedPath}`,
@@ -73,7 +73,7 @@ function fixture() {
 
 // The adapter runs only on the Ubuntu release controller; these real shell/Git
 // scenarios also run on macOS. Native Windows validates the workflow wiring.
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- Host capability gate for a Unix shell integration test.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- Host capability gate for a Unix shell integration test.
 describe.skipIf(process.platform === "win32")("release workflow token permission", () => {
   it("accepts identical workflows after non-workflow changes on the live default branch", () => {
     const repo = fixture();

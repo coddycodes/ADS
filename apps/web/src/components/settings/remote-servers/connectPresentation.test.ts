@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DESKTOP_LOCAL_CONNECTION_ID_PREFIX,
   isDesktopLocalConnectionId,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 
 import {
   ADD_SERVER_FAILURE_REASONS,
@@ -21,7 +21,7 @@ import {
 
 describe("formatServerVersionLabel", () => {
   it("renders the D16 version string and hides unknown versions", () => {
-    expect(formatServerVersionLabel("1.4.2")).toBe("BiBCode v1.4.2");
+    expect(formatServerVersionLabel("1.4.2")).toBe("Coddy Studio v1.4.2");
     expect(formatServerVersionLabel("  ")).toBeNull();
     expect(formatServerVersionLabel(null)).toBeNull();
     expect(formatServerVersionLabel(undefined)).toBeNull();
@@ -63,7 +63,7 @@ describe("resolveTransportBadge", () => {
         relayManaged: true,
         entry: { target: { _tag: "RelayConnectionTarget" }, profile: { _tag: "None" } },
       }),
-    ).toEqual({ kind: "relay", label: "BiBCode Connect" });
+    ).toEqual({ kind: "relay", label: "Coddy Connect" });
     expect(
       resolveTransportBadge({
         relayManaged: false,
@@ -188,12 +188,12 @@ describe("add-server failure copy", () => {
 describe("normalizePairingCodeInput", () => {
   it("accepts raw codes, deep links, and web pair URLs", () => {
     expect(normalizePairingCodeInput("  abc123-_  ")).toBe("abc123-_");
-    expect(normalizePairingCodeInput("bibcode://pair?code=abc123-_")).toBe("abc123-_");
+    expect(normalizePairingCodeInput("coddy-studio://pair?code=abc123-_")).toBe("abc123-_");
     expect(normalizePairingCodeInput("http://192.168.1.20:3773/pair?code=abc123-_")).toBe(
       "abc123-_",
     );
     expect(normalizePairingCodeInput("")).toBeNull();
-    expect(normalizePairingCodeInput("bibcode://pair")).toBeNull();
+    expect(normalizePairingCodeInput("coddy-studio://pair")).toBeNull();
     expect(normalizePairingCodeInput("http://example.com/other?code=x")).toBe("x");
   });
 });

@@ -1,4 +1,4 @@
-import type { StatusBarItem } from "@bibcode/contracts/settings";
+import type { StatusBarItem } from "@coddy/contracts/settings";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";

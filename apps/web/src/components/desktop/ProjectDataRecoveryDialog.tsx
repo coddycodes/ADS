@@ -1,4 +1,4 @@
-import type { DesktopProjectDataEnvironmentStatus } from "@bibcode/contracts";
+import type { DesktopProjectDataEnvironmentStatus } from "@coddy/contracts";
 import { useState } from "react";
 
 import { Button } from "../ui/button";
@@ -59,7 +59,7 @@ export function ProjectDataRecoveryDialog({
         <DialogHeader>
           <DialogTitle>Project data recovery</DialogTitle>
           <DialogDescription>
-            Inspect and recover only the selected local BiBCode environment.
+            Inspect and recover only the selected local Coddy Studio environment.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
@@ -127,7 +127,7 @@ export function ProjectDataRecoveryDialog({
                 </div>
               ) : confirmation === "start-empty" ? (
                 <div className="rounded border border-amber-500 p-3 text-sm">
-                  The current project database and marker will be preserved, not deleted. BiBCode
+                  The current project database and marker will be preserved, not deleted. Coddy Studio
                   will then start with a new empty database and storage identity.
                   <div className="mt-2 flex gap-2">
                     <Button disabled={busy} onClick={() => void onStartEmpty()}>

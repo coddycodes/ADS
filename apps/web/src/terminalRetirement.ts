@@ -1,8 +1,8 @@
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
-import type { EnvironmentId, ThreadId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/runtime";
+import type { EnvironmentId, ThreadId } from "@coddy/contracts";
 
 export interface TerminalRetirementTarget {
   readonly environmentId: EnvironmentId;

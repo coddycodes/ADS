@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ServerProviderSkill } from "@bibcode/contracts";
+import type { ServerProviderSkill } from "@coddy/contracts";
 
 import { searchProviderSkills } from "./providerSkillSearch";
 

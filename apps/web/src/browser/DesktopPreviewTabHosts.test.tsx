@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -62,7 +62,7 @@ const threadRef = {
   threadId: ThreadId.make("thread-1"),
 };
 const initialUrl = "http://localhost:5173/";
-const gatewayUrl = "http://127.0.0.1:50000/__bibcode/bootstrap?cap=C&to=%2F";
+const gatewayUrl = "http://127.0.0.1:50000/__coddy-studio/bootstrap?cap=C&to=%2F";
 
 function mount(): () => void {
   renderToStaticMarkup(

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({
@@ -71,7 +71,7 @@ vi.mock("@effect/atom-react", () => ({
     return harness.snapshotValue;
   },
 }));
-vi.mock("@bibcode/client-runtime/state/terminal", () => ({
+vi.mock("@coddy/client-runtime/state/terminal", () => ({
   combineTerminalSessionState: (summary: unknown, metadata: unknown) =>
     harness.combine(summary, metadata),
   EMPTY_TERMINAL_ATTACH_SNAPSHOT: {

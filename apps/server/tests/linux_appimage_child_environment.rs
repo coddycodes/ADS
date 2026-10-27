@@ -5,7 +5,7 @@ mod executable_fixture;
 
 use std::{collections::BTreeMap, time::Duration};
 
-use bibcode_server::{
+use coddy_studio_server::{
     git::{OutputPolicy, ProcessRequest, ProcessRunner},
     terminal::{PortablePtyBackend, PtyBackend, PtyExit, PtySpawnInput},
 };
@@ -99,7 +99,7 @@ fn git_children_ignore_appimage_environment() {
 
 #[test]
 fn extracted_appdir_isolates_real_child_commands() {
-    use bibcode_server::process::isolate_appimage_environment;
+    use coddy_studio_server::process::isolate_appimage_environment;
     use std::{ffi::OsString, path::PathBuf};
 
     const TEST: &str = "extracted_appdir_isolates_real_child_commands";
@@ -109,14 +109,14 @@ fn extracted_appdir_isolates_real_child_commands() {
         assert!(std::env::current_exe().unwrap().starts_with(&appdir));
         assert!(std::env::var_os("APPIMAGE").is_none_or(|value| value.is_empty()));
         let parent = std::env::vars_os().collect::<BTreeMap<_, _>>();
-        let isolate = std::env::var("BIBCODE_TEST_EXPECT_ISOLATION").unwrap() == "yes";
+        let isolate = std::env::var("CODDY_STUDIO_TEST_EXPECT_ISOLATION").unwrap() == "yes";
         let expected = if isolate {
             BTreeMap::from([
                 ("APPDIR", None),
                 ("LD_LIBRARY_PATH", Some(OsString::from("/host/keep"))),
                 ("PYTHONHOME", None),
                 (
-                    "BIBCODE_TEST_UNRELATED",
+                    "CODDY_STUDIO_TEST_UNRELATED",
                     Some(OsString::from("keep:exactly")),
                 ),
             ])
@@ -125,7 +125,7 @@ fn extracted_appdir_isolates_real_child_commands() {
                 "APPDIR",
                 "LD_LIBRARY_PATH",
                 "PYTHONHOME",
-                "BIBCODE_TEST_UNRELATED",
+                "CODDY_STUDIO_TEST_UNRELATED",
             ]
             .into_iter()
             .map(|name| (name, std::env::var_os(name)))
@@ -193,9 +193,9 @@ fn extracted_appdir_isolates_real_child_commands() {
                     format!("{}/usr/lib:/host/keep", appdir.display()),
                 )
                 .env("PYTHONHOME", appdir.join("usr"))
-                .env("BIBCODE_TEST_UNRELATED", "keep:exactly")
+                .env("CODDY_STUDIO_TEST_UNRELATED", "keep:exactly")
                 .env(
-                    "BIBCODE_TEST_EXPECT_ISOLATION",
+                    "CODDY_STUDIO_TEST_EXPECT_ISOLATION",
                     if case == "missing-launcher" {
                         "no"
                     } else {
@@ -227,7 +227,7 @@ fn python_in_appimage_terminal_uses_host_standard_library() {
     let python = match available {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             println!(
-                "BIBCODE_PYTHON_PTY_SKIP: python3 is not on the host PATH; unavailable evidence"
+                "CODDY_STUDIO_PYTHON_PTY_SKIP: python3 is not on the host PATH; unavailable evidence"
             );
             return;
         }
@@ -271,5 +271,5 @@ fn python_in_appimage_terminal_uses_host_standard_library() {
             });
         },
     );
-    println!("BIBCODE_PYTHON_PTY_RAN: python3 exited 0 and printed ok");
+    println!("CODDY_STUDIO_PYTHON_PTY_RAN: python3 exited 0 and printed ok");
 }

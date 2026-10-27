@@ -4,7 +4,7 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderCapabilityDescriptors,
@@ -12,11 +12,11 @@ import {
   getProviderOptionStringSelectionValue,
   isClaudeUltrathinkPrompt,
   resolvePromptInjectedEffort,
-} from "@bibcode/shared/model";
+} from "@coddy/shared/model";
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { ComposerTraitControls, findProviderEffortDescriptor } from "./TraitsPicker";
-import { getFastModeDescriptor } from "@bibcode/shared/providerSessionDefaults";
+import { getFastModeDescriptor } from "@coddy/shared/providerSessionDefaults";
 
 const CODEX_PROVIDER = "codex";
 

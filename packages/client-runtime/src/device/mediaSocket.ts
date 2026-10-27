@@ -9,7 +9,7 @@ import { MAX_DEVICE_MEDIA_FRAME_BYTES, type MediaFrame, parseMediaFrame } from "
 export const DEVICE_MEDIA_PATH = "/api/device-media";
 export const DEVICE_MEDIA_E2EE_PATH = "/api/device-media-e2ee";
 /** Separates media handshakes from `/ws-e2ee` ones; the server's responder uses the same bytes. */
-export const DEVICE_MEDIA_NOISE_PROLOGUE = new TextEncoder().encode("bibcode-device-media/1");
+export const DEVICE_MEDIA_NOISE_PROLOGUE = new TextEncoder().encode("coddy-studio-device-media/1");
 /** The server's close code for a handshake against the wrong pinned host key. */
 const HOST_IDENTITY_CLOSE_CODE = 4403;
 

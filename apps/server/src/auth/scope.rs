@@ -80,7 +80,7 @@ pub(crate) fn required_scope(method: &str) -> Option<&'static str> {
         | "vcs.refreshWorktreeCatalog"
         | "worktree.getRemovalPlan" => Some(SCOPE_ORCHESTRATION_READ),
         // Scan reads CLI transcripts (first prompts included) from the server host's home
-        // directory, outside BiBCode's data, so read-only credentials must not see them.
+        // directory, outside Coddy Studio's data, so read-only credentials must not see them.
         "agentSessions.import"
         | "agentSessions.scan"
         | "git.preparePullRequestThread"
@@ -154,7 +154,7 @@ pub(crate) fn required_scope(method: &str) -> Option<&'static str> {
         | "worktree.createManaged"
         | "worktree.createPanel"
         | "worktree.remove"
-        | "worktree.removeFromBibCode"
+        | "worktree.removeFromCoddyStudio"
         | "worktree.retarget"
         | "worktree.updateDiscoveryPolicy" => Some(SCOPE_ORCHESTRATION_OPERATE),
         "terminal.attach"
@@ -343,7 +343,7 @@ mod tests {
                 "wrong Git Manager mutation scope for {method}"
             );
         }
-        for method in ["worktree.remove", "worktree.removeFromBibCode"] {
+        for method in ["worktree.remove", "worktree.removeFromCoddyStudio"] {
             assert_eq!(required_scope(method), Some(SCOPE_ORCHESTRATION_OPERATE));
         }
         for method in [

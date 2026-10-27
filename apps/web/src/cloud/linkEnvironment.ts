@@ -14,17 +14,17 @@ import {
   EnvironmentHttpUnauthorizedError,
   EnvironmentId,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   type RelayClientEnvironmentRecord,
   type RelayEnvironmentLinkResponse,
   type RelayProtectedError as RelayProtectedErrorType,
   type RelayManagedEndpointProviderKind,
-} from "@bibcode/contracts/relay";
-import { EnvironmentRegistry } from "@bibcode/client-runtime/connection";
-import { request, runStream } from "@bibcode/client-runtime/rpc";
-import { makeEnvironmentHttpApiClient } from "@bibcode/client-runtime/rpc";
-import { ManagedRelay } from "@bibcode/client-runtime/relay";
+} from "@coddy/contracts/relay";
+import { EnvironmentRegistry } from "@coddy/client-runtime/connection";
+import { request, runStream } from "@coddy/client-runtime/rpc";
+import { makeEnvironmentHttpApiClient } from "@coddy/client-runtime/rpc";
+import { ManagedRelay } from "@coddy/client-runtime/relay";
 
 import {
   readPrimaryEnvironmentDescriptor,
@@ -75,7 +75,7 @@ function ensureRelayClientAvailable(
     if (status.status === "available") return;
     if (status.status === "unsupported") {
       return yield* new CloudEnvironmentLinkError({
-        message: `BiBCode cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
+        message: `Coddy Studio cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
       });
     }
     if (!installIfMissing) {
@@ -116,7 +116,7 @@ function ensureRelayClientAvailable(
       return yield* new CloudEnvironmentLinkError({
         message:
           installedStatus.status === "unsupported"
-            ? `BiBCode cannot install the relay client automatically on ${installedStatus.platform}-${installedStatus.arch}.`
+            ? `Coddy Studio cannot install the relay client automatically on ${installedStatus.platform}-${installedStatus.arch}.`
             : "The relay client is still unavailable after installation.",
       });
     }
@@ -278,7 +278,7 @@ export function listManagedCloudEnvironments(input: {
     const configuredRelayUrl = relayUrl();
     if (!configuredRelayUrl) {
       return yield* new CloudEnvironmentLinkError({
-        message: "BIBCODE_RELAY_URL is not configured.",
+        message: "CODDY_STUDIO_RELAY_URL is not configured.",
       });
     }
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
@@ -310,7 +310,7 @@ export function readPrimaryCloudLinkState(input: {
 }
 
 /**
- * A linked BiBCode Connect tunnel that a link must provision again: its server stores no
+ * A linked Coddy Connect tunnel that a link must provision again: its server stores no
  * preview hostnames (it was linked before they existed), or the tunnel points at a port
  * the server no longer listens on. A server that predates the flags reports neither.
  */
@@ -411,7 +411,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
     const configuredRelayUrl = relayUrl();
     if (!configuredRelayUrl) {
       return yield* new CloudEnvironmentLinkError({
-        message: "BIBCODE_RELAY_URL is not configured.",
+        message: "CODDY_STUDIO_RELAY_URL is not configured.",
       });
     }
     const relayClient = yield* ManagedRelay.ManagedRelayClient;

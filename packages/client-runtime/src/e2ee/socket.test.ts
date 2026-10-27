@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - The scripted server compresses replies with zlib.
 import * as NodeZlib from "node:zlib";
 
-import type { E2eeAuthenticatedMessage } from "@bibcode/contracts";
+import type { E2eeAuthenticatedMessage } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";

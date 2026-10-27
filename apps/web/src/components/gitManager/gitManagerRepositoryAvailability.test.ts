@@ -3,8 +3,8 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { VcsStatusResult } from "@bibcode/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@bibcode/shared/hostProcess";
+import { VcsStatusResult } from "@coddy/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@coddy/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -207,7 +207,7 @@ describe("repository unavailable copy", () => {
         "Native Windows PowerShell and Git are required; other platforms are compatibility only.",
       );
     }
-    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-windows-trust-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-windows-trust-"));
     try {
       const env = Object.fromEntries(
         Object.entries(Context.get(Context.empty(), HostProcessEnvironment)).filter(

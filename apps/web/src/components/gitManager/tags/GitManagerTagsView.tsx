@@ -1,4 +1,4 @@
-import type { EnvironmentId, GitManagerRefEntry } from "@bibcode/contracts";
+import type { EnvironmentId, GitManagerRefEntry } from "@coddy/contracts";
 import {
   ChevronRightIcon,
   CloudUploadIcon,

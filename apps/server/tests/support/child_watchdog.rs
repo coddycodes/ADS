@@ -18,7 +18,7 @@ use std::{
 };
 
 pub(super) const MONITOR_TEST: &str = "child_watchdog::child_watchdog_monitor_fixture";
-pub(super) const SELECTOR: &str = "BIBCODE_TEST_CHILD_MONITOR";
+pub(super) const SELECTOR: &str = "CODDY_STUDIO_TEST_CHILD_MONITOR";
 const VERSION: &str = "lease-v1";
 const BLOCKED_CONFIGURATION: &str = "lease-v1:blocked-configuration-fixture";
 const MAX_REQUEST: usize = 8 * 1024 * 1024;

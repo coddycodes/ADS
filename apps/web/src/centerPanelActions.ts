@@ -11,19 +11,19 @@
  * Settings → Archived and are deleted with their host thread. Terminal panels
  * just register a surface — the terminal is attach-created lazily by the view.
  */
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   ModelSelection,
   ProjectId,
   ScopedThreadRef,
   ThreadId,
-} from "@bibcode/contracts";
-import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@coddy/contracts";
 import { useCallback } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";

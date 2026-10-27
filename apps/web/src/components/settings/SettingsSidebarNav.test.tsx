@@ -30,9 +30,9 @@ vi.mock("../ui/sidebar", () => ({
   useSidebar: () => ({ isMobile: false, setOpenMobile: vi.fn() }),
 }));
 
-vi.mock("../clerk/BiBCodeConnectSidebarSignIn", () => ({
-  BiBCodeConnectSidebarSignIn: () => <span>BiBCode Connect sign in</span>,
-  BiBCodeConnectSidebarAvatar: () => <span>BiBCode Connect avatar</span>,
+vi.mock("../clerk/CoddyConnectSidebarSignIn", () => ({
+  CoddyConnectSidebarSignIn: () => <span>Coddy Connect sign in</span>,
+  CoddyConnectSidebarAvatar: () => <span>Coddy Connect avatar</span>,
 }));
 
 import {
@@ -96,12 +96,12 @@ describe("settings navigation", () => {
   it("omits Connect footer controls on desktop and retains them in browser mode", () => {
     h.policy = createEnvironmentPresentationPolicy({ surface: "desktop", platform: "windows" });
     const desktopMarkup = renderToStaticMarkup(<SettingsSidebarNav pathname="/settings/general" />);
-    expect(desktopMarkup).not.toContain("BiBCode Connect sign in");
-    expect(desktopMarkup).not.toContain("BiBCode Connect avatar");
+    expect(desktopMarkup).not.toContain("Coddy Connect sign in");
+    expect(desktopMarkup).not.toContain("Coddy Connect avatar");
 
     h.policy = createEnvironmentPresentationPolicy({ surface: "browser", platform: "unknown" });
     const browserMarkup = renderToStaticMarkup(<SettingsSidebarNav pathname="/settings/general" />);
-    expect(browserMarkup).toContain("BiBCode Connect sign in");
-    expect(browserMarkup).toContain("BiBCode Connect avatar");
+    expect(browserMarkup).toContain("Coddy Connect sign in");
+    expect(browserMarkup).toContain("Coddy Connect avatar");
   });
 });

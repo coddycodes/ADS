@@ -64,7 +64,7 @@ afterEach(() => {
 describe("app boot", () => {
   it("follows the OS theme on every route and syncs the desktop shell once its bridge exists", async () => {
     const storage = createStorage();
-    storage.setItem("bibcode:theme", "dark");
+    storage.setItem("coddy-studio:theme", "dark");
     vi.stubGlobal("localStorage", storage);
     vi.spyOn(window, "matchMedia").mockImplementation(
       (query: string) =>

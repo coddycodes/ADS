@@ -301,13 +301,13 @@ describe("server process resource metrics", () => {
     cpuPercent: 1,
     rssBytes: 1024,
     elapsed: "00:00:01",
-    command: "bibcode",
+    command: "coddy-studio",
     depth: 0,
     childPids: [],
     processKey: "1:1",
     scope: "core",
     kind: "server",
-    label: "BiBCode Server",
+    label: "Coddy Studio Server",
     confidence: "exact",
   };
 

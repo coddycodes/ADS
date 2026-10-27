@@ -763,7 +763,7 @@ fn trim_newline(bytes: Vec<u8>) -> String {
 /// Which side a failed ACP turn should be attributed to.
 ///
 /// `RemoteRequest` is the agent answering with a JSON-RPC error — the provider
-/// reported it. Every other variant is BiBCode's own stdio transport to the
+/// reported it. Every other variant is Coddy Studio's own stdio transport to the
 /// agent. The discriminant exists here and used to die at the `to_string()`
 /// boundary, leaving a provider outage and a broken pipe indistinguishable.
 /// The same split already drives delivery outcomes in
@@ -853,7 +853,7 @@ mod tests {
             assert_eq!(
                 acp_error_class(&transport),
                 "transport_error",
-                "{transport:?} is BiBCode's transport, not the agent's fault"
+                "{transport:?} is Coddy Studio's transport, not the agent's fault"
             );
         }
     }

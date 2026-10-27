@@ -36,10 +36,10 @@ use crate::diagnostics::profiler::connections;
 
 /// WebSocket subprotocol a client offers to receive large plain `/ws`
 /// messages as records.
-pub(crate) const CHUNKED_RPC_SUBPROTOCOL: &str = "bibcode.rpc.chunked.v1";
+pub(crate) const CHUNKED_RPC_SUBPROTOCOL: &str = "coddy-studio.rpc.chunked.v1";
 /// [`CHUNKED_RPC_SUBPROTOCOL`] whose large server messages may also arrive raw-deflate
 /// compressed, as [`E2EE_DEFLATE_FEATURE`] defines them.
-pub(crate) const DEFLATE_RPC_SUBPROTOCOL: &str = "bibcode.rpc.chunked-deflate.v1";
+pub(crate) const DEFLATE_RPC_SUBPROTOCOL: &str = "coddy-studio.rpc.chunked-deflate.v1";
 /// A stand-alone control message sent between the records of another message.
 pub(crate) const RECORD_FLAG_CONTROL: u8 = 0x02;
 /// E2EE feature that lets control records interleave with a split message.
@@ -432,7 +432,7 @@ pub(crate) async fn watch_heartbeat(
 }
 
 /// The plain `/ws` subprotocols this server accepts, most preferred first.
-/// `compression_enabled` is false under `BIBCODE_REMOTE_COMPRESSION=0`.
+/// `compression_enabled` is false under `CODDY_STUDIO_REMOTE_COMPRESSION=0`.
 pub(crate) fn plain_subprotocols(compression_enabled: bool) -> &'static [&'static str] {
     if compression_enabled {
         &[DEFLATE_RPC_SUBPROTOCOL, CHUNKED_RPC_SUBPROTOCOL]

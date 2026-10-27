@@ -6,7 +6,7 @@ import { describePreviewError } from "./errorCodeMessages";
 
 interface Props {
   url: string;
-  /** Chromium net error code, e.g. -105; 0 when BiBCode itself explains the failure. */
+  /** Chromium net error code, e.g. -105; 0 when Coddy Studio itself explains the failure. */
   code: number;
   /**
    * Stringified Chromium error, e.g. "ERR_NAME_NOT_RESOLVED"; with code 0, a
@@ -20,13 +20,13 @@ interface Props {
 
 /**
  * Theme-aware tailwind port of Chromium's "This site can't be reached" page.
- * For BiBCode's own reasons the site may be fine, so the heading says it
+ * For Coddy Studio's own reasons the site may be fine, so the heading says it
  * can't be shown here instead.
  */
 export function PreviewUnreachable({ url, code, description, onReload, onOpenInNewTab }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const host = safeHost(url) ?? url;
-  // BiBCode's own reason already says what to do; network tips and codes don't apply.
+  // Coddy Studio's own reason already says what to do; network tips and codes don't apply.
   const ownReason = code === 0 && description.length > 0;
   const friendly = ownReason ? description : `${describePreviewError(code, description)}.`;
   const errorLabel = description.length > 0 ? description : `ERR_${Math.abs(code) || "FAILED"}`;

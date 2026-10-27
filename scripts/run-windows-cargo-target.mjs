@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 // Rust test binaries carry no embedded manifest, so Windows applies UAC
 // installer detection to any of them whose file name contains "install",
 // "setup", "update", or "patch" (for example `remote_update_rpc-*.exe` and
-// `bibcode_updater_verifier-*.exe`) and refuses to start them without
+// `coddy_studio_updater_verifier-*.exe`) and refuses to start them without
 // elevation ("The requested operation requires elevation", surfaced by Node as
 // EACCES). Declaring `asInvoker` in the sidecar manifest opts every target out
 // of that heuristic alongside the Common Controls v6 dependency.

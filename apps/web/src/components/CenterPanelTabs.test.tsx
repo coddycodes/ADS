@@ -1,5 +1,5 @@
 import type { CenterSurface } from "~/centerPanelStore";
-import { ThreadId } from "@bibcode/contracts";
+import { ThreadId } from "@coddy/contracts";
 import React, { type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";

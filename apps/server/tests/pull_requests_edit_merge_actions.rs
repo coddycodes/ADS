@@ -3,7 +3,7 @@
 #[path = "support/pull_request_action_fixture.rs"]
 mod pull_request_action_fixture;
 
-use bibcode_server::pull_requests::model::{ActionResult, PullRequestsProvider};
+use coddy_studio_server::pull_requests::model::{ActionResult, PullRequestsProvider};
 use pull_request_action_fixture::{Fixture, executable_fixture};
 use serde_json::{Value, json};
 use std::fs;
@@ -13,7 +13,7 @@ const BODY: &str = "private edit or merge body\nquotes ' \" ` $() \\ and unicode
 
 #[tokio::test]
 async fn pull_requests_context_auth_probes_can_follow_all_context_reads() {
-    use bibcode_server::pull_requests::{ContextRead, PullRequestsService};
+    use coddy_studio_server::pull_requests::{ContextRead, PullRequestsService};
 
     for gitlab in [false, true] {
         let mut f = Fixture::new(gitlab);
@@ -98,7 +98,7 @@ async fn pull_requests_gitlab_action_process_counts() {
 
 #[tokio::test]
 async fn pull_requests_gitlab_unavailable_context_invalidates_successful_auth_probes() {
-    use bibcode_server::pull_requests::{
+    use coddy_studio_server::pull_requests::{
         ContextRead, PullRequestsService,
         model::{Context, UnavailableCode},
     };
@@ -145,7 +145,7 @@ async fn pull_requests_gitlab_unavailable_context_invalidates_successful_auth_pr
 
 #[tokio::test]
 async fn pull_requests_gitlab_warm_actions_reuse_context_but_refresh_permissions_and_ui_reads() {
-    use bibcode_server::pull_requests::{ContextRead, PullRequestsService};
+    use coddy_studio_server::pull_requests::{ContextRead, PullRequestsService};
     let mut f = Fixture::new(true);
     f.gitlab_precheck(true);
     f.response(json!({}));

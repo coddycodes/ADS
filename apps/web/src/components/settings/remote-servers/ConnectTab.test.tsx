@@ -20,7 +20,7 @@ import {
   type DesktopDiscoveredSshHost,
   type DesktopWslState,
   EnvironmentId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 type AnyProps = Record<string, unknown>;
 
@@ -215,18 +215,18 @@ vi.mock("~/connection/currentEnvironmentPresentation", () => ({
   }),
 }));
 
-vi.mock("@bibcode/client-runtime/connection", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bibcode/client-runtime/connection")>()),
+vi.mock("@coddy/client-runtime/connection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@coddy/client-runtime/connection")>()),
 }));
 
-vi.mock("@bibcode/client-runtime/errors", () => ({
+vi.mock("@coddy/client-runtime/errors", () => ({
   findErrorTraceId: (cause: unknown) =>
     cause !== null && typeof cause === "object" && "traceId" in cause
       ? ((cause as { traceId: string }).traceId ?? null)
       : null,
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: unknown) =>
     (result as { interrupted?: boolean }).interrupted === true,
   squashAtomCommandFailure: (result: unknown) =>
@@ -319,15 +319,15 @@ vi.mock("~/connection/onboarding", () => ({
   connectSshEnvironment: h.atoms.connectSsh,
 }));
 
-vi.mock("@bibcode/shared/pairingCode", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bibcode/shared/pairingCode")>()),
+vi.mock("@coddy/shared/pairingCode", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@coddy/shared/pairingCode")>()),
   parsePairingCode: () => {
     if (h.decodedPairingCode === null) throw new Error("invalid pairing code");
     return h.decodedPairingCode;
   },
 }));
 
-vi.mock("@bibcode/shared/advertisedEndpoint", () => ({
+vi.mock("@coddy/shared/advertisedEndpoint", () => ({
   classifyPairingEndpoint: (endpoint: string) =>
     endpoint.includes("127.0.0.1") || endpoint.includes("localhost") ? "loopback" : "public",
 }));
@@ -1040,7 +1040,7 @@ let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.unstubAllGlobals();
-  domWindow = new Window({ url: "https://bibcode.test/" });
+  domWindow = new Window({ url: "https://coddy.test/" });
   vi.stubGlobal("window", domWindow);
   vi.stubGlobal("document", domWindow.document);
   vi.stubGlobal("navigator", domWindow.navigator);
@@ -1392,7 +1392,7 @@ describe("Remote Servers tabs", () => {
     expect(markup).toContain("access:write");
     expect(markup).toContain("No saved remote environments");
     expect(markup).not.toContain("Authorized clients");
-    expect(markup).not.toContain("BiBCode Connect.");
+    expect(markup).not.toContain("Coddy Connect.");
   });
 
   it("wraps a long connection error instead of cutting off its action", () => {
@@ -1902,7 +1902,7 @@ describe("Remote Servers tabs", () => {
   describe("Add Server flow", () => {
     async function enterPairingCode(value: string): Promise<void> {
       await act(async () => {
-        invoke(control("textarea", "bibcode://pair?code=…"), "onChange", {
+        invoke(control("textarea", "coddy-studio://pair?code=…"), "onChange", {
           target: { value },
         });
       });
@@ -1933,7 +1933,7 @@ describe("Remote Servers tabs", () => {
       stubBrowserWindow();
       h.hasCloudConfig = false;
       await mountConnections();
-      await enterPairingCode("bibcode://pair?code=abc123");
+      await enterPairingCode("coddy-studio://pair?code=abc123");
       await submitAddServer();
       expect(h.commands.connectRemoteServer).toHaveBeenCalledWith({
         code: "abc123",
@@ -2682,7 +2682,7 @@ describe("Remote Servers tabs", () => {
     expect(markup).toContain("Version drift");
     expect(markup).toContain("http://192.168.1.20:5133");
     expect(markup).toContain("Tailscale HTTPS");
-    expect(markup).toContain("BiBCode Connect");
+    expect(markup).toContain("Coddy Connect");
     expect(markup).toContain("Paired clients");
 
     // The pairing link resolves URLs against the advertised endpoints.
@@ -2784,7 +2784,7 @@ describe("Remote Servers tabs", () => {
     expect(h.commands.connectPairing).not.toHaveBeenCalled();
 
     // Cloud link row renders because the desktop session is administrative.
-    expect(control("switch", "Enable BiBCode Connect")).toBeDefined();
+    expect(control("switch", "Enable Coddy Connect")).toBeDefined();
   });
 
   it("does not expose a manual desktop network-access control", () => {
@@ -3110,7 +3110,7 @@ describe("Remote Servers tabs", () => {
     expect(h.commands.connectSsh).not.toHaveBeenCalled();
   });
 
-  it("manages the BiBCode Connect link", async () => {
+  it("manages the Coddy Connect link", async () => {
     stubBrowserWindow();
     h.primarySessionState = {
       data: { authenticated: true, scopes: ADMIN_SCOPES, auth: { policy: "remote-reachable" } },
@@ -3120,7 +3120,7 @@ describe("Remote Servers tabs", () => {
     const markup = render();
     expect(markup).toContain("This environment is available to your other devices");
 
-    const linkSwitch = control("switch", "Enable BiBCode Connect");
+    const linkSwitch = control("switch", "Enable Coddy Connect");
 
     // Successful link.
     invoke(linkSwitch, "onCheckedChange", true);
@@ -3131,7 +3131,7 @@ describe("Remote Servers tabs", () => {
     });
     expect(h.cloudLinkState.refresh).toHaveBeenCalled();
     expect(h.toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "BiBCode Connect linked" }),
+      expect.objectContaining({ title: "Coddy Connect linked" }),
     );
 
     // Successful unlink.
@@ -3143,7 +3143,7 @@ describe("Remote Servers tabs", () => {
       clerkToken: "clerk-token",
     });
     expect(h.toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "BiBCode Connect unlinked" }),
+      expect.objectContaining({ title: "Coddy Connect unlinked" }),
     );
 
     // Clerk token failures report an update failure with a trace id action.
@@ -3156,7 +3156,7 @@ describe("Remote Servers tabs", () => {
       title: string;
       data?: { secondaryActionProps?: { onClick: () => void } };
     };
-    expect(failureToast.title).toBe("Could not update BiBCode Connect");
+    expect(failureToast.title).toBe("Could not update Coddy Connect");
     failureToast.data?.secondaryActionProps?.onClick();
 
     // Missing token while linking asks the user to sign in.
@@ -3165,7 +3165,7 @@ describe("Remote Servers tabs", () => {
     invoke(linkSwitch, "onCheckedChange", true);
     await flush();
     expect(h.toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Could not update BiBCode Connect" }),
+      expect.objectContaining({ title: "Could not update Coddy Connect" }),
     );
 
     // Link command failure.
@@ -3174,7 +3174,7 @@ describe("Remote Servers tabs", () => {
     invoke(linkSwitch, "onCheckedChange", true);
     await flush();
     expect(h.toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Could not update BiBCode Connect" }),
+      expect.objectContaining({ title: "Could not update Coddy Connect" }),
     );
 
     // Interrupted link command stays silent.
@@ -3190,7 +3190,7 @@ describe("Remote Servers tabs", () => {
     invoke(linkSwitch, "onCheckedChange", true);
     await flush();
     expect(h.toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Could not update BiBCode Connect" }),
+      expect.objectContaining({ title: "Could not update Coddy Connect" }),
     );
 
     // Interrupted refreshes stay silent, and unlinking permits a missing Clerk token.
@@ -3209,7 +3209,7 @@ describe("Remote Servers tabs", () => {
     });
   });
 
-  it("reports a missing local environment when toggling BiBCode Connect too early", async () => {
+  it("reports a missing local environment when toggling Coddy Connect too early", async () => {
     stubBrowserWindow();
     h.primarySessionState = {
       data: { authenticated: true, scopes: ADMIN_SCOPES, auth: { policy: "local-only" } },
@@ -3226,10 +3226,10 @@ describe("Remote Servers tabs", () => {
     expect(markup).toContain("cloud state failed");
     expect(markup).toContain("Make this environment available");
 
-    invoke(control("switch", "Enable BiBCode Connect"), "onCheckedChange", true);
+    invoke(control("switch", "Enable Coddy Connect"), "onCheckedChange", true);
     await flush();
     expect(h.toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Could not update BiBCode Connect" }),
+      expect.objectContaining({ title: "Could not update Coddy Connect" }),
     );
     expect(h.commands.link).not.toHaveBeenCalled();
   });
@@ -3243,10 +3243,10 @@ describe("Remote Servers tabs", () => {
     h.cloudLinkState.data = { linked: false };
 
     const markup = render();
-    expect(markup).toContain("Sign in to BiBCode Connect to manage this environment.");
+    expect(markup).toContain("Sign in to Coddy Connect to manage this environment.");
   });
 
-  it("lists connectable BiBCode Connect environments with availability states", async () => {
+  it("lists connectable Coddy Connect environments with availability states", async () => {
     stubBrowserWindow();
     h.primarySessionState = { data: null };
     h.hasCloudConfig = true;
@@ -3399,8 +3399,8 @@ describe("Remote Servers tabs", () => {
     expect(markup).toContain("Connection failed. Reason: Error: transport failed");
     expect(markup).not.toContain("Copy trace ID");
     expect(markup).toContain("SSH build-host.internal");
-    expect(markup).toContain("BiBCode Connect");
-    expect(control("switch", "Enable BiBCode Connect").props.disabled).toBe(true);
+    expect(markup).toContain("Coddy Connect");
+    expect(control("switch", "Enable Coddy Connect").props.disabled).toBe(true);
   });
 
   it("renders every available network endpoint row", () => {
@@ -3451,7 +3451,7 @@ describe("Remote Servers tabs", () => {
 
     const markup = render();
     expect(markup).toContain("No saved remote environments");
-    expect(markup).toContain("connect one from BiBCode Connect");
+    expect(markup).toContain("connect one from Coddy Connect");
   });
 
   it("shows version, compatibility, and transport metadata for a saved server", () => {
@@ -3479,7 +3479,7 @@ describe("Remote Servers tabs", () => {
 
     const markup = render();
     expect(markup).toContain("AI-SERVER");
-    expect(markup).toContain("BiBCode v1.4.2");
+    expect(markup).toContain("Coddy Studio v1.4.2");
     expect(markup).toContain("Limited compatibility");
     expect(markup).toContain("Unencrypted");
   });

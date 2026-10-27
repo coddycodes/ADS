@@ -5,7 +5,7 @@
 - `/apps/desktop`: Tauri 2 desktop host. Rust owns native lifecycle, windows,
   settings, menus, dialogs, updates, WSL/SSH preparation, and the in-process
   server lifecycle.
-- `/apps/server`: Rust/Axum/Tokio server and native `bibcode` CLI. It owns
+- `/apps/server`: Rust/Axum/Tokio server and native `coddy-studio` CLI. It owns
   providers, Git, files, terminals, persistence, orchestration, HTTP/WebSocket
   RPC, authentication, diagnostics, and relay integration.
 - `/apps/web`: shared React 19 + Vite UI for browser and Tauri WebView modes.
@@ -21,8 +21,8 @@
   environment caches, and client state used by browser and desktop clients.
 - `/packages/shared`: cross-runtime TypeScript utilities exposed through
   explicit package subpaths.
-- `/infra/relay`: BiBCode Connect relay deployment package.
-- `/oxlint-plugin-bibcode`: repository-specific Oxlint rules.
+- `/infra/relay`: Coddy Connect relay deployment package.
+- `/oxlint-plugin-coddy-studio`: repository-specific Oxlint rules.
 - `/tools/updater-verifier`: Rust tool used to verify signed updater artifacts.
 - `/third_party/portable-pty`: vendored Rust PTY crate included in the Cargo
   workspace.
@@ -38,7 +38,7 @@
 - `/.github`: CI, release, packaged-smoke, deployment, and repository-policy
   workflows.
 
-The Vite+ workspace includes `apps/*`, `infra/*`, `oxlint-plugin-bibcode`,
+The Vite+ workspace includes `apps/*`, `infra/*`, `oxlint-plugin-coddy-studio`,
 `packages/*`, and `scripts`. The Cargo workspace includes the desktop host,
 native server, and updater verifier; `third_party/portable-pty` is consumed as a
 local dependency.
@@ -49,7 +49,7 @@ The frontend talks to the server through typed WebSocket/RPC contracts. In a
 packaged desktop build, the Tauri Rust host starts the server in-process,
 installs `window.desktopBridge`, and exposes only native host capabilities
 through Tauri commands/events. Browser mode connects directly to a native
-`bibcode` server and has no native bridge.
+`coddy-studio` server and has no native bridge.
 
 ## UI Workspace Model
 

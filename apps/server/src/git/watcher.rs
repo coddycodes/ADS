@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use super::{host_path_platform, normalize_worktree_path_key};
 
 const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
-const READINESS_DIRECTORY_PREFIX: &str = "bibcode-git-watch-ready";
+const READINESS_DIRECTORY_PREFIX: &str = "coddy-studio-git-watch-ready";
 static NEXT_READINESS_DIRECTORY_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
@@ -2653,7 +2653,7 @@ mod tests {
                 .lock()
                 .expect("native readiness registrations lock")
                 .len();
-            let sentinel = path.join(format!(".bibcode-watcher-ready-{}-{index}", self.id));
+            let sentinel = path.join(format!(".coddy-studio-watcher-ready-{}-{index}", self.id));
             self.state
                 .registrations
                 .lock()

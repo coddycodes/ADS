@@ -1,9 +1,9 @@
 # Remote architecture
 
-A BiBCode server represents one execution environment: the machine, filesystem,
+A Coddy Studio server represents one execution environment: the machine, filesystem,
 credentials, provider processes, terminals, repositories, and durable server
 state reached through that server. Clients may reach the same environment by a
-direct endpoint, BiBCode Connect, or desktop-managed SSH without changing the
+direct endpoint, Coddy Connect, or desktop-managed SSH without changing the
 environment identity.
 
 ## Design rules
@@ -26,10 +26,10 @@ environment identity.
   taking their ids from the desktop bridge. See
   `docs/plans/remote-servers/2026-09-04-paired-remote-environment-identity.md`.
 - A server's declared label is only the default name for a saved entry. A
-  headless web-mode server (`bibcode serve`, including one the desktop launches
+  headless web-mode server (`coddy-studio serve`, including one the desktop launches
   over SSH) declares its machine's trimmed hostname, making it recognizable on
   other devices. If the host reports no usable hostname, it falls back to
-  "Local". Browser-launching `bibcode start` and bare `bibcode` keep "Local",
+  "Local". Browser-launching `coddy-studio start` and bare `coddy-studio` keep "Local",
   including when `--no-browser` suppresses opening the browser.
   Desktop-mode servers (the desktop's in-process backend and WSL backends
   launched with a bootstrap envelope) keep declaring "Local", and embedders
@@ -38,7 +38,7 @@ environment identity.
   may rename that saved entry locally; the saved name never refreshes from, or
   changes, the server.
 - Current servers expose the persistent store UUID as `storageInstanceId` on
-  direct and BiBCode Connect descriptors. New clients decode an omitted field
+  direct and Coddy Connect descriptors. New clients decode an omitted field
   from an older or third-party server as `null`.
 - Remote clients use the same HTTP and Effect RPC APIs as local clients.
 - Credentials are exchanged for bounded sessions; raw bootstrap credentials do
@@ -64,7 +64,7 @@ The connection runtime defines four target types in
 | ------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `PrimaryConnectionTarget` | The server supplied by the current browser or desktop host.                                            |
 | `BearerConnectionTarget`  | A manually saved HTTP/WSS endpoint plus a separately stored pairing credential.                        |
-| `RelayConnectionTarget`   | An environment discovered through BiBCode Connect and authorized with Clerk plus DPoP.                 |
+| `RelayConnectionTarget`   | An environment discovered through Coddy Connect and authorized with Clerk plus DPoP.                 |
 | `SshConnectionTarget`     | A desktop-managed SSH profile plus a saved standard-scope bearer, used through a desktop-owned tunnel. |
 
 Only bearer, relay, and SSH targets are persisted as saved connection targets.
@@ -102,7 +102,7 @@ Native-managed automatic sharing accepts only a private or CGNAT default-route
 observation. Public interface observations are never actionable in a
 native-managed topology, including after an unrelated transition has made the
 listener wide. A public-only host must use a custom address backed by an
-externally managed `bibcode serve` listener or reverse proxy rather than asking
+externally managed `coddy-studio serve` listener or reverse proxy rather than asking
 the native exposure command to infer public-listener authority. Public
 endpoints in an externally managed topology are never preselected and require
 an explicit public-address and firewall warning. Tailscale CLI discovery checks
@@ -129,12 +129,12 @@ but newly generated links use the fragment form.
 
 ### A page a server served, or a remote client
 
-The web app runs either as the UI a BiBCode server serves for itself
-(`bibcode serve --mode web`), which pairs with its own origin through the
+The web app runs either as the UI a Coddy Studio server serves for itself
+(`coddy-studio serve --mode web`), which pairs with its own origin through the
 browser-session cookie, or as a remote client (the hosted static app) that has
 no backend of its own and reaches saved servers with bearer credentials. The
 server marks the entry document it serves with
-`<meta name="bibcode-served-host" content="<host>">`, where `<host>` is the
+`<meta name="coddy-studio-served-host" content="<host>">`, where `<host>` is the
 request's `Host` authority. It writes the marker only when that authority is
 plain (name, IPv4 or bracketed IPv6 characters and a port), and the response
 carries `Vary: Host` so no cache serves one host's marker to another. The app
@@ -191,7 +191,7 @@ broader `NSAllowsArbitraryLoads`.
 
 ### Served web UI script policy
 
-`bibcode serve` sends `script-src 'self'`, so the served page runs only
+`coddy-studio serve` sends `script-src 'self'`, so the served page runs only
 same-origin scripts. The static `/theme-bootstrap.js` runs before first paint.
 Only content-hashed build assets under `/assets/` are immutable. Other non-HTML
 static files, such as `/theme-bootstrap.js` and the icons, use `no-cache` with an
@@ -284,11 +284,11 @@ declared length above it and output that differs from it, and delivers messages
 in arrival order while one inflates. Client messages and control records are
 never compressed. Compression before encryption lets message lengths depend on
 content, so only large server messages are compressed, each on its own;
-`BIBCODE_REMOTE_COMPRESSION=0` in the server environment stops the server from
+`CODDY_STUDIO_REMOTE_COMPRESSION=0` in the server environment stops the server from
 confirming `deflate-v1`
 ([design](../superpowers/specs/2026-10-13-e2ee-message-compression-design.md)).
 SSH environments and plain remote servers get the same compression on plain
-`/ws` through the `bibcode.rpc.chunked-deflate.v1` subprotocol, which the same
+`/ws` through the `coddy-studio.rpc.chunked-deflate.v1` subprotocol, which the same
 switch stops the server from selecting
 ([RPC and orchestration](./rpc-and-orchestration.md#wire-protocol)).
 Invalid credentials receive
@@ -444,7 +444,7 @@ even under sustained small traffic. A large reservation that never fits fails
 at the shared admission deadline with an explicit terminal.
 
 The pairing payload is base64url-unpadded JSON in
-`bibcode://pair?code=<payload>` with version, endpoint, display name, one-time
+`coddy-studio://pair?code=<payload>` with version, endpoint, display name, one-time
 token, host public key, reach intent, and persistent storage identity. An
 authenticated caller with `access:write` mints it through
 `POST /api/auth/pairing-offer`. `Idempotency-Key` makes identical retries return
@@ -540,7 +540,7 @@ backend controls remain in **Local environment** at
 The **Connect to a host** tab lists saved servers with connection status,
 version, compatibility, and transport security. **Add Server** accepts a
 pairing code first, keeps manual endpoint-and-token entry under **Advanced**,
-and presents SSH as a first-class desktop option. BiBCode Connect relay rows
+and presents SSH as a first-class desktop option. Coddy Connect relay rows
 remain part of the same tab. The **Share this host** tab owns exposure and
 pairing-code generation for the primary environment.
 
@@ -559,7 +559,7 @@ the saved profiles, credentials, host identities, and cached connection state
 that will be deleted. Reset requires a separate acknowledgement, so the second
 click of a double-click cannot confirm destruction, and **Reload** remains a
 safe alternative. IndexedDB reports blocked deletion as queued rather than
-cancelled: the dialog stays pending, asks the user to close other BiBCode tabs or
+cancelled: the dialog stays pending, asks the user to close other Coddy Studio tabs or
 windows, and observes the original request until it succeeds or errors. Generic
 unavailability remains non-destructive. The app reloads automatically only
 after deletion actually succeeds.
@@ -744,14 +744,14 @@ other settings mutation that can restart the native or WSL topology. Those
 non-exposure mutations preserve the actual runtime exposure across their
 restart instead of reapplying a stale durable mode. Widening uses an
 ephemeral launch override, verifies a network-accessible advertised endpoint,
-opens the program-scoped `BiBCode Remote Access` Windows Firewall rule, and
+opens the program-scoped `Coddy Studio Remote Access` Windows Firewall rule, and
 persists network-accessible only after those native side effects succeed. Any
 failure attempts every local safeguard even if an earlier recovery step fails:
 persist local-only, restart with a local-only override, close the firewall, and
 stop an unverified backend. Narrowing persists local-only first, restarts and
 verifies local topology, then closes the firewall; it never restores durable
 wide state as compensation. On Windows, closing reads the persistent
-firewall store, removes only the named BiBCode rule, and reads it again to verify
+firewall store, removes only the named Coddy Studio rule, and reads it again to verify
 absence. A named `netsh` query that fails without returning that rule is absence
 in every display language only after `netsh advfirewall show allprofiles state`
 succeeds; a failed policy read stays incomplete cleanup. Firewall commands run
@@ -866,7 +866,7 @@ desktop protects its in-process primary directly, so update protection works
 the same while sharing.
 
 Pairing links converge on that Add Server flow. Web clients accept
-`/pair?code=...`; desktop bundles register `bibcode://pair?code=...` with the
+`/pair?code=...`; desktop bundles register `coddy-studio://pair?code=...` with the
 Tauri deep-link plugin and use the single-instance plugin to route links to the
 running application. Both entry points open Remote Servers with the code
 prefilled. macOS scheme registration happens when the application bundle is
@@ -896,7 +896,7 @@ Staging introduces no HTTP route or exception to this audit.
 #### Host-key HTTP audit
 
 Pinned profiles allow one pre-auth HTTP request: the unauthenticated
-`/.well-known/bibcode/environment` descriptor, which is only a routing hint and
+`/.well-known/coddy-studio/environment` descriptor, which is only a routing hint and
 is re-verified over RPC. The production call-site audit is:
 
 | Call site or surface                                                                                                                      | Host-key verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -906,11 +906,11 @@ is re-verified over RPC. The production call-site audit is:
 | `PreparedConnection.httpAuthorization`                                                                                                    | Explicitly `null` whenever `PreparedConnection.e2ee` is non-null. Pinned bearer credentials exist only in the E2EE auth form.                                                                                                                                                                                                                                                                                                                                                                     |
 | `assets.createUrl` and `apps/web/src/assets/assetUrls.ts`                                                                                 | URL issuance is authenticated RPC over E2EE. The resulting `/api/assets/<signed capability>/<path>` GET is a documented exception: it carries a bounded, expiring, resource-scoped HMAC capability and no bearer authorization.                                                                                                                                                                                                                                                                   |
 | `projects.createDownloadUrl`, `projects.createUploadUrl`, and `apps/web/src/components/files/fileTransfers.ts`                            | Same documented exception as `assets.createUrl`. URL issuance is authenticated RPC over E2EE; the resulting `GET`/`POST /api/transfers/<token>` carries a bounded, five-minute, resource-scoped HMAC capability and no bearer authorization. A download token names one entry and an upload token one file name in one directory, so a leaked URL reaches nothing else. The browser upload sends `credentials: "omit"`; desktop mode reaches the route from the Rust host instead of the WebView. |
-| `device.createMediaTicket` and `packages/client-runtime/src/device/mediaSocket.ts`                                                        | Ticket issuance is authenticated RPC over E2EE, and the ticket is redeemable only on the E2EE route. `GET /api/device-media-e2ee` carries no credential in the URL: it runs Noise_NK with the pinned key under the prologue `bibcode-device-media/1`, then reads the single-use ticket inside the encrypted records. See [Device media sockets](#device-media-sockets).                                                                                                                           |
+| `device.createMediaTicket` and `packages/client-runtime/src/device/mediaSocket.ts`                                                        | Ticket issuance is authenticated RPC over E2EE, and the ticket is redeemable only on the E2EE route. `GET /api/device-media-e2ee` carries no credential in the URL: it runs Noise_NK with the pinned key under the prologue `coddy-studio-device-media/1`, then reads the single-use ticket inside the encrypted records. See [Device media sockets](#device-media-sockets).                                                                                                                           |
 | `apps/web/src/diagnostics/downloadDiagnosticLogs.ts`                                                                                      | Direct authenticated HTTP is primary-environment-only and cannot target a saved bearer profile. Environment-scoped remote diagnostics are therefore unavailable until represented as RPC; an E2EE bearer must not be added to this request.                                                                                                                                                                                                                                                       |
 | `rpc/http.ts` HTTP API client and primary/cloud-link callers                                                                              | The module is a transport constructor, not an independent request. Its host-key callers are limited to the descriptor row above; primary and Connect control-plane calls are not saved host-key targets.                                                                                                                                                                                                                                                                                          |
 
-### BiBCode Connect
+### Coddy Connect
 
 The signed-in client discovers linked environments from the relay. To connect,
 it exchanges a Clerk token and client DPoP proof for a relay DPoP token, asks
@@ -922,7 +922,7 @@ that token and fresh DPoP proofs; the WebSocket URL contains only a short-lived
 The relay is a control plane. It verifies user and DPoP authorization, stores
 environment links, provisions the managed endpoint, and brokers signed health
 and mint requests. It does not become the owner of environment sessions or
-provider state. See [BiBCode Connect auth flow](../cloud/bibcode-connect-auth-flow.md).
+provider state. See [Coddy Connect auth flow](../cloud/coddy-connect-auth-flow.md).
 
 The server starts the managed tunnel when a link applies its runtime config,
 and again at startup from the stored link, so a restarted server comes back
@@ -952,7 +952,7 @@ reapplies a config a newer change replaced.
 ### Desktop-managed SSH
 
 The Tauri host owns SSH, not the server or React app. It validates the SSH
-profile, probes or launches `bibcode` remotely, establishes local forwarding,
+profile, probes or launches `coddy-studio` remotely, establishes local forwarding,
 and returns a local HTTP/WSS bootstrap to the connection runtime. The bootstrap
 carries a one-time pairing credential only when the caller asks for one
 (`issuePairingToken: true`); the renderer exchanges it at `/oauth/token` for a
@@ -967,13 +967,13 @@ spaces and hands it to that shell, whatever it is). The launch script starts
 launch 60 s, stop 30 s — after which the desktop terminates and reaps the SSH
 child and fails with a `[ssh_timeout:<operation>]` error the renderer treats as
 transient: the supervisor keeps retrying, so its message ends "Check the
-connection; BiBCode keeps trying." and asks the user for nothing. Remote API refusals reach the renderer as `[ssh_http:<status>]`:
+connection; Coddy Studio keeps trying." and asks the user for nothing. Remote API refusals reach the renderer as `[ssh_http:<status>]`:
 401 blocks with `authentication`, 403 with `permission`, 400 with
 `configuration`; network failures and 5xx stay transient.
 
 **Remote bounds.** A deadline ends only the local `ssh`: `sshd` does not signal
 a command without a PTY when the client goes away. The pairing script bounds
-`bibcode pairing issue` itself. The desktop runs it as `sh -s -- <bound>`, the
+`coddy-studio pairing issue` itself. The desktop runs it as `sh -s -- <bound>`, the
 pairing deadline plus 5 s (35 s by default), and at the bound the script sends
 TERM, then KILL 2 s later. A host-side pairing command therefore ends within
 about 37 s even with no client left, and the user still sees only
@@ -983,7 +983,7 @@ have a 1 s timeout; wget's own 1 s timeout runs under a 2 s watchdog (TERM after
 1–2 s, then KILL 2 s later), bounding a stuck wget to about 4 s. It thus
 ends well inside its 60 s deadline. Before it trusts, reuses, or stops a
 recorded pid, it checks that the pid still runs this state's
-`bibcode serve --port <port>` (`/proc/<pid>/cmdline`, or
+`coddy-studio serve --port <port>` (`/proc/<pid>/cmdline`, or
 `ps -p <pid> -o command=` on macOS), and it leaves any other process alone. A
 live but silent recorded server is stopped (TERM, then KILL after 2 s) before
 exactly one replacement starts, so two managed servers never share a data root;
@@ -992,7 +992,7 @@ it. A server the script started and gave up on is stopped the same way before an
 error is reported; SIGPIPE is ignored and every report may fail, so a closed
 channel cannot leave that server running. The launch records the port before
 the server starts, and the server records its own pid before it becomes
-`bibcode serve`, so a launch cut short never leaves a running server
+`coddy-studio serve`, so a launch cut short never leaves a running server
 unrecorded or recorded with another port. The pid and port files are removed
 only while they still name that pid.
 
@@ -1005,7 +1005,7 @@ The next launch finds that server and stops it (TERM, then KILL) before it start
 exactly one replacement.
 
 **Credentials.** Add runs launch, tunnel, and the pairing script
-`REMOTE_PAIRING_SCRIPT` (`bibcode pairing issue --base-dir "$HOME/.bibcode"
+`REMOTE_PAIRING_SCRIPT` (`coddy-studio pairing issue --base-dir "$HOME/.coddy/studio"
 --json`, the data root the launched `serve` uses), fetches the descriptor, and
 only then exchanges the credential, requesting `AuthStandardClientScopes`. The
 command writes a one-time pairing link into that root's auth store; the server
@@ -1024,7 +1024,7 @@ pairing credential. Connect again; …") instead of looping.
 
 The desktop never caches a pairing token: a live tunnel's bootstrap has none,
 and `issuePairingToken: true` on a live tunnel always mints a fresh one. On a
-cache hit it probes `/.well-known/bibcode/environment` through the tunnel
+cache hit it probes `/.well-known/coddy-studio/environment` through the tunnel
 (2 s); if that fails it drops the tunnel and takes the full launch-or-reuse
 path, which relaunches a managed server that stopped under a live SSH session.
 
@@ -1105,7 +1105,7 @@ saved credential cannot create pairing links or offers, manage access, or
 install relay clients; an SSH connection therefore cannot use those host
 features either.
 
-`bibcode pairing offer` uses the same database-as-authority pattern for
+`coddy-studio pairing offer` uses the same database-as-authority pattern for
 encrypted offers: it writes a share-shaped grant (`one-time-token` subject,
 standard scopes, reach and off-host recorded) into `auth_pairing_links`, reads
 the persisted host identity key without generating one, reads the storage
@@ -1114,15 +1114,15 @@ mints. Endpoint and reach rules are shared with `POST /api/auth/pairing-offer`
 through `auth::pairing_offer::validate_pairing_offer_input`. The command fails
 closed when the data store or host key does not exist yet.
 
-An authenticated web-mode `bibcode serve` bound to a concrete, non-loopback
+An authenticated web-mode `coddy-studio serve` bound to a concrete, non-loopback
 address also mints one share-shaped offer through the live auth service. The
-single startup JSON object includes its full `bibcode://pair?code=…` link as
+single startup JSON object includes its full `coddy-studio://pair?code=…` link as
 `pairingCode`; this is separate from the administrative startup credential in
 `pairingUrl`. Loopback and unspecified binds omit `pairingCode`, and operators
 can disable startup minting with `--no-startup-pairing-offer` when stdout is
 retained by a service manager or another log owner.
 
-`bibcode service install` writes a per-user service definition (systemd user
+`coddy-studio service install` writes a per-user service definition (systemd user
 unit, LaunchAgent, or logon scheduled task) that runs the absolute current
 executable with `serve` and the captured `PATH`, and drives the platform's
 user-level service manager. It never installs a system service or ships in the
@@ -1151,7 +1151,7 @@ separate steps internally:
 ```mermaid
 flowchart LR
   Profile["SSH profile"] --> Tunnel["live tunnel responds?"]
-  Tunnel -- no --> Probe["launch or reuse remote bibcode"]
+  Tunnel -- no --> Probe["launch or reuse remote coddy-studio"]
   Probe --> Forward["establish local forwarding"]
   Tunnel -- yes --> Endpoint["local endpoint (no token)"]
   Forward --> Endpoint
@@ -1215,19 +1215,19 @@ in `apps/server/src/preview/gateway/`.
 - **Auth bootstrap.** The capability is a `signed_token` with purpose
   `preview-gateway`. It is bound to the gateway port, upstream port, thread,
   and caller's session, lasts 60 s, and works once. The client navigates to
-  `/__bibcode/bootstrap?cap=<token>&to=<path>`, where `to` is a path with no
+  `/__coddy-studio/bootstrap?cap=<token>&to=<path>`, where `to` is a path with no
   scheme or host. The gateway sets
-  `bibcode-gw-<gatewayPort>=<id>; HttpOnly; SameSite=Lax; Path=/` and
+  `coddy-studio-gw-<gatewayPort>=<id>; HttpOnly; SameSite=Lax; Path=/` and
   returns a `200` page that calls `location.replace(to)`. The follow-up
   navigation then comes from the gateway's own site, so the browser sends the
-  cookie even when the BiBCode UI is on another site. `Lax` (not `Strict`)
+  cookie even when the Coddy Studio UI is on another site. `Lax` (not `Strict`)
   lets a top-level `GET` navigation from another site, such as an OAuth
   provider redirecting back to `http://localhost:<port>/callback`, carry the
   cookie; cross-site subrequests do not, and the Origin rule below refuses
   cross-site writes and WebSocket upgrades. Every later
   request needs that cookie; without it the gateway returns `401` with "This
-  preview link expired. Go back to BiBCode and open it again."
-- **Principal binding.** A gateway session lives no longer than its BiBCode
+  preview link expired. Go back to Coddy Studio and open it again."
+- **Principal binding.** A gateway session lives no longer than its Coddy Studio
   session. The gateway rechecks the session through the auth service at least
   every 30 s. Revocation or expiry ends the gateway session and closes its live
   connections within that window.
@@ -1247,7 +1247,7 @@ in `apps/server/src/preview/gateway/`.
   (`'self'` for frames nested in the preview),
   and the upstream's `X-Frame-Options` and `frame-ancestors` directives are
   dropped from each of its policies (its other directives stay, byte for byte),
-  so only that BiBCode UI can frame the preview. Browsers don't parse IPv6 host
+  so only that Coddy Studio UI can frame the preview. Browsers don't parse IPv6 host
   sources, and an IPv6 UI frames no preview, so a session with an IPv6 UI
   origin fails closed like one without a UI origin. Sessions without a UI
   origin (desktop views, system-browser tabs) keep the upstream's framing rules
@@ -1262,14 +1262,14 @@ in `apps/server/src/preview/gateway/`.
   never carries the `Lax` gateway cookie. The UI's own policy, in turn, adds
   `frame-src 'self' http://<request host>:*` (the `Host` it was loaded from,
   letters, digits, dots, and hyphens only; no host source for IPv6), so the page
-  may frame its host's gateways on their per-target ports. `GET /__bibcode/frame.js` (no session needed) is a
+  may frame its host's gateways on their per-target ports. `GET /__coddy-studio/frame.js` (no session needed) is a
   navigation reporter: inside a frame with a stored UI origin it posts
-  `{ type: "bibcode-preview-frame", url, title, canGoBack, canGoForward }` to
+  `{ type: "coddy-studio-preview-frame", url, title, canGoBack, canGoForward }` to
   that origin on load, `popstate`, `hashchange`, history changes, and title
-  changes, and obeys `bibcode-preview-command` back/forward/reload messages from
+  changes, and obeys `coddy-studio-preview-command` back/forward/reload messages from
   it only. Back and Forward use the Navigation API, which traverses only the
   frame's own history; without it they are reported unavailable (the joint
-  `history` would move BiBCode's own tab). The gateway inserts the reporter right after the first `<head>` tag
+  `history` would move Coddy Studio's own tab). The gateway inserts the reporter right after the first `<head>` tag
   of uncompressed `200` `text/html` responses found in the first 64 KiB
   (outside comments, quoted attribute values, and script or style contents;
   never in downloads or `Cache-Control: no-transform` responses, and a page
@@ -1279,7 +1279,7 @@ in `apps/server/src/preview/gateway/`.
   identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
   origins that send none, an `Accept` naming `text/html`).
 - **Forwarding.** `Host` becomes `localhost:<port>`. The gateway strips
-  BiBCode's session cookie, every `bibcode-gw-*` cookie, `authorization`,
+  Coddy Studio's session cookie, every `coddy-studio-gw-*` cookie, `authorization`,
   `dpop`, and hop-by-hop headers, including `proxy-connection`. In responses
   it drops `Domain=` from `Set-Cookie` and drops cookies with reserved names.
   Cookie headers are filtered as bytes, so a non-ASCII cookie passes through
@@ -1312,7 +1312,7 @@ in `apps/server/src/preview/gateway/`.
   `/api/assets`. A client whose environment address is a public IP literal
   shows the `public-host` notice instead of calling the gateway, and the server
   refuses any caller that reached it on a public address with `not-reachable`.
-- **Gateway over BiBCode Connect.** Each relay environment has 4 preview
+- **Gateway over Coddy Connect.** Each relay environment has 4 preview
   hostnames, `<environment label>-p1` … `-p4` in the tunnel zone, provisioned
   with the environment (proxied CNAMEs to its tunnel, ingress rules to the
   server's loopback origin before the catch-all) and returned in the tunnel's
@@ -1328,10 +1328,10 @@ in `apps/server/src/preview/gateway/`.
   public hostname, and requests without a session must not keep a target, or
   its slot, from closing after 10 idle minutes. The result carries
   `origin: https://<preview hostname>`, which the client bootstraps on,
-  including a browser that opened BiBCode at the managed endpoint itself. On the
+  including a browser that opened Coddy Studio at the managed endpoint itself. On the
   main port, an outermost layer hands every request on a loopback socket whose
   `Host` is a published preview hostname to that slot's target, ahead of
-  BiBCode's routes, CORS, and admission gate; an empty slot answers the
+  Coddy Studio's routes, CORS, and admission gate; an empty slot answers the
   expired-link page. These requests are HTTPS-facing (TLS ends at Cloudflare):
   the Origin rule compares against `https://<Host>`, the bootstrap cookie adds
   `Secure`, and `Location` is rewritten to the https origin. Every response on a
@@ -1360,7 +1360,7 @@ in `apps/server/src/preview/gateway/`.
   visible to Cloudflare like all relay traffic. A previewed page's script can
   set cookies for the whole tunnel zone (the gateway drops `Domain=` only from
   upstream `Set-Cookie`); adding the zone to the Public Suffix List is a
-  follow-up. Browser mode never frames these previews, because a BiBCode page on
+  follow-up. Browser mode never frames these previews, because a Coddy Studio page on
   another site does not get the `Lax` gateway cookie inside a frame: links open
   in a new tab, and a navigation inside the panel explains why.
 - **Client side** (`apps/web/src/browser/previewGateway.ts`). Shared preview
@@ -1456,7 +1456,7 @@ preview webview -> SOCKS (desktop, 127.0.0.1) -> DesktopBridge -> web client
   `previewAutomation.connect`: a tunnel lives as long as its page.
 - **Choosing.** The desktop advertises `previewTunnels` in its bridge
   metadata on Linux, and a server advertises the `previewTunnels` capability
-  in its environment descriptor (`/.well-known/bibcode/environment`, which a
+  in its environment descriptor (`/.well-known/coddy-studio/environment`, which a
   remote connection reads, and the server config).
   A remote environment (LAN, SSH, or relay) whose server has it gets a
   tunneled preview host; its first preview host decides for the app's
@@ -1500,8 +1500,8 @@ itself. It announces the request, and exactly one client claims it.
     returns, so a user who left or reached the thread meanwhile gets the
     prompt or the direct open accordingly.
   - On desktop, a claim for a thread on screen opens like a clicked link: in
-    the BiBCode browser for the routed thread, or in the system browser when
-    the thread is only a panel and links open in the BiBCode browser. In
+    the Coddy Studio browser for the routed thread, or in the system browser when
+    the thread is only a panel and links open in the Coddy Studio browser. In
     browser mode every claim becomes a prompt, because a new tab needs a user
     click.
 - **Subscriptions.** Every client mounts one preview-events subscription per
@@ -1547,7 +1547,7 @@ URL by replacing its path (`deviceMediaTarget`).
   message, then sends frames as binary messages.
 - **E2EE route.** `GET /api/device-media-e2ee` serves profiles that pin the
   host key. It runs Noise_NK with that key, as `/ws-e2ee` does, but under the
-  prologue `bibcode-device-media/1`, so a media handshake cannot be replayed
+  prologue `coddy-studio-device-media/1`, so a media handshake cannot be replayed
   into `/ws-e2ee` or the reverse. The handshake and the ticket share one 10 s
   deadline. After the handshake every message, the ticket included, is a
   logical message in `/ws-e2ee` records. A client that pinned another key or
@@ -1575,16 +1575,16 @@ URL by replacing its path (`deviceMediaTarget`).
 
 Each environment has its own [Profiler](./overview.md#profiler): its toggle is
 that server's `enableProfiler` setting, and its data stays in that server's data
-root. WSL, SSH, and remote environments run their own `bibcode` process, so each
+root. WSL, SSH, and remote environments run their own `coddy-studio` process, so each
 has its own crash monitor and follows its own setting. The Diagnostics Profiler
 section switches between connected environments; **Open folder** works only for
 the desktop's primary environment and **Export bundle** covers the primary
-environment only. For any other environment, run `bibcode profiler` on its host,
-for example over SSH, or `ssh <host> bibcode profiler mcp` for an AI harness.
+environment only. For any other environment, run `coddy-studio profiler` on its host,
+for example over SSH, or `ssh <host> coddy-studio profiler mcp` for an AI harness.
 
 A server older than the profiler does not advertise `capabilities.profiler`. The
 client then sends it no profiler RPC, ignores the `enableProfiler: true` it may
-echo back, and shows the switch disabled with "This server's BiBCode version has
+echo back, and shows the switch disabled with "This server's Coddy Studio version has
 no profiler. Update the server to record." Such a server answers an unknown
 method by failing every request on the connection, so this gate keeps a newer
 client usable against it.
@@ -1620,7 +1620,7 @@ Remote Server mode, the joined record's slow part (`server`, `network`, or
   origin. A missing or different `Origin` returns `403`
   `EnvironmentOperationForbiddenError` with reason `origin_not_allowed`.
   Bearer, DPoP, and `wsTicket` authentication do not check `Origin`. The
-  desktop app's `bibcode://app` origin gets no exception: it sends a bearer
+  desktop app's `coddy-studio://app` origin gets no exception: it sends a bearer
   token with `credentials: "omit"` and never uses the cookie.
 - `X-Forwarded-Host` and `X-Forwarded-Proto` are honored only from a loopback
   socket peer, the same trust as `X-Forwarded-For`. From such a peer the first
@@ -1653,11 +1653,11 @@ Remote Server mode, the joined record's slow part (`server`, `network`, or
   thread's provider, so holding it is the operate grant. Issuing MCP
   credentials to a lower-privileged principal would require a scope check in
   both tool families first.
-- Emulator, adb, and scrcpy sockets listen on loopback only; BiBCode never
+- Emulator, adb, and scrcpy sockets listen on loopback only; Coddy Studio never
   passes `adb -a`.
 
 Storage-identity mismatch protection applies equally to direct bearer,
-BiBCode Connect, and desktop-managed SSH targets: a different non-null
+Coddy Connect, and desktop-managed SSH targets: a different non-null
 `storageInstanceId` is blocked before synchronization. The desktop project-data
 recovery screen is intentionally narrower. It can inspect or mutate only a
 desktop-owned native or WSL launch plan whose root the Rust host can resolve.
@@ -1708,7 +1708,7 @@ performed on the machine that owns that server and filesystem.
   with `DevicePreviewsDisabledError`.
 - The media URL replaces the whole socket path, so a server behind a reverse
   proxy that mounts it under a path prefix serves RPC but not device video;
-  the client then falls back to still images. Device video over the BiBCode
+  the client then falls back to still images. Device video over the Coddy Studio
   Connect relay has not been validated natively.
 - Browsers expose WebCodecs only in a secure context, so a browser on
   `http://<lan-ip>` shows still images. WebKitGTK builds without

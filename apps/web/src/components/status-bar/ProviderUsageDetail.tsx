@@ -1,9 +1,9 @@
-import type { ConsumeCodexRateLimitResetResult } from "@bibcode/contracts";
+import type { ConsumeCodexRateLimitResetResult } from "@coddy/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import * as DateTime from "effect/DateTime";
 import { useRef, useState } from "react";
 

@@ -14,7 +14,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { Command, CliError } from "effect/cli";
 import * as TestConsole from "effect/testing/TestConsole";
-import { fromJsonStringPretty } from "@bibcode/shared/schemaJson";
+import { fromJsonStringPretty } from "@coddy/shared/schemaJson";
 
 import {
   ReleaseGitHubOutputConfigurationError,
@@ -69,12 +69,12 @@ const writePackageJsonFixtures = Effect.fn("writePackageJsonFixtures")(function*
     yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
     yield* fs.writeFileString(
       filePath,
-      `[package]\nname = "${relativePath.includes("desktop") ? "bibcode-desktop" : "bibcode-server"}"\nversion = "${version}"\n`,
+      `[package]\nname = "${relativePath.includes("desktop") ? "coddy-studio-desktop" : "coddy-studio-server"}"\nversion = "${version}"\n`,
     );
   }
   yield* fs.writeFileString(
     path.join(rootDir, releaseCargoLockFile),
-    `version = 4\n\n[[package]]\nname = "bibcode-desktop"\nversion = "${version}"\n\n[[package]]\nname = "bibcode-server"\nversion = "${version}"\n`,
+    `version = 4\n\n[[package]]\nname = "coddy-studio-desktop"\nversion = "${version}"\n\n[[package]]\nname = "coddy-studio-server"\nversion = "${version}"\n`,
   );
 });
 
@@ -109,9 +109,9 @@ const assertManifestTransactionState = Effect.fn("assertManifestTransactionState
   for (const relativePath of releasePackageFiles) {
     const filePath = path.join(rootDir, relativePath);
     assert.isTrue(yield* fs.exists(filePath));
-    assert.isFalse(yield* fs.exists(`${filePath}.bibcode-${transactionId}.stage`));
+    assert.isFalse(yield* fs.exists(`${filePath}.coddy-studio-${transactionId}.stage`));
     assert.equal(
-      yield* fs.exists(`${filePath}.bibcode-${transactionId}.backup`),
+      yield* fs.exists(`${filePath}.coddy-studio-${transactionId}.backup`),
       recoverableBackups.includes(filePath),
     );
   }
@@ -169,7 +169,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       const lockfilePath = path.join(baseDir, "Cargo.lock");
       yield* fs.writeFileString(
         lockfilePath,
-        `version = 4\n\n[[package]]\nname = "bibcode-desktop"\nversion = "0.0.1"\n\n[[package]]\nname = "bibcode-server"\nversion = "0.0.1"\n`,
+        `version = 4\n\n[[package]]\nname = "coddy-studio-desktop"\nversion = "0.0.1"\n\n[[package]]\nname = "coddy-studio-server"\nversion = "0.0.1"\n`,
       );
 
       yield* updateReleasePackageVersions("1.2.3", { rootDir: baseDir });
@@ -248,7 +248,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
               }
               if (resolvedPath.endsWith("Cargo.lock")) {
                 return Effect.succeed(
-                  'version = 4\n\n[[package]]\nname = "bibcode-desktop"\nversion = "1.2.3"\n\n[[package]]\nname = "bibcode-server"\nversion = "1.2.3"\n',
+                  'version = 4\n\n[[package]]\nname = "coddy-studio-desktop"\nversion = "1.2.3"\n\n[[package]]\nname = "coddy-studio-server"\nversion = "1.2.3"\n',
                 );
               }
               return Effect.succeed('[package]\nversion = "1.2.3"\n');
@@ -405,17 +405,17 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       for (const relativePath of releasePackageFiles) {
         const filePath = path.join(baseDir, relativePath);
         assert.isTrue(yield* fs.exists(filePath));
-        assert.isFalse(yield* fs.exists(`${filePath}.bibcode-rollback-failure-test.stage`));
+        assert.isFalse(yield* fs.exists(`${filePath}.coddy-studio-rollback-failure-test.stage`));
       }
       assert.equal(
         String((yield* decodePackageJson(yield* fs.readFileString(firstPath))).version),
         "1.2.3",
       );
-      assert.isTrue(yield* fs.exists(`${firstPath}.bibcode-rollback-failure-test.backup`));
+      assert.isTrue(yield* fs.exists(`${firstPath}.coddy-studio-rollback-failure-test.backup`));
       assert.equal(
         String(
           (yield* fs
-            .readFileString(`${firstPath}.bibcode-rollback-failure-test.backup`)
+            .readFileString(`${firstPath}.coddy-studio-rollback-failure-test.backup`)
             .pipe(Effect.flatMap(decodePackageJson))).version,
         ),
         "0.0.1",
@@ -498,8 +498,8 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       yield* writePackageJsonFixtures(baseDir, "0.0.1");
       const firstPath = path.join(baseDir, releasePackageFiles[0]);
       const secondPath = path.join(baseDir, releasePackageFiles[1]);
-      const firstStage = `${firstPath}.bibcode-stage-cleanup-test.stage`;
-      const secondStage = `${secondPath}.bibcode-stage-cleanup-test.stage`;
+      const firstStage = `${firstPath}.coddy-studio-stage-cleanup-test.stage`;
+      const secondStage = `${secondPath}.coddy-studio-stage-cleanup-test.stage`;
       const writeCause = PlatformError.systemError({
         _tag: "PermissionDenied",
         module: "FileSystem",
@@ -563,8 +563,8 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       assert.equal(yield* fs.readFileString(firstPath), original);
       for (const relativePath of releasePackageFiles) {
         const filePath = path.join(baseDir, relativePath);
-        assert.isFalse(yield* fs.exists(`${filePath}.bibcode-backup-failure-test.stage`));
-        assert.isFalse(yield* fs.exists(`${filePath}.bibcode-backup-failure-test.backup`));
+        assert.isFalse(yield* fs.exists(`${filePath}.coddy-studio-backup-failure-test.stage`));
+        assert.isFalse(yield* fs.exists(`${filePath}.coddy-studio-backup-failure-test.backup`));
       }
     }),
   );
@@ -576,7 +576,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "release-partial-backup-" });
       yield* writePackageJsonFixtures(baseDir, "0.0.1");
       const firstPath = path.join(baseDir, releasePackageFiles[0]);
-      const firstBackup = `${firstPath}.bibcode-partial-backup-test.backup`;
+      const firstBackup = `${firstPath}.coddy-studio-partial-backup-test.backup`;
       const copyCause = PlatformError.systemError({
         _tag: "PermissionDenied",
         module: "FileSystem",
@@ -615,8 +615,8 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       yield* writePackageJsonFixtures(baseDir, "0.0.1");
       const firstPath = path.join(baseDir, releasePackageFiles[0]);
       const secondPath = path.join(baseDir, releasePackageFiles[1]);
-      const firstBackup = `${firstPath}.bibcode-backup-cleanup-test.backup`;
-      const secondBackup = `${secondPath}.bibcode-backup-cleanup-test.backup`;
+      const firstBackup = `${firstPath}.coddy-studio-backup-cleanup-test.backup`;
+      const secondBackup = `${secondPath}.coddy-studio-backup-cleanup-test.backup`;
       const firstCause = PlatformError.systemError({
         _tag: "PermissionDenied",
         module: "FileSystem",
@@ -787,7 +787,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "release-interrupt-cleanup-" });
       yield* writePackageJsonFixtures(baseDir, "0.0.1");
       const firstPath = path.join(baseDir, releasePackageFiles[0]);
-      const firstBackup = `${firstPath}.bibcode-interrupt-cleanup.backup`;
+      const firstBackup = `${firstPath}.coddy-studio-interrupt-cleanup.backup`;
       const cleanupStarted = yield* Deferred.make<void>();
       const releaseCleanup = yield* Deferred.make<void>();
       let firstCleanupAttempt = true;
@@ -826,7 +826,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "release-late-stage-write-" });
       yield* writePackageJsonFixtures(baseDir, "0.0.1");
       const firstPath = path.join(baseDir, releasePackageFiles[0]);
-      const firstStage = `${firstPath}.bibcode-late-stage-write.stage`;
+      const firstStage = `${firstPath}.coddy-studio-late-stage-write.stage`;
       const callbackStarted = makePromiseGate();
       const interruptionFinished = yield* Deferred.make<void>();
       const callbackRelease = makePromiseGate();

@@ -6,7 +6,7 @@ import {
   ProjectId,
   ThreadId,
   type AgentSessionCandidate,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

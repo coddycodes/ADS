@@ -2,19 +2,19 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use bibcode_server::terminal::{
+use coddy_studio_server::terminal::{
     AttachmentItem, PortablePtyBackend, PtyBackend, PtySpawnInput, TerminalAttachInput,
     TerminalEvent, TerminalManager, TerminalMetadataEvent, TerminalOpenInput,
 };
 
-const WINDOWS_CONSOLE_THEME_ENV: &str = "BIBCODE_WINDOWS_CONSOLE_THEME";
+const WINDOWS_CONSOLE_THEME_ENV: &str = "CODDY_STUDIO_WINDOWS_CONSOLE_THEME";
 
 #[test]
 fn portable_backend_rejects_an_undiscoverable_executable_synchronously() {
     let workspace = tempfile::tempdir().expect("workspace");
     let backend = PortablePtyBackend;
     let result = backend.spawn(&PtySpawnInput {
-        executable: "bibcode-shell-that-does-not-exist.exe".to_string(),
+        executable: "coddy-studio-shell-that-does-not-exist.exe".to_string(),
         args: Vec::new(),
         cwd: workspace.path().to_path_buf(),
         cols: 120,
@@ -89,7 +89,7 @@ async fn default_windows_shell_inherits_the_path_needed_to_launch() {
         .write(
             "thread-1",
             "terminal-1",
-            "Write-Output BIBCODE_TERMINAL_OK\r\n",
+            "Write-Output CODDY_STUDIO_TERMINAL_OK\r\n",
         )
         .await
         .expect("terminal accepts input");
@@ -100,7 +100,11 @@ async fn default_windows_shell_inherits_the_path_needed_to_launch() {
                 .attach(TerminalAttachInput::existing("thread-1", "terminal-1"))
                 .await
                 .expect("terminal remains attachable");
-            if attachment.initial.history.contains("BIBCODE_TERMINAL_OK") {
+            if attachment
+                .initial
+                .history
+                .contains("CODDY_STUDIO_TERMINAL_OK")
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -270,7 +274,7 @@ async fn restarting_a_native_terminal_with_a_new_console_theme_completes() {
         .write(
             "thread-theme-restart",
             "terminal-theme-restart",
-            "\u{1b}[1;1RWrite-Output BIBCODE_BEFORE_THEME_RESTART\r\n",
+            "\u{1b}[1;1RWrite-Output CODDY_STUDIO_BEFORE_THEME_RESTART\r\n",
         )
         .await
         .expect("dark terminal accepts input");
@@ -279,7 +283,7 @@ async fn restarting_a_native_terminal_with_a_new_console_theme_completes() {
             if matches!(
                 attachment.recv().await,
                 Some(AttachmentItem::Event(TerminalEvent::Output { ref data, .. }))
-                    if data.contains("BIBCODE_BEFORE_THEME_RESTART")
+                    if data.contains("CODDY_STUDIO_BEFORE_THEME_RESTART")
             ) {
                 break;
             }
@@ -305,7 +309,7 @@ async fn restarting_a_native_terminal_with_a_new_console_theme_completes() {
 
     assert_eq!(
         restarted.console_theme,
-        Some(bibcode_server::terminal::TerminalConsoleTheme::Light)
+        Some(coddy_studio_server::terminal::TerminalConsoleTheme::Light)
     );
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {

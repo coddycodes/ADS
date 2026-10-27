@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn process_tree_includes_the_native_root_and_offsets_descendant_depths() {
-        let mut root = ProcessRow::fixture(10, 1, "bibcode.exe");
+        let mut root = ProcessRow::fixture(10, 1, "coddy-studio.exe");
         root.rss_bytes = 100;
         let mut child = ProcessRow::fixture(11, 10, "codex.exe");
         child.rss_bytes = 50;

@@ -304,7 +304,7 @@ export interface EnvironmentSessionPrincipalShape {
 export class EnvironmentAuthenticatedPrincipal extends Context.Service<
   EnvironmentAuthenticatedPrincipal,
   EnvironmentSessionPrincipalShape
->()("@bibcode/contracts/environmentHttp/EnvironmentAuthenticatedPrincipal") {}
+>()("@coddy/contracts/environmentHttp/EnvironmentAuthenticatedPrincipal") {}
 
 export class EnvironmentAuthenticatedAuth extends HttpApiMiddleware.Service<
   EnvironmentAuthenticatedAuth,
@@ -368,7 +368,7 @@ export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
 export type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
 
 export class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
-  HttpApiEndpoint.get("descriptor", "/.well-known/bibcode/environment", {
+  HttpApiEndpoint.get("descriptor", "/.well-known/coddy-studio/environment", {
     success: ExecutionEnvironmentDescriptor,
   }),
 ) {}
@@ -521,7 +521,7 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("health", "/api/bibcode-connect/health", {
+    HttpApiEndpoint.post("health", "/api/coddy-connect/health", {
       payload: RelayCloudEnvironmentHealthRequest,
       success: RelayEnvironmentHealthResponse,
       error: EnvironmentHttpCloudErrors,
@@ -535,7 +535,7 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   )
   .add(
-    HttpApiEndpoint.post("bibcodeMintCredential", "/api/bibcode-connect/mint-credential", {
+    HttpApiEndpoint.post("coddyStudioMintCredential", "/api/coddy-connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,

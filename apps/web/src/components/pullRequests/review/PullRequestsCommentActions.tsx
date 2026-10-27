@@ -2,7 +2,7 @@ import type {
   PullRequestsPermissions,
   PullRequestsTimelineItem,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { MoreHorizontalIcon } from "lucide-react";
 import { useState } from "react";
 import { writeTextToClipboard } from "../../../hooks/useCopyToClipboard";

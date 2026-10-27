@@ -8,8 +8,8 @@ import {
   RouterProvider,
   useLocation,
 } from "@tanstack/react-router";
-import { EnvironmentId, type SourceControlDiscoveryResult } from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+import { EnvironmentId, type SourceControlDiscoveryResult } from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
@@ -38,7 +38,7 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("../../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
-  const { DEFAULT_SERVER_SETTINGS } = await import("@bibcode/contracts");
+  const { DEFAULT_SERVER_SETTINGS } = await import("@coddy/contracts");
   return {
     primaryServerSettingsAtom: Atom.make(DEFAULT_SERVER_SETTINGS),
     serverEnvironment: {

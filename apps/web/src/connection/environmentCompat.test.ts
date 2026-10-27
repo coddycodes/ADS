@@ -1,8 +1,8 @@
-import type { ServerConfig } from "@bibcode/contracts";
+import type { ServerConfig } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const computeCompatVerdict = vi.hoisted(() => vi.fn());
-vi.mock("@bibcode/client-runtime/connection", async (importOriginal) => ({
+vi.mock("@coddy/client-runtime/connection", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   computeCompatVerdict,
 }));

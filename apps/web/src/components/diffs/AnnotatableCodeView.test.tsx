@@ -1,5 +1,5 @@
 import type { FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
-import type { ScopedThreadRef } from "@bibcode/contracts";
+import type { ScopedThreadRef } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 

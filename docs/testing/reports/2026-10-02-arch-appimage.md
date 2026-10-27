@@ -2,7 +2,7 @@
 
 **Result: PASS for the diagnostic and documented fallback in issue 41.** The
 real Arch GdkPixbuf/Glycin packages omit the advertised legacy loader directory.
-BiBCode refuses that unsupported build layout before modifying its AppDir and
+Coddy Studio refuses that unsupported build layout before modifying its AppDir and
 explains the supported Ubuntu build and official AppImage paths. The published
 x64 AppImage launched and rendered correctly on the same Arch userspace.
 
@@ -42,7 +42,7 @@ Glycin bundling support.
 
 ## Actual fallback runtime
 
-The published `BiBCode_0.7.2_amd64.AppImage` was downloaded from the repository's
+The published `Coddy Studio_0.7.2_amd64.AppImage` was downloaded from the repository's
 v0.7.2 release. Its 100,235,768 bytes matched the GitHub asset digest:
 `554bfbbe2bcce04ff045e5950726f71ba6e1b6ff0c3126f1679969de8c792a18`.
 

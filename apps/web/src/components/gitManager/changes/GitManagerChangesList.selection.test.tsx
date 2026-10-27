@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentId, ProjectId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId } from "@coddy/contracts";
 import { act, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";

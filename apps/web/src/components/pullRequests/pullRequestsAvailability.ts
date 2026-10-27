@@ -1,5 +1,5 @@
-import type { SupervisorConnectionState } from "@bibcode/client-runtime/connection";
-import type { ServerConfig, SourceControlProviderKind } from "@bibcode/contracts";
+import type { SupervisorConnectionState } from "@coddy/client-runtime/connection";
+import type { ServerConfig, SourceControlProviderKind } from "@coddy/contracts";
 
 export type PullRequestsAvailability =
   | { readonly kind: "ready" }

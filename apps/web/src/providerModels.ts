@@ -7,8 +7,8 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
-} from "@bibcode/contracts";
-import { createModelCapabilities, resolveSelectableModel } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { createModelCapabilities, resolveSelectableModel } from "@coddy/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

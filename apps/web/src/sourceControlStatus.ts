@@ -1,4 +1,4 @@
-import type { VcsWorkingTreeFileStatus } from "@bibcode/contracts";
+import type { VcsWorkingTreeFileStatus } from "@coddy/contracts";
 
 interface WorkingTreeStatusBadge {
   readonly letter: string;

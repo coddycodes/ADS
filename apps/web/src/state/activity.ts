@@ -1,4 +1,4 @@
-import { createEnvironmentActivityAtoms } from "@bibcode/client-runtime/state/activity";
+import { createEnvironmentActivityAtoms } from "@coddy/client-runtime/state/activity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

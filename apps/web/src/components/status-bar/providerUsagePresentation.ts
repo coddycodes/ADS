@@ -2,7 +2,7 @@ import type {
   ServerProviderUsageResetCredits,
   ServerProviderUsageSnapshot,
   ServerProviderUsageWindow,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {

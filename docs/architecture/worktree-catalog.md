@@ -1,7 +1,7 @@
 # Worktree catalog
 
 The worktree catalog discovers Git worktrees that belong to a persisted project
-but do not yet have a BiBCode workspace thread. It also owns the lifecycle of an
+but do not yet have a Coddy Studio workspace thread. It also owns the lifecycle of an
 adopted worktree when its directory disappears, returns, or is explicitly
 removed. The server is authoritative for paths, repository identity, Git
 membership, availability, and destructive decisions. Browser and desktop
@@ -271,7 +271,7 @@ The same authority boundary covers every worktree-bearing owner mutation:
 - `worktree.retarget` accepts an opaque worktree key and expected generation;
   it revalidates catalog membership and ownership before changing a workspace.
 - `worktree.adopt`, `worktree.updateDiscoveryPolicy`,
-  `worktree.removeFromBibCode`, and `worktree.remove` retain their dedicated
+  `worktree.removeFromCoddyStudio`, and `worktree.remove` retain their dedicated
   server-resolved adoption, policy, detach, and removal responsibilities.
 
 Generic orchestration remains available for ordinary non-worktree commands,
@@ -318,7 +318,7 @@ Removal is a server-resolved plan/execute flow:
 | RPC                          | Scope                   | Purpose                                                                                                                    |
 | ---------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `worktree.getRemovalPlan`    | `orchestration:read`    | Resolve the current target and return an opaque versioned token plus dirty, lock, prune-impact, and availability facts.    |
-| `worktree.removeFromBibCode` | `orchestration:operate` | Atomically detach BiBCode ownership without asking Git to remove anything.                                                 |
+| `worktree.removeFromCoddyStudio` | `orchestration:operate` | Atomically detach Coddy Studio ownership without asking Git to remove anything.                                                 |
 | `worktree.remove`            | `orchestration:operate` | Execute an explicitly chosen Git deletion or stale-registration cleanup, then detach only under the mode's verified rules. |
 
 Before reservation, `Removing`, cleanup, Git mutation, or detach, a new removal
@@ -356,7 +356,7 @@ step's duration and no paths.
 
 Present worktrees require a separate user choice between detach-only and Git
 deletion, plus explicit dirty and prune-impact confirmations when applicable.
-A failed present deletion retains BiBCode ownership. For an already missing
+A failed present deletion retains Coddy Studio ownership. For an already missing
 worktree, optional verified stale-registration cleanup may fail while the
 bounded outcome is reported and detach still succeeds. An accepted removal is
 one atomic transaction: same-path panel deletions, canonical thread deletion,
@@ -387,7 +387,7 @@ While the [Profiler](./overview.md#profiler) is on, the worktree audit records
 removal outcomes and scans the catalog. It only observes: it never prunes,
 deletes, or refreshes anything.
 
-**Removal outcomes.** `worktree.remove` and `worktree.removeFromBibCode` write
+**Removal outcomes.** `worktree.remove` and `worktree.removeFromCoddyStudio` write
 one `worktree.removal` event per outcome, with the mode, success, the error's
 kebab-case `reason`, the duration, and whether the admission drain timed out, a
 capacity limit was hit, or the client cancelled. A reason that is not plain
@@ -409,7 +409,7 @@ filesystem work still running, or the catalog not built yet, looks again a
 second later. A scan reads the catalog's guards and owned worktrees, the
 directories one level under each managed worktree directory (up to 500 per
 directory), each project's `git worktree list --porcelain` (8 s per project), and
-the working directories of the processes BiBCode owns (5 s). The comparison with
+the working directories of the processes Coddy Studio owns (5 s). The comparison with
 the filesystem and Git is abandoned after 30 s, and only managed directories
 whose owners and registrations were all read are compared. The catalog and
 process facts are audited regardless, and the scan's `worktree.audit` event says
@@ -423,7 +423,7 @@ worktrees show it; the redacted path appears in the summary and evidence.
 | `worktree.stuck-removal`         | Error    | A `removing` guard has been held for more than 10 minutes.                                                                                         |
 | `worktree.orphan-dir`            | Warn     | A directory in a managed worktree directory has no catalog owner and no Git registration.                                                          |
 | `worktree.registration-mismatch` | Warn     | Git registers a worktree in a managed worktree directory, its directory is gone, and no catalog entry owns it.                                     |
-| `worktree.held-open`             | Warn     | A process BiBCode owns works inside a missing worktree, inside one stuck in removal, or in a deleted directory under a managed worktree directory. |
+| `worktree.held-open`             | Warn     | A process Coddy Studio owns works inside a missing worktree, inside one stuck in removal, or in a deleted directory under a managed worktree directory. |
 
 `worktree.held-open` reads working directories on Linux and macOS only. On
 Windows the process step reads nothing, so the audit event's `processesRead` is

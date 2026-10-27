@@ -1,4 +1,4 @@
-import { EnvironmentId, type VcsStatusResult, WS_METHODS } from "@bibcode/contracts";
+import { EnvironmentId, type VcsStatusResult, WS_METHODS } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -41,8 +41,8 @@ function percentile(sorted: readonly number[], fraction: number): number {
 describe("production VCS Atom queue benchmark", () => {
   it.effect("measures mutation execution start while refreshStatus is active", () =>
     Effect.gen(function* () {
-      const warmupSamples = configuredPositiveInteger("BIBCODE_VCS_QUEUE_WARMUPS", 20);
-      const measuredSamples = configuredPositiveInteger("BIBCODE_VCS_QUEUE_SAMPLES", 200);
+      const warmupSamples = configuredPositiveInteger("CODDY_STUDIO_VCS_QUEUE_WARMUPS", 20);
+      const measuredSamples = configuredPositiveInteger("CODDY_STUDIO_VCS_QUEUE_SAMPLES", 200);
       const environmentId = EnvironmentId.make("vcs-queue-benchmark");
       let refreshStarted = yield* Deferred.make<void>();
       let refreshResult = yield* Deferred.make<VcsStatusResult>();

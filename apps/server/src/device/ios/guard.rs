@@ -33,7 +33,7 @@ pub(crate) const XCODE_CHANGED_MESSAGE: &str = "Xcode changed while the server w
 /// Why simulators of this Xcode open view-only.
 pub(crate) fn unsupported_message(version: &str) -> String {
     format!(
-        "Xcode {version} changed the simulator interfaces BiBCode uses. Simulators open as screenshots without touch input."
+        "Xcode {version} changed the simulator interfaces Coddy Studio uses. Simulators open as screenshots without touch input."
     )
 }
 
@@ -87,7 +87,7 @@ async fn version_stamp(developer_dir: &Path) -> Option<SystemTime> {
 /// What the private-API guard found for one Xcode.
 #[derive(Clone)]
 pub(crate) enum GuardResult {
-    /// Both frameworks loaded and every class, selector and symbol BiBCode calls is present
+    /// Both frameworks loaded and every class, selector and symbol Coddy Studio calls is present
     /// with the signature spec §0 recorded.
     Live(Arc<CoreSim>),
     /// Simulators open view-only; `missing` names the first name that failed, for the log.
@@ -121,7 +121,7 @@ pub(crate) enum Owner {
     Protocol(&'static str),
 }
 
-/// One private name BiBCode depends on.
+/// One private name Coddy Studio depends on.
 enum Need {
     Class(&'static str),
     Protocol(&'static str),
@@ -294,7 +294,7 @@ pub(crate) fn probe_with(resolver: &dyn SymbolResolver) -> GuardResult {
     };
     tracing::warn!(
         missing = %missing,
-        "the simulator frameworks lack a private name BiBCode uses; simulators run view-only"
+        "the simulator frameworks lack a private name Coddy Studio uses; simulators run view-only"
     );
     GuardResult::ViewOnly {
         kind: AvailabilityKind::XcodeUnsupported,
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(unsupported.kind, AvailabilityKind::XcodeUnsupported);
         assert_eq!(
             unsupported.message,
-            "Xcode 27.0 changed the simulator interfaces BiBCode uses. Simulators open as screenshots without touch input."
+            "Xcode 27.0 changed the simulator interfaces Coddy Studio uses. Simulators open as screenshots without touch input."
         );
         assert_eq!(
             availability_for(&ready, &[], Some(&live_unsupported)).kind,
@@ -743,7 +743,7 @@ mod tests {
     fn unsupported_message_names_the_xcode_version() {
         assert_eq!(
             unsupported_message("27.1"),
-            "Xcode 27.1 changed the simulator interfaces BiBCode uses. Simulators open as screenshots without touch input."
+            "Xcode 27.1 changed the simulator interfaces Coddy Studio uses. Simulators open as screenshots without touch input."
         );
     }
 

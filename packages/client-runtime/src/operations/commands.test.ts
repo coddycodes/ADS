@@ -6,7 +6,7 @@ import {
   ProjectId,
   ThreadId,
   type ClientOrchestrationCommand,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";

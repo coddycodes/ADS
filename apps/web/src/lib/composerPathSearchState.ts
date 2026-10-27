@@ -1,7 +1,7 @@
 import {
   type ComposerPathSearchState,
   type ComposerPathSearchTarget,
-} from "@bibcode/client-runtime/state/threads";
+} from "@coddy/client-runtime/state/threads";
 
 import { useComposerPathSearch as useComposerPathSearchQuery } from "../state/queries";
 

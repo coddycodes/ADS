@@ -211,7 +211,7 @@ export type PreviewGatewayOpenInput = typeof PreviewGatewayOpenInput.Type;
 
 /**
  * `capability` bootstraps one gateway session on `gatewayPort` before `expiresAtMs`.
- * `origin` is set for a caller that came through BiBCode Connect: the preview
+ * `origin` is set for a caller that came through Coddy Connect: the preview
  * hostname's `https://` origin to bootstrap on instead of the server's address.
  */
 export const PreviewGatewayOpenResult = Schema.Struct({
@@ -375,7 +375,7 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
  * Why `preview.gatewayOpen` refused: `not-admitted` (not a plain-HTTP loopback URL),
  * `https-unsupported`, `no-upstream` (nothing listens on the port), `not-reachable` (the
  * caller reached the server on a public address or through a reverse proxy),
- * `relay-not-provisioned` (a BiBCode Connect caller whose environment has no preview
+ * `relay-not-provisioned` (a Coddy Connect caller whose environment has no preview
  * hostnames yet), `relay-busy` (every preview hostname serves a target with live
  * connections), or `unavailable`.
  */

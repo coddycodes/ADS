@@ -1,4 +1,4 @@
-import type { EnvironmentId, OrchestrationShellSnapshot } from "@bibcode/contracts";
+import type { EnvironmentId, OrchestrationShellSnapshot } from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 

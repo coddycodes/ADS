@@ -276,7 +276,7 @@ addJsonFixture("responses/session.json", AuthSessionState, {
     policy: "remote-reachable",
     bootstrapMethods: ["one-time-token"],
     sessionMethods: ["browser-session-cookie", "bearer-access-token", "dpop-access-token"],
-    sessionCookieName: "bibcode_session",
+    sessionCookieName: "coddy_studio_session",
   },
   scopes: administrativeScopes,
   sessionMethod: "browser-session-cookie",

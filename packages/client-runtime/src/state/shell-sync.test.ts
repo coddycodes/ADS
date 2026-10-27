@@ -4,7 +4,7 @@ import {
   ProjectId,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

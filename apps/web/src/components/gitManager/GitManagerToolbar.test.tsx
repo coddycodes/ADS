@@ -5,7 +5,7 @@ import type {
   GitManagerOperationEvent,
   GitManagerRefsSnapshot,
   VcsWorktreeDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";

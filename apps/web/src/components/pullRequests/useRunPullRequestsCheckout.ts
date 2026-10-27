@@ -3,11 +3,11 @@ import type {
   PullRequestsCheckoutResult,
   PullRequestsPermission,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAtomCommand } from "../../state/use-atom-command";

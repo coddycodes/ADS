@@ -1,5 +1,5 @@
-import type { ConnectionTarget } from "@bibcode/client-runtime/connection";
-import type { ServerConfig } from "@bibcode/contracts";
+import type { ConnectionTarget } from "@coddy/client-runtime/connection";
+import type { ServerConfig } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const compat = vi.hoisted(() => ({ verdict: null as unknown }));
@@ -67,12 +67,12 @@ describe("buildEnvironmentContextCardView", () => {
     ).toBeNull();
   });
 
-  it("renders name, status text, and the BiBCode version line for a remote", () => {
+  it("renders name, status text, and the Coddy Studio version line for a remote", () => {
     compat.verdict = { kind: "compatible" };
     const card = view();
     expect(card?.name).toBe("AI-SERVER");
     expect(card?.statusText).toBe("Connected");
-    expect(card?.versionLine).toBe("BiBCode v0.4.2");
+    expect(card?.versionLine).toBe("Coddy Studio v0.4.2");
     expect(card?.compatBadge).toBeNull();
     expect(card?.showUpdateActions).toBe(true);
   });

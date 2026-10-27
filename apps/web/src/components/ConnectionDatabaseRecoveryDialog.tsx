@@ -84,7 +84,7 @@ export function ConnectionDatabaseRecoveryDialog({
     setError(null);
     try {
       await copyText(
-        `BiBCode connection database status: ${health.status}\n${health.message ?? "No detail"}`,
+        `Coddy Studio connection database status: ${health.status}\n${health.message ?? "No detail"}`,
       );
     } catch (cause) {
       setError(`Could not copy diagnostics: ${String(cause)}`);
@@ -148,7 +148,7 @@ export function ConnectionDatabaseRecoveryDialog({
             </>
           ) : health.status === "blocked" ? (
             <div className="space-y-2">
-              <p>Close other BiBCode tabs or windows using this browser profile, then reload.</p>
+              <p>Close other Coddy Studio tabs or windows using this browser profile, then reload.</p>
               {busy ? (
                 <p role="status">
                   Deletion is still pending and will continue when those connections close.

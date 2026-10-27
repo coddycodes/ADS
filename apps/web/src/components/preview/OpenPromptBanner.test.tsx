@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -94,7 +94,7 @@ describe("OpenPromptBanner", () => {
     expect(container.textContent).toBe("");
   });
 
-  it("opens a blocked new tab in a new tab again, not in the BiBCode browser", async () => {
+  it("opens a blocked new tab in a new tab again, not in the Coddy Studio browser", async () => {
     await act(async () =>
       enqueueOpenPrompt({
         source: "link",

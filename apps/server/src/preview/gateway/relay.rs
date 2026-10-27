@@ -1,4 +1,4 @@
-//! BiBCode Connect (relay) reach for the preview gateway. The Connect tunnel runtime
+//! Coddy Connect (relay) reach for the preview gateway. The Connect tunnel runtime
 //! publishes the managed endpoint's hostname and its fixed preview hostnames
 //! ([`RelayHosts`]). Gateway admission recognizes a relay caller by that hostname
 //! ([`is_relay_reach`]) and gives each relay target one preview hostname
@@ -530,7 +530,7 @@ mod tests {
         async fn bootstrap(front: SocketAddr, host: &str, capability: &str) -> String {
             let response = http()
                 .get(format!(
-                    "http://{front}/__bibcode/bootstrap?cap={capability}&to=%2F"
+                    "http://{front}/__coddy-studio/bootstrap?cap={capability}&to=%2F"
                 ))
                 .header(header::HOST, host)
                 .send()

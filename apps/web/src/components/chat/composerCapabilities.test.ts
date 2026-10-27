@@ -1,4 +1,4 @@
-import type { ServerProvider, ServerProviderSkill } from "@bibcode/contracts";
+import type { ServerProvider, ServerProviderSkill } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveComposerCapabilityProfile } from "./composerCapabilities";

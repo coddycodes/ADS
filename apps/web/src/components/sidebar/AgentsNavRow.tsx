@@ -1,4 +1,4 @@
-import type { EnvironmentAvailabilityStatus } from "@bibcode/client-runtime/state/shell";
+import type { EnvironmentAvailabilityStatus } from "@coddy/client-runtime/state/shell";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";

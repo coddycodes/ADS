@@ -3,8 +3,8 @@ import {
   ProjectId,
   ThreadId,
   type ExecutionEnvironmentDescriptor,
-} from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "vite-plus/test";
 
 import { attachEnvironmentDescriptor, createKnownEnvironment } from "./knownEnvironment.ts";

@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     RpcRegistry, ServerConfig, ServerHandle, ServerRuntime,
     git::{FileTrash, FileTrashFuture, GitRepository, StatusBroadcaster, TrashUnavailable},
     persistence::{Database, ProjectionProject, Repositories, run_migrations},
@@ -38,7 +38,7 @@ use websocket_frames::next_frame_past_heartbeat;
 const DESKTOP_BOOTSTRAP: &str = "git-manager-commit-bootstrap";
 const TOKEN_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
-const BOOTSTRAP_TOKEN_TYPE: &str = "urn:bibcode:params:oauth:token-type:environment-bootstrap";
+const BOOTSTRAP_TOKEN_TYPE: &str = "urn:coddy-studio:params:oauth:token-type:environment-bootstrap";
 
 struct TestTrash {
     destination: PathBuf,

@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe("preparePierreVisualFixture", () => {
   it("creates three independent working-tree hunks and a committed editable file", () => {
-    const environment: NodeJS.ProcessEnv = { BIBCODE_E2E_PLATFORM: "mac" };
+    const environment: NodeJS.ProcessEnv = { CODDY_STUDIO_E2E_PLATFORM: "mac" };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
 

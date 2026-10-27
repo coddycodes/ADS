@@ -4,7 +4,7 @@
 
 ## Tested revision
 
-- Repository: BiBCode (`https://github.com/mubeda/BibCode.git`)
+- Repository: Coddy Studio (`https://github.com/mubeda/BibCode.git`)
 - Remote: `origin`; requested publication branch `develop`
 - Branch or requested revision: local `mubeda/develop`; remediation range
   `0e4767b5e8678a756377bb7f0071f98049e88dc0..65af2c1084e3c8f87eb0269cdac18ba3f056de3c`
@@ -165,7 +165,7 @@ behavior and empty-resource assertions.
 | Native installer/package          | Unavailable                             | No package, signing, or release claim.                                          |
 | Packaged remote sharing/update UI | Unavailable                             | Source, component, integration, and runbook evidence only; no screenshot claim. |
 
-No installed BiBCode copy was launched.
+No installed Coddy Studio copy was launched.
 
 ## Process and temporary-root cleanup
 

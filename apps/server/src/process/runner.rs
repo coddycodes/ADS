@@ -203,7 +203,7 @@ impl ProcessRunner {
         F: FnOnce(Option<u32>) + Send,
     {
         let resolved = resolve_command(&input);
-        // This generic runner may launch BiBCode's own binaries, which need the
+        // This generic runner may launch Coddy Studio's own binaries, which need the
         // AppImage environment. Isolation belongs at user-facing spawn sites.
         let build = |program: &std::path::Path| {
             let mut command = Command::new(program);

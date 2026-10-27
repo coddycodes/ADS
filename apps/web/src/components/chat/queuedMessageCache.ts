@@ -1,4 +1,4 @@
-import type { MessageId } from "@bibcode/contracts";
+import type { MessageId } from "@coddy/contracts";
 import type { ComposerAttachment } from "../../composerDraftStore";
 
 interface QueuedMessageFiles {

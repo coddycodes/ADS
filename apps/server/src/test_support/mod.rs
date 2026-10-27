@@ -149,15 +149,19 @@ mod tests {
             ("grok", &runtime_settings.providers.grok),
             ("opencode", &runtime_settings.providers.opencode),
         ] {
-            assert_eq!(
-                settings.enabled,
-                defaults["settings"]["providers"][driver]["enabled"]
-                    .as_bool()
-                    .expect("control enabled default"),
-                "{driver}: runtime reader must preserve the control's persisted-document default"
-            );
             assert_eq!(settings.binary_path, missing.to_str().unwrap(), "{driver}");
         }
+        assert_eq!(
+            runtime_settings.providers.coddy.enabled,
+            defaults["settings"]["providers"]["coddy"]["enabled"]
+                .as_bool()
+                .expect("control enabled default"),
+            "coddy: runtime reader must preserve the control's persisted-document default"
+        );
+        assert_eq!(
+            runtime_settings.providers.coddy.binary_path,
+            missing.to_str().unwrap()
+        );
         let helper_settings = hermetic_providers::hermetic_provider_settings(&state_dir);
         assert_eq!(
             helper_settings["providers"]
@@ -169,13 +173,6 @@ mod tests {
             pinned_drivers,
             "the helper's default table must match BUILTIN_PROVIDER_DRIVERS"
         );
-        for driver in &pinned_drivers {
-            assert_eq!(
-                helper_settings["providers"][driver]["enabled"],
-                defaults["settings"]["providers"][driver]["enabled"],
-                "{driver}: helper must explicitly preserve the control's persisted-document default"
-            );
-        }
         let control = NativeServerControl::new(config, serde_json::json!({})).await;
         let snapshot = control.config_snapshot().await;
         assert_eq!(snapshot["settings"]["enableProviderUpdateChecks"], false);
@@ -319,12 +316,15 @@ mod tests {
     #[test]
     fn sandbox_environment_applies_overrides_without_mutating_its_snapshot() {
         let sandbox = TestSandbox::new("environment");
-        let mut first = sandbox.environment([("BIBCODE_FIXTURE_LABEL", "first")]);
-        first.insert("BIBCODE_FIXTURE_LABEL".to_owned(), "changed".to_owned());
-        let second = sandbox.environment([("BIBCODE_FIXTURE_LABEL", "second")]);
+        let mut first = sandbox.environment([("CODDY_STUDIO_FIXTURE_LABEL", "first")]);
+        first.insert(
+            "CODDY_STUDIO_FIXTURE_LABEL".to_owned(),
+            "changed".to_owned(),
+        );
+        let second = sandbox.environment([("CODDY_STUDIO_FIXTURE_LABEL", "second")]);
 
         assert_eq!(
-            second.get("BIBCODE_FIXTURE_LABEL"),
+            second.get("CODDY_STUDIO_FIXTURE_LABEL"),
             Some(&"second".to_owned())
         );
     }

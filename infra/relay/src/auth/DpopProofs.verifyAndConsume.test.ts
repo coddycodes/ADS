@@ -7,7 +7,7 @@ import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
   type DpopPublicJwk,
-} from "@bibcode/shared/dpop";
+} from "@coddy/shared/dpop";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";

@@ -62,10 +62,10 @@ const expectSafeFrontendApiRejection = (frontendApi: string, expectedHostname?: 
 describe("Clerk relay auth", () => {
   it("derives a custom Frontend API hostname from a Clerk publishable key", () => {
     expect(
-      clerkFrontendApiHostnameFromPublishableKey(clerkPublishableKey("clerk.bibcode.codes")),
-    ).toBe("clerk.bibcode.codes");
-    expect(clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey("clerk.bibcode.codes"))).toBe(
-      "https://clerk.bibcode.codes",
+      clerkFrontendApiHostnameFromPublishableKey(clerkPublishableKey("clerk.coddy.id")),
+    ).toBe("clerk.coddy.id");
+    expect(clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey("clerk.coddy.id"))).toBe(
+      "https://clerk.coddy.id",
     );
     expect(
       clerkFrontendApiHostnameFromPublishableKey(
@@ -90,7 +90,7 @@ describe("Clerk relay auth", () => {
 
   it("reports semantic frontend API failures without inventing a cause", () => {
     const emptyError = captureError(() => clerkFrontendApiUrlFromPublishableKey("pk_test_"));
-    const pathFrontendApi = "clerk.bibcode.codes/path";
+    const pathFrontendApi = "clerk.coddy.id/path";
     const pathError = captureError(() =>
       clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey(pathFrontendApi)),
     );
@@ -106,7 +106,7 @@ describe("Clerk relay auth", () => {
     expect(pathError).toBeInstanceOf(ClerkPublishableKeyFrontendApiError);
     expect(pathError).toMatchObject({
       keyPrefix: "pk_test",
-      hostname: "clerk.bibcode.codes",
+      hostname: "clerk.coddy.id",
       reason: "contains-path",
     });
     expect(pathError).not.toHaveProperty("frontendApi");
@@ -138,43 +138,43 @@ describe("Clerk relay auth", () => {
 
   it("rejects hidden characters that URL parsing would remove from allowed-looking hosts", () => {
     const normalizedCases = [
-      ["clerk.\u00adbibcode.codes", "clerk.bibcode.codes"],
-      ["clerk.\tbibcode.codes", "clerk.bibcode.codes"],
-      ["clerk.\rbibcode.codes", "clerk.bibcode.codes"],
-      ["clerk.\nbibcode.codes", "clerk.bibcode.codes"],
+      ["clerk.\u00adcoddy.id", "clerk.coddy.id"],
+      ["clerk.\tcoddy.id", "clerk.coddy.id"],
+      ["clerk.\rcoddy.id", "clerk.coddy.id"],
+      ["clerk.\ncoddy.id", "clerk.coddy.id"],
     ] as const;
     for (const [frontendApi, normalizedHostname] of normalizedCases) {
       expectSafeFrontendApiRejection(frontendApi, normalizedHostname);
     }
 
-    expectSafeFrontendApiRejection("clerk.\0bibcode.codes");
+    expectSafeFrontendApiRejection("clerk.\0coddy.id");
   });
 
   it("rejects Unicode, IDNA, and ASCII host representations that are not canonical", () => {
     const normalizedCases = [
       ["\u00e9xample.clerk.accounts.dev", "xn--xample-9ua.clerk.accounts.dev"],
       ["fa\u00df.clerk.accounts.com", "xn--fa-hia.clerk.accounts.com"],
-      ["CLERK.BIBCODE.CODES", "clerk.bibcode.codes"],
-      ["%63lerk.bibcode.codes", "clerk.bibcode.codes"],
+      ["CLERK.CODDY_STUDIO.CODES", "clerk.coddy.id"],
+      ["%63lerk.coddy.id", "clerk.coddy.id"],
       ["0x7f.0.0.1", "127.0.0.1"],
     ] as const;
     for (const [frontendApi, normalizedHostname] of normalizedCases) {
       expectSafeFrontendApiRejection(frontendApi, normalizedHostname);
     }
 
-    expectSafeFrontendApiRejection("clerk.\u00a0bibcode.codes");
+    expectSafeFrontendApiRejection("clerk.\u00a0coddy.id");
     expectSafeFrontendApiRejection("clerk.xn--xample-9ua.accounts.dev");
     expectSafeFrontendApiRejection("xn--a.clerk.accounts.dev");
-    expectSafeFrontendApiRejection("clerk.bibcode.codes.");
+    expectSafeFrontendApiRejection("clerk.coddy.id.");
   });
 
   it("retains only a safe hostname from rejected secret-bearing URL components", () => {
     const cases = [
-      ["clerk.bibcode.codes/path-secret", "path-secret"],
-      ["user-secret@clerk.bibcode.codes", "user-secret"],
-      ["clerk.bibcode.codes?token=query-secret", "query-secret"],
-      ["clerk.bibcode.codes#fragment-secret", "fragment-secret"],
-      ["clerk.bibcode.codes:8443", "8443"],
+      ["clerk.coddy.id/path-secret", "path-secret"],
+      ["user-secret@clerk.coddy.id", "user-secret"],
+      ["clerk.coddy.id?token=query-secret", "query-secret"],
+      ["clerk.coddy.id#fragment-secret", "fragment-secret"],
+      ["clerk.coddy.id:8443", "8443"],
     ] as const;
     for (const [frontendApi, secret] of cases) {
       const error = captureError(() =>
@@ -183,7 +183,7 @@ describe("Clerk relay auth", () => {
 
       expect(error).toBeInstanceOf(ClerkPublishableKeyFrontendApiError);
       expect(error).toMatchObject({
-        hostname: "clerk.bibcode.codes",
+        hostname: "clerk.coddy.id",
         reason: "contains-path",
       });
       expect(error).not.toHaveProperty("frontendApi");
@@ -224,14 +224,14 @@ describe("Clerk relay auth", () => {
   it("allows standard Clerk hosts and an exact configured custom hostname", () => {
     expect(isAllowedClerkFrontendApiHostname("example.clerk.accounts.dev", null)).toBe(true);
     expect(isAllowedClerkFrontendApiHostname("example.clerk.accounts.com", null)).toBe(true);
-    expect(isAllowedClerkFrontendApiHostname("clerk.bibcode.codes", "clerk.bibcode.codes")).toBe(
+    expect(isAllowedClerkFrontendApiHostname("clerk.coddy.id", "clerk.coddy.id")).toBe(
       true,
     );
-    expect(isAllowedClerkFrontendApiHostname("attacker.example", "clerk.bibcode.codes")).toBe(
+    expect(isAllowedClerkFrontendApiHostname("attacker.example", "clerk.coddy.id")).toBe(
       false,
     );
     expect(
-      isAllowedClerkFrontendApiHostname("nested.clerk.bibcode.codes", "clerk.bibcode.codes"),
+      isAllowedClerkFrontendApiHostname("nested.clerk.coddy.id", "clerk.coddy.id"),
     ).toBe(false);
   });
 

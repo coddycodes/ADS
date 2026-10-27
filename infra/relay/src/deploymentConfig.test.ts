@@ -67,11 +67,11 @@ describe("relayOwnsManagedEndpointZone", () => {
 
 describe("relayResourceNameForStage", () => {
   it("isolates production and personal stages", () => {
-    expect(relayResourceNameForStage("bibcode-relay-traces", "prod")).toBe(
-      "bibcode-relay-traces-prod",
+    expect(relayResourceNameForStage("coddy-studio-relay-traces", "prod")).toBe(
+      "coddy-studio-relay-traces-prod",
     );
-    expect(relayResourceNameForStage("bibcode-relay-traces", "dev_julius")).toBe(
-      "bibcode-relay-traces-dev-julius",
+    expect(relayResourceNameForStage("coddy-studio-relay-traces", "dev_julius")).toBe(
+      "coddy-studio-relay-traces-dev-julius",
     );
   });
 });
@@ -86,11 +86,11 @@ describe("managed endpoint names", () => {
     expect(managedEndpointHostname("dev_julius", ".example.com.", hash)).toBe(
       "dev-julius-abcdef0123456789.example.com",
     );
-    expect(managedEndpointHostname("prod", "bibcoderelay.com", hash)).toBe(
-      "prod-abcdef0123456789.bibcoderelay.com",
+    expect(managedEndpointHostname("prod", "coddy-studio-relay.com", hash)).toBe(
+      "prod-abcdef0123456789.coddy-studio-relay.com",
     );
     expect(managedEndpointTunnelName("dev_julius", hash)).toBe(
-      "bibcoderelay-managedendpoint-dev-julius-abcdef0123456789",
+      "coddy-studio-relay-managedendpoint-dev-julius-abcdef0123456789",
     );
   });
 
@@ -125,11 +125,11 @@ describe("managed endpoint names", () => {
 
 describe("managedEndpointPreviewHostnames", () => {
   it("appends -p1 … -p4 to the environment label in the same zone", () => {
-    expect(managedEndpointPreviewHostnames("dev-julius-0123456789abcdef.bibcode.test")).toEqual([
-      "dev-julius-0123456789abcdef-p1.bibcode.test",
-      "dev-julius-0123456789abcdef-p2.bibcode.test",
-      "dev-julius-0123456789abcdef-p3.bibcode.test",
-      "dev-julius-0123456789abcdef-p4.bibcode.test",
+    expect(managedEndpointPreviewHostnames("dev-julius-0123456789abcdef.coddy.test")).toEqual([
+      "dev-julius-0123456789abcdef-p1.coddy.test",
+      "dev-julius-0123456789abcdef-p2.coddy.test",
+      "dev-julius-0123456789abcdef-p3.coddy.test",
+      "dev-julius-0123456789abcdef-p4.coddy.test",
     ]);
   });
 
@@ -139,17 +139,17 @@ describe("managedEndpointPreviewHostnames", () => {
     const sixtyOne = `${"s".repeat(44)}-${hash}`;
     expect(sixty).toHaveLength(60);
     expect(sixtyOne).toHaveLength(61);
-    const whole = [1, 2, 3, 4].map((slot) => `${sixty}-p${slot}.bibcode.test`);
-    expect(managedEndpointPreviewHostnames(`${sixty}.bibcode.test`)).toEqual(whole);
-    expect(managedEndpointPreviewHostnames(`${sixtyOne}.bibcode.test`)).toEqual(whole);
+    const whole = [1, 2, 3, 4].map((slot) => `${sixty}-p${slot}.coddy.test`);
+    expect(managedEndpointPreviewHostnames(`${sixty}.coddy.test`)).toEqual(whole);
+    expect(managedEndpointPreviewHostnames(`${sixtyOne}.coddy.test`)).toEqual(whole);
     expect(whole[0]!.split(".")[0]).toHaveLength(63);
   });
 
   it("shortens a full-length environment label to 63 characters", () => {
-    const hostname = managedEndpointHostname("s".repeat(80), "bibcode.test", "0123456789abcdef");
+    const hostname = managedEndpointHostname("s".repeat(80), "coddy.test", "0123456789abcdef");
     expect(hostname.split(".")[0]).toHaveLength(63);
     expect(managedEndpointPreviewHostnames(hostname)).toEqual(
-      [1, 2, 3, 4].map((slot) => `${"s".repeat(43)}-0123456789abcdef-p${slot}.bibcode.test`),
+      [1, 2, 3, 4].map((slot) => `${"s".repeat(43)}-0123456789abcdef-p${slot}.coddy.test`),
     );
   });
 });

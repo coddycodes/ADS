@@ -1,4 +1,4 @@
-import type { PullRequestsContext, PullRequestsListRow } from "@bibcode/contracts";
+import type { PullRequestsContext, PullRequestsListRow } from "@coddy/contracts";
 export const context: Extract<PullRequestsContext, { status: "available" }> = {
   status: "available",
   provider: "github",

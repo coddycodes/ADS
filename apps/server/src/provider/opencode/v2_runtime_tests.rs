@@ -64,13 +64,13 @@ fn exchange(scenario: &str, method: &str, path_suffix: &str) -> (u16, Value) {
 
 enum Step {
     Send(Value),
-    /// Wait until BiBCode replies to an ask, or interrupts.
+    /// Wait until Coddy Studio replies to an ask, or interrupts.
     AwaitReply,
 }
 
 /// Replays one captured scenario. The event stream opens with `server.connected`, waits for the
-/// prompt, then sends the captured events, pausing after a permission ask or a form until BiBCode
-/// replies, and after the first text delta of the interrupt scenario until BiBCode interrupts.
+/// prompt, then sends the captured events, pausing after a permission ask or a form until Coddy Studio
+/// replies, and after the first text delta of the interrupt scenario until Coddy Studio interrupts.
 struct Replay {
     scenario: &'static str,
     root: String,
@@ -106,13 +106,13 @@ struct Replay {
     /// A revert was committed: message lists answer the scenario's last capture, not its first.
     reverted: AtomicBool,
     /// Pending asks are answered right after their first listing, as in an OpenCode terminal
-    /// while BiBCode resumes: later listings are empty.
+    /// while Coddy Studio resumes: later listings are empty.
     answer_asks_after_first_list: AtomicBool,
     /// `/api/session/active` never answers.
     stall_active: AtomicBool,
     /// Cancelling a form (`DELETE /api/session/{id}/form/{form}`) never answers.
     stall_form_cancel: AtomicBool,
-    /// Forms the root session's form list also holds, as if created while BiBCode was away.
+    /// Forms the root session's form list also holds, as if created while Coddy Studio was away.
     extra_forms: StdMutex<Vec<Value>>,
     /// How many more permission and form list reads answer HTTP 500.
     failing_ask_lists: std::sync::atomic::AtomicUsize,
@@ -153,7 +153,7 @@ async fn record(
         && path == format!("/api/session/{}", replay.root)
         && let Some(metadata) = body.get("metadata").filter(|metadata| !metadata.is_null())
     {
-        let finishing = metadata.pointer("/bibcode/rewind/finished") == Some(&json!(true));
+        let finishing = metadata.pointer("/coddy-studio/rewind/finished") == Some(&json!(true));
         if finishing
             && replay
                 .fail_next_finished_record
@@ -765,7 +765,7 @@ async fn a_shell_permission_is_answered_on_the_asking_session() {
     let opened = wait_for(&runtime, "request.opened").await;
     assert_eq!(
         opened.payload,
-        json!({ "requestType": "exec_command_approval", "detail": "shell: echo bibcode-v2" })
+        json!({ "requestType": "exec_command_approval", "detail": "shell: echo coddy-studio-v2" })
     );
     let request_id = opened.request_id.clone().expect("request id");
     replay.fail_next_reply.store(true, Ordering::SeqCst);
@@ -844,7 +844,7 @@ async fn a_background_result_is_reported_as_a_turn_opencode_started() {
     assert_eq!(
         started.len(),
         2,
-        "BiBCode's turn and OpenCode's: {events:#?}"
+        "Coddy Studio's turn and OpenCode's: {events:#?}"
     );
     assert_eq!(started[0].turn_id.as_deref(), Some(first.as_str()));
     assert_eq!(started[1].turn_id, completed[1].turn_id);
@@ -898,10 +898,14 @@ async fn delivery_lookup_mcp_registration_variants_and_selection_use_v2_routes()
     let (endpoint, replay) = serve("hello").await;
     let runtime = v2_runtime(&endpoint);
     runtime
-        .add_mcp_server("bibcode", "http://127.0.0.1:9/mcp", "Bearer <REDACTED>")
+        .add_mcp_server(
+            "coddy-studio",
+            "http://127.0.0.1:9/mcp",
+            "Bearer <REDACTED>",
+        )
         .await
         .expect("MCP registration");
-    let mcp = replay.requests_to("/api/experimental/mcp/bibcode");
+    let mcp = replay.requests_to("/api/experimental/mcp/coddy-studio");
     assert!(
         mcp[0]
             .1
@@ -960,7 +964,7 @@ async fn resume_falls_back_to_a_new_session_only_when_opencode_lost_it() {
     assert_eq!(
         replay.requests_to(&root_suffix)[0].2["permissions"],
         json!(super::v2::permission_rules("approval-required")),
-        "a resumed session gets the permission rules of BiBCode's runtime mode at once"
+        "a resumed session gets the permission rules of Coddy Studio's runtime mode at once"
     );
     runtime
         .send_turn(Some("SAY_HELLO please"), Vec::new(), None)
@@ -974,7 +978,7 @@ async fn resume_falls_back_to_a_new_session_only_when_opencode_lost_it() {
     assert_eq!(
         replay.requests_to("/model")[0].2,
         json!({ "model": { "providerID": "mock", "id": "mock-model" } }),
-        "a resumed session is told BiBCode's model"
+        "a resumed session is told Coddy Studio's model"
     );
     assert_eq!(
         replay.requests_to(&root_suffix).len(),
@@ -1074,20 +1078,20 @@ async fn the_driver_speaks_v2_to_an_opencode_2_server_url() {
 /// Drives a real OpenCode 2 server through a text turn, a shell permission and a question form.
 /// Run it against a server whose default model is a scripted endpoint (no provider credits), as
 /// in the capture harness described in the OpenCode V2 client design:
-/// `BIBCODE_OPENCODE_V2_LIVE=http://127.0.0.1:<port> BIBCODE_OPENCODE_V2_PASSWORD=<password>
-/// BIBCODE_OPENCODE_V2_DIRECTORY=<dir> BIBCODE_OPENCODE_V2_MODEL=<provider/model>
-/// cargo test -p bibcode-server --lib -- --ignored live_opencode_2`.
+/// `CODDY_STUDIO_OPENCODE_V2_LIVE=http://127.0.0.1:<port> CODDY_STUDIO_OPENCODE_V2_PASSWORD=<password>
+/// CODDY_STUDIO_OPENCODE_V2_DIRECTORY=<dir> CODDY_STUDIO_OPENCODE_V2_MODEL=<provider/model>
+/// cargo test -p coddy-studio-server --lib -- --ignored live_opencode_2`.
 #[tokio::test]
 #[ignore = "needs a live OpenCode 2 server; see the doc comment"]
 async fn live_opencode_2_round_trip() {
     let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
     let runtime =
         OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
-            &var("BIBCODE_OPENCODE_V2_LIVE"),
+            &var("CODDY_STUDIO_OPENCODE_V2_LIVE"),
             "live-thread",
-            &var("BIBCODE_OPENCODE_V2_DIRECTORY"),
-            Some(&var("BIBCODE_OPENCODE_V2_MODEL")),
-            Some(&var("BIBCODE_OPENCODE_V2_PASSWORD")),
+            &var("CODDY_STUDIO_OPENCODE_V2_DIRECTORY"),
+            Some(&var("CODDY_STUDIO_OPENCODE_V2_MODEL")),
+            Some(&var("CODDY_STUDIO_OPENCODE_V2_PASSWORD")),
             None,
             0,
             true,
@@ -1214,7 +1218,7 @@ async fn a_resumed_session_can_answer_the_asks_it_was_waiting_on() {
     }
 }
 
-/// An ask OpenCode created while BiBCode was away is shown after a resume, once, though the event
+/// An ask OpenCode created while Coddy Studio was away is shown after a resume, once, though the event
 /// stream does not replay it, and it can be answered.
 #[tokio::test]
 async fn a_resumed_session_shows_the_asks_it_was_waiting_on() {
@@ -1288,7 +1292,7 @@ async fn an_ask_answered_while_resuming_is_not_shown() {
     }
 }
 
-/// A session OpenCode kept executing while BiBCode was away is reported as a running turn on
+/// A session OpenCode kept executing while Coddy Studio was away is reported as a running turn on
 /// resume, so its completion is not lost.
 #[tokio::test]
 async fn a_resumed_session_that_is_still_executing_gets_a_turn() {
@@ -1385,7 +1389,7 @@ async fn unreadable_ask_lists_on_resume_are_read_again() {
     runtime.stop().await.expect("stop");
 }
 
-/// A form BiBCode cannot show that OpenCode raised while BiBCode was away is handled as a live one
+/// A form Coddy Studio cannot show that OpenCode raised while Coddy Studio was away is handled as a live one
 /// is: after the resume it is cancelled (once, though the live event for it also arrives), the
 /// chat is told once, and the session goes on.
 #[tokio::test]
@@ -1435,7 +1439,7 @@ async fn a_form_raised_while_away_that_cannot_be_shown_is_cancelled_after_resume
     runtime.stop().await.expect("stop");
 }
 
-/// A form BiBCode cannot show is cancelled off the event stream, so a cancel that never answers
+/// A form Coddy Studio cannot show is cancelled off the event stream, so a cancel that never answers
 /// does not hold later events: a prompt's turn completes, and Stop ends one.
 #[tokio::test]
 async fn a_stalled_form_cancel_does_not_hold_the_event_stream() {
@@ -1444,7 +1448,7 @@ async fn a_stalled_form_cancel_does_not_hold_the_event_stream() {
         replay.stall_form_cancel.store(true, Ordering::SeqCst);
         let runtime = v2_runtime(&endpoint);
         runtime.start().await.expect("session starts");
-        // A free-text field: BiBCode offers only choices, so it cancels the form.
+        // A free-text field: Coddy Studio offers only choices, so it cancels the form.
         let unanswerable = json!({ "type": "form.created", "data": { "form": {
             "id": "frm_unanswerable", "sessionID": replay.root, "title": "Name",
             "fields": [{ "key": "name", "type": "string" }]
@@ -1562,11 +1566,11 @@ async fn live_opencode_2_background_child() {
     let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
     let runtime =
         OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
-            &var("BIBCODE_OPENCODE_V2_LIVE"),
+            &var("CODDY_STUDIO_OPENCODE_V2_LIVE"),
             "live-thread",
-            &var("BIBCODE_OPENCODE_V2_DIRECTORY"),
-            Some(&var("BIBCODE_OPENCODE_V2_MODEL")),
-            Some(&var("BIBCODE_OPENCODE_V2_PASSWORD")),
+            &var("CODDY_STUDIO_OPENCODE_V2_DIRECTORY"),
+            Some(&var("CODDY_STUDIO_OPENCODE_V2_MODEL")),
+            Some(&var("CODDY_STUDIO_OPENCODE_V2_PASSWORD")),
             None,
             0,
             true,
@@ -1745,7 +1749,7 @@ async fn rollback_reverts_from_the_start_of_the_nth_most_recent_turn() {
     assert!(lookups[0].1.contains("limit=200"), "{}", lookups[0].1);
     assert_eq!(
         replay.requests_to("/revert/stage")[0].2,
-        json!({ "messageID": "msg_bibcodecapture1792090050661", "files": false })
+        json!({ "messageID": "msg_coddystudiocapture1792090050661", "files": false })
     );
     assert_eq!(replay.requests_to("/revert/commit").len(), 1);
     assert!(replay.requests_to("/revert").is_empty());
@@ -1837,7 +1841,7 @@ async fn a_long_rewind_reads_bounded_pages() {
     assert!(lookup.1.contains("limit=200"), "{}", lookup.1);
     assert_eq!(
         replay.requests_to("/revert/stage")[0].2["messageID"],
-        "msg_bibcodecapture1792090050661"
+        "msg_coddystudiocapture1792090050661"
     );
     runtime.stop().await.expect("stop");
 }
@@ -1943,7 +1947,7 @@ async fn rewinding_a_turn_opencode_started_keeps_the_prompt_turn() {
         .expect("rewinds");
     assert_eq!(
         replay.requests_to("/revert/stage")[0].2["messageID"],
-        "msg_bibcodecapture1792090128476"
+        "msg_coddystudiocapture1792090128476"
     );
     assert!(
         replay
@@ -2018,8 +2022,8 @@ async fn an_unknown_rewind_outcome_survives_a_restart() {
         let metadata = replay.metadata.lock().unwrap().clone();
         assert_eq!(metadata["other"], "kept");
         assert_eq!(
-            metadata["bibcode"]["rewind"]["unsettled"]["target"],
-            "msg_bibcodecapture1792090050661"
+            metadata["coddy-studio"]["rewind"]["unsettled"]["target"],
+            "msg_coddystudiocapture1792090050661"
         );
     }
 
@@ -2047,8 +2051,8 @@ async fn an_unknown_rewind_outcome_survives_a_restart() {
             metadata["other"], "kept",
             "the rest of the metadata is kept"
         );
-        assert_eq!(metadata["bibcode"]["rewind"]["finished"], true);
-        assert_eq!(metadata["bibcode"]["rewind"]["key"], "rewind-key");
+        assert_eq!(metadata["coddy-studio"]["rewind"]["finished"], true);
+        assert_eq!(metadata["coddy-studio"]["rewind"]["key"], "rewind-key");
     }
     runtime.stop().await.expect("stop");
 }
@@ -2078,7 +2082,7 @@ async fn a_revert_still_staged_is_cleared_not_counted() {
     runtime.stop().await.expect("stop");
 }
 
-/// A rewind that succeeded but whose completion BiBCode never recorded (it stopped first) is
+/// A rewind that succeeded but whose completion Coddy Studio never recorded (it stopped first) is
 /// retried from the same transcript, so with the same key: after a restart it drops nothing more.
 #[tokio::test]
 async fn a_retried_rewind_after_a_restart_is_applied_once() {
@@ -2091,7 +2095,7 @@ async fn a_retried_rewind_after_a_restart_is_applied_once() {
         .expect("rewinds");
     runtime.stop().await.expect("stop");
 
-    // A new runtime, as after a restart; BiBCode retries the same checkpoint revert.
+    // A new runtime, as after a restart; Coddy Studio retries the same checkpoint revert.
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
     assert!(
@@ -2108,7 +2112,7 @@ async fn a_retried_rewind_after_a_restart_is_applied_once() {
         "no further turns are dropped"
     );
 
-    // A rewind from another transcript (BiBCode recorded the first one) starts afresh.
+    // A rewind from another transcript (Coddy Studio recorded the first one) starts afresh.
     runtime
         .rollback_thread(1, "transcript-b")
         .await
@@ -2118,7 +2122,7 @@ async fn a_retried_rewind_after_a_restart_is_applied_once() {
 }
 
 /// Marking the rewind finished may lose its answer, applied or not. A mark that landed is read
-/// back and the rewind succeeds, so BiBCode records it; one that did not fails the rewind, holds
+/// back and the rewind succeeds, so Coddy Studio records it; one that did not fails the rewind, holds
 /// prompts, and its retry with the same key after a restart drops nothing more. Either way no
 /// later runtime holds prompts once the rewind succeeded.
 #[tokio::test]
@@ -2173,7 +2177,7 @@ async fn a_keyless_rewind_record_is_continued_not_restarted() {
         .metadata
         .lock()
         .unwrap()
-        .clone_from(&json!({ "bibcode": { "rewind": { "dropped": 1 } } }));
+        .clone_from(&json!({ "coddy-studio": { "rewind": { "dropped": 1 } } }));
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
     assert!(runtime.has_unfinished_rewind().await);

@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 use super::gateway::proxy::{PRINCIPAL_CHECK_INTERVAL, PrincipalCheck};
 use crate::{rpc::RpcStreamChunk, signed_token::now_millis};
 
-/// Open tunnels per BiBCode session; one page rarely holds more than a dozen connections.
+/// Open tunnels per Coddy Studio session; one page rarely holds more than a dozen connections.
 pub const MAX_TUNNELS_PER_SESSION: usize = 64;
 /// Open tunnels across every session of this server.
 pub const MAX_TUNNELS: usize = 256;
@@ -127,7 +127,7 @@ impl PreviewTunnels {
         }
     }
 
-    /// Opens a tunnel to `port` for BiBCode session `session_id` and returns its stream.
+    /// Opens a tunnel to `port` for Coddy Studio session `session_id` and returns its stream.
     pub fn open(
         &self,
         port: u16,

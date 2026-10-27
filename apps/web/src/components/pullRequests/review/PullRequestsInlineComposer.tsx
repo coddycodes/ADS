@@ -1,5 +1,5 @@
 import { reconcilePendingReview } from "./pendingReview.logic";
-import type { PullRequestsPermission, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsPermission, ScopedProjectRef } from "@coddy/contracts";
 import { useId, useMemo, useRef, useState } from "react";
 import { usePullRequestsStore, type PendingInlineComment } from "../../../pullRequestsStore";
 import { Button } from "../../ui/button";

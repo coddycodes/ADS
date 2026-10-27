@@ -17,7 +17,7 @@ export const ProfilerFinding = Schema.Struct({
   title: Schema.String,
   summary: Schema.String,
   state: ProfilerFindingState,
-  /** The BiBCode versions that recorded its first and latest occurrence; absent before 0.9.3. */
+  /** The Coddy Studio versions that recorded its first and latest occurrence; absent before 0.9.3. */
   firstVersion: Schema.optionalKey(Schema.String),
   lastVersion: Schema.optionalKey(Schema.String),
 });
@@ -28,7 +28,7 @@ const CapabilityState = Schema.Literals(["available", "unavailable", "disabled"]
 export const ProfilerStatus = Schema.Struct({
   enabled: Schema.Boolean,
   /**
-   * The BiBCode version of the latest run that used this profiler folder, whether or not it
+   * The Coddy Studio version of the latest run that used this profiler folder, whether or not it
    * recorded. `session.start` events and findings name the versions that recorded.
    */
   version: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -74,7 +74,7 @@ export const ProfilerClientBatch = Schema.Struct({
   stalls: Schema.Struct({ count: Schema.Number, totalMs: Schema.Number, maxMs: Schema.Number }),
   interactions: Schema.Struct({ count: Schema.Number, maxMs: Schema.Number }),
   jsHeapBytes: Schema.NullOr(Schema.Number),
-  /** The client's own BiBCode version, which can differ from the server's. */
+  /** The client's own Coddy Studio version, which can differ from the server's. */
   appVersion: Schema.optionalKey(Schema.String),
 });
 export type ProfilerClientBatch = typeof ProfilerClientBatch.Type;

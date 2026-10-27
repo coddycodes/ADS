@@ -1,4 +1,4 @@
-import { type TurnDelivery } from "@bibcode/contracts";
+import { type TurnDelivery } from "@coddy/contracts";
 
 import { deliveryOffersRetry } from "../ChatView.logic";
 import { Button } from "../ui/button";

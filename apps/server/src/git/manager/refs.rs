@@ -847,7 +847,7 @@ mod tests {
         {
             let repository = repository_with_one_commit_in(
                 tempfile::Builder::new()
-                    .prefix("bibcode-refs-alias")
+                    .prefix("coddy-studio-refs-alias")
                     .tempdir_in(alias_root)
                     .expect("temporary repository under the alias root"),
             );

@@ -4,7 +4,7 @@ import {
   hasSpecificPierreIconForFileName,
   resolvePierreIconForEntry,
   syntheticFileNameForLanguageId,
-  BIBCODE_PIERRE_ICONS,
+  CODDY_STUDIO_PIERRE_ICONS,
 } from "./pierre-icons";
 
 describe("Pierre file icons", () => {
@@ -14,32 +14,32 @@ describe("Pierre file icons", () => {
     assert.equal(resolvePierreIconForEntry("vite.config.ts", "file")?.token, "vite");
   });
 
-  it("extends Pierre with BiBCode-specific exact filename icons", () => {
+  it("extends Pierre with Coddy Studio-specific exact filename icons", () => {
     assert.equal(
       resolvePierreIconForEntry("package.json", "file")?.name,
-      "bibcode-file-icon-package-json",
+      "coddy-studio-file-icon-package-json",
     );
     assert.equal(
       resolvePierreIconForEntry("config/tsconfig.json", "file")?.name,
-      "bibcode-file-icon-tsconfig",
+      "coddy-studio-file-icon-tsconfig",
     );
-    assert.equal(resolvePierreIconForEntry("AGENTS.md", "file")?.name, "bibcode-file-icon-agents");
-    assert.equal(resolvePierreIconForEntry("CLAUDE.md", "file")?.name, "bibcode-file-icon-claude");
-    assert.equal(resolvePierreIconForEntry("README.md", "file")?.name, "bibcode-file-icon-readme");
+    assert.equal(resolvePierreIconForEntry("AGENTS.md", "file")?.name, "coddy-studio-file-icon-agents");
+    assert.equal(resolvePierreIconForEntry("CLAUDE.md", "file")?.name, "coddy-studio-file-icon-claude");
+    assert.equal(resolvePierreIconForEntry("README.md", "file")?.name, "coddy-studio-file-icon-readme");
     assert.equal(
       resolvePierreIconForEntry("pnpm-lock.yaml", "file")?.name,
-      "bibcode-file-icon-pnpm",
+      "coddy-studio-file-icon-pnpm",
     );
     assert.equal(
       resolvePierreIconForEntry("pnpm-workspace.yaml", "file")?.name,
-      "bibcode-file-icon-pnpm",
+      "coddy-studio-file-icon-pnpm",
     );
   });
 
   it("ships every custom icon referenced by the extended resolver", () => {
-    const customIconNames = new Set(Object.values(BIBCODE_PIERRE_ICONS.byFileName));
+    const customIconNames = new Set(Object.values(CODDY_STUDIO_PIERRE_ICONS.byFileName));
     for (const iconName of customIconNames) {
-      assert.include(BIBCODE_PIERRE_ICONS.spriteSheet, `id="${iconName}"`);
+      assert.include(CODDY_STUDIO_PIERRE_ICONS.spriteSheet, `id="${iconName}"`);
     }
   });
 

@@ -1,21 +1,21 @@
-# BiBCode Connect Relay
+# Coddy Connect Relay
 
 > [!WARNING]
-> BiBCode Connect is currently in private beta. Join the waitlist in the app under Settings > BiBCode Connect.
+> Coddy Connect is currently in private beta. Join the waitlist in the app under Settings > Coddy Connect.
 
-The relay is the hosted control plane for BiBCode Connect. It helps clients discover and connect to
+The relay is the hosted control plane for Coddy Connect. It helps clients discover and connect to
 remote environments and manages the cloud-side records needed for those connections.
 
-The relay is intentionally not in the hot path for normal BiBCode traffic. After a client connects,
+The relay is intentionally not in the hot path for normal Coddy Studio traffic. After a client connects,
 regular API and WebSocket traffic goes directly between that client and the selected environment.
-See the [BiBCode Connect setup](../../docs/cloud/bibcode-connect-clerk.md) for the larger
+See the [Coddy Connect setup](../../docs/cloud/coddy-connect-clerk.md) for the larger
 authentication and deployment context.
 
 ## Responsibilities
 
 The relay currently owns:
 
-- Linking BiBCode environments to a cloud account.
+- Linking Coddy Studio environments to a cloud account.
 - Provisioning and tracking managed environment endpoints.
 - Issuing short-lived credentials used to connect clients to linked environments.
 - Listing linked environments for an account.
@@ -23,7 +23,7 @@ The relay currently owns:
 
 Each managed endpoint is one Cloudflare tunnel with one hostname,
 `<stage>-<hash>.<tunnel zone>`, plus 4 preview hostnames (`<stage>-<hash>-p1` to `-p4`) that
-serve the preview gateway over BiBCode Connect. Provisioning creates a proxied CNAME and an
+serve the preview gateway over Coddy Connect. Provisioning creates a proxied CNAME and an
 ingress rule for each, so an environment uses 5 DNS records in the tunnel zone. Preview records
 are found by name rather than stored, so re-linking an environment adds any that are missing and
 deprovisioning removes them before the tunnel. See
@@ -82,7 +82,7 @@ dependencies represented at their boundary rather than mocking internal behavior
 The relay deploys through Alchemy:
 
 ```sh
-vp run --filter bibcode-relay deploy
+vp run --filter coddy-studio-relay deploy
 ```
 
 The stack provisions the Cloudflare Worker and queues, managed endpoint resources, and database
@@ -98,14 +98,14 @@ PlanetScale branch and runtime role for local development, so deploy `prod` befo
 developer stages:
 
 ```sh
-vp run --filter bibcode-relay deploy -- --stage prod
-vp run --filter bibcode-relay deploy -- --env-file .env.local
+vp run --filter coddy-studio-relay deploy -- --stage prod
+vp run --filter coddy-studio-relay deploy -- --env-file .env.local
 ```
 
 The deploy wrapper defaults personal deployments to the `dev_$USER` stage (or a `stage` value from
 the env file). The `destroy` script runs Alchemy's own CLI, which instead defaults to `live_$USER`
 and reads `$ALCHEMY_STAGE`, so always pass the stage explicitly, for example
-`vp run --filter bibcode-relay destroy -- --stage dev_$USER`. Relay custom domains apply the same
+`vp run --filter coddy-studio-relay destroy -- --stage dev_$USER`. Relay custom domains apply the same
 DNS-safe sanitization as Alchemy physical resource names, so `prod` uses
 `relay.<RELAY_API_ZONE_NAME>` and `dev_julius` uses
 `relay-dev-julius.<RELAY_API_ZONE_NAME>`. Managed environment endpoints are provisioned below
@@ -157,6 +157,6 @@ hosted web builds.
 
 See:
 
-- [BiBCode Connect Clerk Setup](../../docs/cloud/bibcode-connect-clerk.md) for Clerk keys, JWT templates, and waitlist
+- [Coddy Connect Clerk Setup](../../docs/cloud/coddy-connect-clerk.md) for Clerk keys, JWT templates, and waitlist
   setup.
 - [Remote Architecture](../../docs/architecture/remote.md) for environment, access, and endpoint flows.

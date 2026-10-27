@@ -3,15 +3,15 @@ use serde_json::{Value, json};
 
 const DEFAULT_MODEL: &str = "gpt-5.4";
 
-const BIBCODE_BROWSER_TOOL_INSTRUCTIONS: &str = r#"
+const CODDY_STUDIO_BROWSER_TOOL_INSTRUCTIONS: &str = r#"
 
-## BiBCode collaborative browser
+## Coddy Studio collaborative browser
 
-You are running inside BiBCode. The `bibcode` MCP server is the product-native collaborative browser shared with the user. When it exposes `preview_*` tools, prefer those tools for browser navigation, inspection, interaction, screenshots, and recordings.
+You are running inside Coddy Studio. The `coddy-studio` MCP server is the product-native collaborative browser shared with the user. When it exposes `preview_*` tools, prefer those tools for browser navigation, inspection, interaction, screenshots, and recordings.
 
 For browser work, first call `preview_status`. If no automation-capable preview is attached, call `preview_open` before concluding that the browser is unavailable. Then use `preview_navigate`, `preview_snapshot`, and the focused interaction tools. Prefer snapshot-provided locators over coordinates.
 
-Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the BiBCode preview tools are absent, the user explicitly requests another browser, or `preview_open` returns an explicit unsupported/unavailable error. A failed BiBCode preview tool call should be inspected and retried with corrected arguments when the error is actionable.
+Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the Coddy Studio preview tools are absent, the user explicitly requests another browser, or `preview_open` returns an explicit unsupported/unavailable error. A failed Coddy Studio preview tool call should be inspected and retried with corrected arguments when the error is actionable.
 "#;
 
 const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS: &str = r#"<collaboration_mode># Plan Mode (Conversational)
@@ -684,8 +684,8 @@ pub struct BuildTurnStartInput {
 pub fn build_initialize_params(version: &str) -> Value {
     json!({
         "clientInfo": {
-            "name": "bibcode_desktop",
-            "title": "BiBCode Desktop",
+            "name": "coddy_studio_desktop",
+            "title": "Coddy Studio Desktop",
             "version": version,
         },
         "capabilities": {
@@ -765,14 +765,14 @@ pub fn build_turn_start_params(input: &BuildTurnStartInput) -> Value {
                     format!(
                         "{}{}{}",
                         CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
-                        BIBCODE_BROWSER_TOOL_INSTRUCTIONS,
+                        CODDY_STUDIO_BROWSER_TOOL_INSTRUCTIONS,
                         "\n</collaboration_mode>"
                     )
                 } else {
                     format!(
                         "{}{}{}",
                         CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-                        BIBCODE_BROWSER_TOOL_INSTRUCTIONS,
+                        CODDY_STUDIO_BROWSER_TOOL_INSTRUCTIONS,
                         "\n</collaboration_mode>"
                     )
                 },
@@ -1128,7 +1128,7 @@ fn map_model_capabilities(model: &Value) -> Value {
     })
 }
 
-/// The labels BiBCode gives Codex's turn options. The model catalog shows them, and the refusal
+/// The labels Coddy Studio gives Codex's turn options. The model catalog shows them, and the refusal
 /// for an option shows the same label.
 pub(crate) const REASONING_EFFORT_LABEL: &str = "Reasoning";
 pub(crate) const SERVICE_TIER_LABEL: &str = "Service Tier";

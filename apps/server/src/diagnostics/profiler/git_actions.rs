@@ -29,7 +29,7 @@ const MAX_TIMES_PER_KEY: usize = 64;
 
 /// Why a stacked action failed, from the `_tag` of its wire error. Only the step itself
 /// failing (`git-failed`, `provider-failed`, `internal`) can raise the finding: a request
-/// BiBCode refused, a workspace that went away, or a client that cancelled is the protocol
+/// Coddy Studio refused, a workspace that went away, or a client that cancelled is the protocol
 /// working as designed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureReason {

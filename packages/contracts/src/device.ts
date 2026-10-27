@@ -45,7 +45,7 @@ export const DeviceImage = Schema.Struct({
   /** The AVD name or the simulator UDID. */
   id: Schema.String,
   displayName: Schema.String,
-  /** Present, and only ever `true`, when the image already runs outside BiBCode. */
+  /** Present, and only ever `true`, when the image already runs outside Coddy Studio. */
   inUseElsewhere: Schema.optionalKey(Schema.Literal(true)),
 });
 export type DeviceImage = typeof DeviceImage.Type;
@@ -172,7 +172,7 @@ export class DeviceLimitError extends Schema.TaggedError<DeviceLimitError>()("De
   message: Schema.String,
 }) {}
 
-/** The image already runs outside BiBCode, such as a simulator booted from Simulator. */
+/** The image already runs outside Coddy Studio, such as a simulator booted from Simulator. */
 export class DeviceBusyError extends Schema.TaggedError<DeviceBusyError>()("DeviceBusyError", {
   imageId: Schema.String,
   message: Schema.String,

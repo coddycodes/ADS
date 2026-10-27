@@ -102,7 +102,7 @@ function ChatRouteGlobalShortcuts() {
                 : {
                     type: "info",
                     title: "Preview is desktop-only",
-                    description: "Open BiBCode in the desktop app to use the in-app preview.",
+                    description: "Open Coddy Studio in the desktop app to use the in-app preview.",
                   },
             ),
           );

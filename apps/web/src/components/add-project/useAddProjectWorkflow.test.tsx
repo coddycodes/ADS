@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 
-import { VcsCloneStoppedError } from "@bibcode/client-runtime/state/vcs";
+import { VcsCloneStoppedError } from "@coddy/client-runtime/state/vcs";
 import {
   EnvironmentId,
   GitCloneOperationError,
   GitCommandError,
   ThreadId,
   type ProjectId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

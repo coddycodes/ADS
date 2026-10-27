@@ -2,7 +2,7 @@ import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
   DpopPublicJwk,
-} from "@bibcode/shared/dpop";
+} from "@coddy/shared/dpop";
 import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -21,7 +21,7 @@ export class BrowserDpopError extends Data.TaggedError("BrowserDpopError")<{
   readonly cause?: unknown;
 }> {}
 
-const DPOP_DATABASE_NAME = "bibcode:cloud-auth";
+const DPOP_DATABASE_NAME = "coddy-studio:cloud-auth";
 const DPOP_DATABASE_VERSION = 1;
 const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";

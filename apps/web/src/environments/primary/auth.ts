@@ -10,9 +10,9 @@ import type {
   ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
-} from "@bibcode/contracts";
-import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@bibcode/contracts";
-import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@coddy/contracts";
+import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

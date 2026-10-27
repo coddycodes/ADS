@@ -39,7 +39,7 @@ export function isThisPageHost(host: string): boolean {
 
 /** Why a browser tab served over HTTPS opens previews in a new tab instead of the panel. */
 export const HTTPS_PREVIEW_NOTICE =
-  "Previews can't show inside a BiBCode page served over HTTPS, so they open in a new tab. The desktop app shows them here.";
+  "Previews can't show inside a Coddy Studio page served over HTTPS, so they open in a new tab. The desktop app shows them here.";
 
 /**
  * Module-level handle to the preview host: the desktop's native views, or

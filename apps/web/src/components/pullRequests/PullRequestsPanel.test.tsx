@@ -2,10 +2,10 @@
 import {
   AVAILABLE_CONNECTION_STATE,
   type SupervisorConnectionState,
-} from "@bibcode/client-runtime/connection";
-import { environmentRpcKey } from "@bibcode/client-runtime/state/runtime";
-import type { PullRequestsContext, ScopedProjectRef, ServerConfig } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/client-runtime/connection";
+import { environmentRpcKey } from "@coddy/client-runtime/state/runtime";
+import type { PullRequestsContext, ScopedProjectRef, ServerConfig } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { act, useContext, useImperativeHandle, type Ref } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

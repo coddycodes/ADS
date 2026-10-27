@@ -57,7 +57,7 @@ Round 6 verification completed with the following evidence:
 - real-Git worktree catalog: 9 passed;
 - workspace-unavailable orchestration and terminal integrations: 4 passed;
 - full server library: 1,047 passed;
-- `cargo test -p bibcode-server --tests`: the 1,047 library tests and every
+- `cargo test -p coddy-studio-server --tests`: the 1,047 library tests and every
   server integration target passed, including all 97 provider-terminal cases;
 - `cargo fmt --all --check`, server all-targets Clippy with warnings denied,
   `vp check` (1,775 format and 1,309 lint files), and `vp run typecheck` (11/11)
@@ -338,19 +338,19 @@ covered by the broad repository gates below rather than a schema regeneration.
 Fix-round-2 final gates:
 
 ```text
-cargo test -p bibcode-server -j 2 -- --test-threads=1
+cargo test -p coddy-studio-server -j 2 -- --test-threads=1
   library                                             1,036 passed
   integrations before provider_terminal_supervisor      all passed
   provider_terminal_supervisor                       96 passed, 1 failed
 
 isolated known provider-terminal timeout                     1 passed
 
-cargo test -p bibcode-server -j 2 -- --test-threads=1 \
+cargo test -p coddy-studio-server -j 2 -- --test-threads=1 \
   --skip agent_activity_hung_factory_does_not_block_terminal_disable_or_later_settings_updates
   every non-skipped library/integration/doc target          passed
 
 cargo fmt --all --check                                    passed
-cargo clippy -p bibcode-server --all-targets -- -D warnings
+cargo clippy -p coddy-studio-server --all-targets -- -D warnings
                                                            passed
 vp check                              1,775 format / 1,309 lint files passed
 vp run typecheck                                         11/11 tasks passed
@@ -429,17 +429,17 @@ provider integration test proves session shutdown without deleting its thread.
 Fix-round final gates:
 
 ```text
-cargo test -p bibcode-server -j 2 -- --test-threads=1
+cargo test -p coddy-studio-server -j 2 -- --test-threads=1
   library                                              1,022 passed
   integrations before provider_terminal_supervisor       all passed
   provider_terminal_supervisor                       96 passed, 1 failed
 
-cargo test -p bibcode-server -j 2 -- --test-threads=1 \
+cargo test -p coddy-studio-server -j 2 -- --test-threads=1 \
   --skip agent_activity_hung_factory_does_not_block_terminal_disable_or_later_settings_updates
   every non-skipped library/integration/doc target        passed
 
 cargo fmt --all --check                                  passed
-cargo clippy -p bibcode-server --all-targets -- -D warnings
+cargo clippy -p coddy-studio-server --all-targets -- -D warnings
                                                          passed
 vp check                           1,775 format / 1,309 lint files passed
 vp run typecheck                                      11/11 tasks passed
@@ -619,22 +619,22 @@ the exact path, and proves authoritative recovery clears it.
 Commands run successfully after the final implementation changes:
 
 ```sh
-cargo test -p bibcode-server --lib worktree_catalog::availability::tests -- --nocapture
-cargo test -p bibcode-server --lib worktree_catalog::tests -- --nocapture
-cargo test -p bibcode-server --lib production::worktree_runtime::tests -- --nocapture
-cargo test -p bibcode-server --lib 'terminal::manager::tests::workspace_quiesce_' -- --nocapture
-cargo test -p bibcode-server --test worktree_catalog -- --nocapture
-cargo test -p bibcode-server --test production_orchestration_rpc workspace_unavailable -- --nocapture
-cargo test -p bibcode-server --test production_server_terminal_rpc workspace_unavailable -- --nocapture
-cargo test -p bibcode-server --test production_git_vcs_rpc workspace_unavailable -- --nocapture
-cargo test -p bibcode-server --test workspace_rpc workspace_unavailable -- --nocapture
-cargo test -p bibcode-server --test production_provider_runtime workspace_loss -- --nocapture
-cargo test -p bibcode-server --test rpc_wire -- --nocapture
+cargo test -p coddy-studio-server --lib worktree_catalog::availability::tests -- --nocapture
+cargo test -p coddy-studio-server --lib worktree_catalog::tests -- --nocapture
+cargo test -p coddy-studio-server --lib production::worktree_runtime::tests -- --nocapture
+cargo test -p coddy-studio-server --lib 'terminal::manager::tests::workspace_quiesce_' -- --nocapture
+cargo test -p coddy-studio-server --test worktree_catalog -- --nocapture
+cargo test -p coddy-studio-server --test production_orchestration_rpc workspace_unavailable -- --nocapture
+cargo test -p coddy-studio-server --test production_server_terminal_rpc workspace_unavailable -- --nocapture
+cargo test -p coddy-studio-server --test production_git_vcs_rpc workspace_unavailable -- --nocapture
+cargo test -p coddy-studio-server --test workspace_rpc workspace_unavailable -- --nocapture
+cargo test -p coddy-studio-server --test production_provider_runtime workspace_loss -- --nocapture
+cargo test -p coddy-studio-server --test rpc_wire -- --nocapture
 vp test run packages/contracts/src/rpcRustParity.test.ts packages/contracts/scripts/export-rust-rpc-fixtures.test.ts packages/contracts/src/rpc.test.ts packages/contracts/src/worktree.test.ts
-vp run --filter @bibcode/contracts generate:rust-rpc-fixtures
-cargo test -p bibcode-server --quiet
+vp run --filter @coddy/contracts generate:rust-rpc-fixtures
+cargo test -p coddy-studio-server --quiet
 cargo fmt --all --check
-cargo clippy -p bibcode-server --all-targets -- -D warnings
+cargo clippy -p coddy-studio-server --all-targets -- -D warnings
 vp check
 vp run typecheck
 git diff --check

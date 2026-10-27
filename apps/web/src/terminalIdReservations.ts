@@ -1,6 +1,6 @@
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
-import type { ScopedThreadRef } from "@bibcode/contracts";
-import { nextTerminalId } from "@bibcode/shared/terminalLabels";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
+import type { ScopedThreadRef } from "@coddy/contracts";
+import { nextTerminalId } from "@coddy/shared/terminalLabels";
 
 export interface TerminalIdReservation {
   readonly terminalId: string;

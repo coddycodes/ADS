@@ -1,5 +1,5 @@
-import type { ConnectionTarget } from "@bibcode/client-runtime/connection";
-import { EnvironmentId } from "@bibcode/contracts";
+import type { ConnectionTarget } from "@coddy/client-runtime/connection";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

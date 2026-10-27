@@ -146,7 +146,7 @@ fn thread_id(instance_id: &str, session_id: &str) -> String {
     format!("import:{instance_id}:{session_id}")
 }
 
-/// Native sessions that BiBCode threads other than their own import already run. Those
+/// Native sessions that Coddy Studio threads other than their own import already run. Those
 /// transcripts sit in the same homes, and a second thread resuming one would share it.
 async fn sessions_owned_by_other_threads(services: &Services) -> Result<HashSet<String>, Value> {
     let owners = services
@@ -154,7 +154,7 @@ async fn sessions_owned_by_other_threads(services: &Services) -> Result<HashSet<
         .repositories()
         .list_provider_session_owners()
         .await
-        .map_err(|_| error("BiBCode could not read its provider sessions. Try again."))?;
+        .map_err(|_| error("Coddy Studio could not read its provider sessions. Try again."))?;
     Ok(owners
         .into_iter()
         .filter(|(session_id, owner)| !is_import_of(owner, session_id))
@@ -342,7 +342,7 @@ async fn import(
             .find(|resolved| resolved.source.provider == session.provider)
         {
             Some(_) if owned.contains(&session.session_id) => {
-                Err("This session already belongs to a BiBCode thread.".to_owned())
+                Err("This session already belongs to a Coddy Studio thread.".to_owned())
             }
             Some(source) => {
                 import_session(
@@ -398,7 +398,7 @@ async fn import_session(
     let create_command_id = format!("{thread_id}:create");
     let history_command_id = format!("{thread_id}:history");
     let repositories = services.orchestration.repositories();
-    let unreadable = |_| "BiBCode could not read its threads. Try again.".to_owned();
+    let unreadable = |_| "Coddy Studio could not read its threads. Try again.".to_owned();
     let existing = repositories
         .get_thread(thread_id.clone())
         .await

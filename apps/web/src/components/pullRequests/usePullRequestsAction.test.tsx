@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { PullRequestsOperationError, type EnvironmentId } from "@bibcode/contracts";
+import { PullRequestsOperationError, type EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";

@@ -1,4 +1,4 @@
-import type { UserInputQuestion } from "@bibcode/contracts";
+import type { UserInputQuestion } from "@coddy/contracts";
 
 export interface PendingUserInputDraftAnswer {
   selectedOptionLabels?: string[];

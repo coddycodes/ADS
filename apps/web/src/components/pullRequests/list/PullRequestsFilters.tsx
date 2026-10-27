@@ -1,10 +1,10 @@
-import { resolveChangeRequestPresentationForKind } from "@bibcode/shared/sourceControl";
+import { resolveChangeRequestPresentationForKind } from "@coddy/shared/sourceControl";
 import type {
   EnvironmentId,
   PullRequestsContext,
   PullRequestsListInput,
   PullRequestsVocabularyInput,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useDebouncer } from "@tanstack/react-pacer";
 import { useMemo, useState } from "react";
 import type { PullRequestsFilters as Filters } from "../../../pullRequestsStore";

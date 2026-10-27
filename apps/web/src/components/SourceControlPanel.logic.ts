@@ -1,4 +1,4 @@
-import type { VcsStagingArea, VcsStatusResult, VcsWorkingTreeFileStatus } from "@bibcode/contracts";
+import type { VcsStagingArea, VcsStatusResult, VcsWorkingTreeFileStatus } from "@coddy/contracts";
 
 export interface WorkingTreeFile {
   readonly path: string;

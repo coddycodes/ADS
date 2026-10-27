@@ -1,4 +1,4 @@
-import type { DesktopBridge, DesktopWslState } from "@bibcode/contracts";
+import type { DesktopBridge, DesktopWslState } from "@coddy/contracts";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
 

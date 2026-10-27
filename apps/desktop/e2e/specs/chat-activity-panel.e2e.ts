@@ -24,15 +24,15 @@ import {
 import { clearDesktopActivityMarker } from "../support/test-project.ts";
 import { ensureMainSidebarOpen, setDesktopUiWindowSize } from "../support/ui-state.ts";
 
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
-const projectPath = process.env.BIBCODE_E2E_PROJECT_PATH;
-const shimDirectory = process.env.BIBCODE_E2E_SHIM_DIRECTORY;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
+const projectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH;
+const shimDirectory = process.env.CODDY_STUDIO_E2E_SHIM_DIRECTORY;
 if (!artifactDirectory || !projectPath || !shimDirectory) {
   throw new Error("The packaged desktop UI fixture environment was not prepared.");
 }
 const preparedArtifactDirectory: string = artifactDirectory;
 const preparedProjectPath: string = projectPath;
-const isWindowsE2e = process.env.BIBCODE_E2E_PLATFORM === "win";
+const isWindowsE2e = process.env.CODDY_STUDIO_E2E_PLATFORM === "win";
 const supportsCodexTerminalActivity = !isWindowsE2e;
 const preparedCodexExecutable = NodePath.join(shimDirectory, isWindowsE2e ? "codex.cmd" : "codex");
 
@@ -373,7 +373,7 @@ async function openCodexProviderTerminal(): Promise<string> {
   const terminalId = await host.getAttribute("data-provider-terminal-activity-host");
   if (!terminalId) throw new Error("The provider terminal activity host has no terminal id.");
   const requestedExecutable = await browser.execute((id: string): string | null => {
-    const persisted = window.localStorage.getItem("bibcode:center-panel-state:v1");
+    const persisted = window.localStorage.getItem("coddy-studio:center-panel-state:v1");
     if (!persisted) return null;
     const decoded = JSON.parse(persisted) as {
       readonly state?: {
@@ -503,7 +503,7 @@ async function readPersistedProjectDockExpanded(projectId: string): Promise<{
 }> {
   return browser.execute((id: string) => {
     const projectKey = `primary:${id}`;
-    const encoded = window.localStorage.getItem("bibcode:activity-dock-state:v1");
+    const encoded = window.localStorage.getItem("coddy-studio:activity-dock-state:v1");
     const persisted = encoded
       ? (JSON.parse(encoded) as {
           readonly state?: {
@@ -730,9 +730,9 @@ async function installRuntimeMotionEmulation(initialMatches: boolean): Promise<v
         readonly set: (matches: boolean) => void;
       }
       const testWindow = window as Window & {
-        __bibcodeDesktopUiReducedMotionEmulation?: RuntimeMotionEmulation;
+        __coddyStudioDesktopUiReducedMotionEmulation?: RuntimeMotionEmulation;
       };
-      testWindow.__bibcodeDesktopUiReducedMotionEmulation?.restore();
+      testWindow.__coddyStudioDesktopUiReducedMotionEmulation?.restore();
       const nativeMatchMedia = window.matchMedia;
       const listeners = new Set<EventListenerOrEventListenerObject>();
       let matches = initial;
@@ -787,7 +787,7 @@ async function installRuntimeMotionEmulation(initialMatches: boolean): Promise<v
           window.matchMedia = nativeMatchMedia;
           listeners.clear();
           onchange = null;
-          delete testWindow.__bibcodeDesktopUiReducedMotionEmulation;
+          delete testWindow.__coddyStudioDesktopUiReducedMotionEmulation;
         },
         set: (nextMatches: boolean) => {
           if (matches === nextMatches) return;
@@ -800,7 +800,7 @@ async function installRuntimeMotionEmulation(initialMatches: boolean): Promise<v
           );
         },
       };
-      testWindow.__bibcodeDesktopUiReducedMotionEmulation = state;
+      testWindow.__coddyStudioDesktopUiReducedMotionEmulation = state;
       window.matchMedia = (media: string) =>
         media === query ? mediaQuery : nativeMatchMedia.call(window, media);
     },
@@ -812,11 +812,11 @@ async function installRuntimeMotionEmulation(initialMatches: boolean): Promise<v
 async function restoreRuntimeMotionEmulation(): Promise<void> {
   await browser.execute(() => {
     const testWindow = window as Window & {
-      __bibcodeDesktopUiReducedMotionEmulation?: {
+      __coddyStudioDesktopUiReducedMotionEmulation?: {
         readonly restore: () => void;
       };
     };
-    testWindow.__bibcodeDesktopUiReducedMotionEmulation?.restore();
+    testWindow.__coddyStudioDesktopUiReducedMotionEmulation?.restore();
   });
 }
 
@@ -837,11 +837,11 @@ async function setRuntimeMotionPreference(matches: boolean): Promise<void> {
   await browser.execute((nextMatches: boolean) => {
     const state = (
       window as Window & {
-        __bibcodeDesktopUiReducedMotionEmulation?: {
+        __coddyStudioDesktopUiReducedMotionEmulation?: {
           readonly set: (matches: boolean) => void;
         };
       }
-    ).__bibcodeDesktopUiReducedMotionEmulation;
+    ).__coddyStudioDesktopUiReducedMotionEmulation;
     if (!state) throw new Error("The reduced-motion emulation is not installed.");
     state.set(nextMatches);
   }, matches);
@@ -1121,9 +1121,9 @@ describe("packaged responsive activity experience", () => {
       };
       (
         window as Window & {
-          __bibcodeActivityComposerFocusGuard?: typeof state;
+          __coddyStudioActivityComposerFocusGuard?: typeof state;
         }
-      ).__bibcodeActivityComposerFocusGuard = state;
+      ).__coddyStudioActivityComposerFocusGuard = state;
       document.addEventListener("focusin", state.onFocusIn, true);
     });
     await startDesktopActivityComposerFollowupTurn();
@@ -1147,16 +1147,16 @@ describe("packaged responsive activity experience", () => {
     );
     const composerFocus = await browser.execute(() => {
       const guardedWindow = window as Window & {
-        __bibcodeActivityComposerFocusGuard?: {
+        __coddyStudioActivityComposerFocusGuard?: {
           readonly composer: HTMLElement;
           lost: boolean;
           readonly onFocusIn: () => void;
         };
       };
-      const state = guardedWindow.__bibcodeActivityComposerFocusGuard;
+      const state = guardedWindow.__coddyStudioActivityComposerFocusGuard;
       if (!state) throw new Error("The composer focus guard was lost.");
       document.removeEventListener("focusin", state.onFocusIn, true);
-      delete guardedWindow.__bibcodeActivityComposerFocusGuard;
+      delete guardedWindow.__coddyStudioActivityComposerFocusGuard;
       return {
         focused: document.activeElement === state.composer,
         lost: state.lost,

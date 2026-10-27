@@ -3,14 +3,14 @@ import type {
   EnvironmentId,
   ProjectListEntriesResult,
   ProjectReadFileResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useEffect } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
-import { executeAtomQuery, retryEnvironmentQuery } from "@bibcode/client-runtime/state/runtime";
+import { executeAtomQuery, retryEnvironmentQuery } from "@coddy/client-runtime/state/runtime";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 
 const EMPTY_PROJECT_FILE_PATH = "";

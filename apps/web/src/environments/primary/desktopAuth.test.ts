@@ -1,4 +1,4 @@
-import type { DesktopBridge } from "@bibcode/contracts";
+import type { DesktopBridge } from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { readDesktopPrimaryBearerToken } from "./desktopAuth";

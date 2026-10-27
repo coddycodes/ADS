@@ -2,7 +2,7 @@ import type {
   EnvironmentId,
   GitManagerCoAuthor,
   GitManagerUndoCommitResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { Settings2Icon, UserPlusIcon, XIcon } from "lucide-react";
 import {
   memo,

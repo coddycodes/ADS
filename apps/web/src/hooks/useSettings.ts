@@ -16,15 +16,15 @@ import {
   type EnvironmentId,
   ServerSettings,
   type ServerSettingsPatch,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type ClientSettings,
   DEFAULT_CLIENT_SETTINGS,
   type UnifiedSettings,
-} from "@bibcode/contracts/settings";
-import { safeErrorLogAttributes } from "@bibcode/client-runtime/errors";
+} from "@coddy/contracts/settings";
+import { safeErrorLogAttributes } from "@coddy/client-runtime/errors";
 import { ensureLocalApi } from "~/localApi";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";

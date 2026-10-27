@@ -6,9 +6,9 @@ use std::{
 
 use super::reexec;
 
-const CASE: &str = "BIBCODE_APPIMAGE_ENVIRONMENT_TEST_CASE";
-const APPDIR_FIXTURE: &str = "BIBCODE_TEST_APPIMAGE_ROOT";
-pub const HOST_PATH_FIXTURE: &str = "BIBCODE_TEST_ORIGINAL_HOST_PATH";
+const CASE: &str = "CODDY_STUDIO_APPIMAGE_ENVIRONMENT_TEST_CASE";
+const APPDIR_FIXTURE: &str = "CODDY_STUDIO_TEST_APPIMAGE_ROOT";
+pub const HOST_PATH_FIXTURE: &str = "CODDY_STUDIO_TEST_ORIGINAL_HOST_PATH";
 const PATH_VARIABLES: &[&str] = &[
     "LD_LIBRARY_PATH",
     "PATH",
@@ -29,7 +29,7 @@ const PATH_VARIABLES: &[&str] = &[
     "PYTHONHOME",
     "PYTHONPATH",
     "QT_PLUGIN_PATH",
-    "BIBCODE_TEST_FUTURE_PLUGIN_PATH",
+    "CODDY_STUDIO_TEST_FUTURE_PLUGIN_PATH",
 ];
 
 pub const ENVIRONMENT_CASES: &[&str] = &[
@@ -52,9 +52,9 @@ fn fixture(case: &str, appdir: &str) -> (Environment, Environment) {
     let host = format!("/opt/host first:{appdir}-host/lib:/usr/bin:/bin:.mount_relative/lib");
     let mixed = format!("{appdir}/usr/lib:{host}:/tmp/.mount_bibcodOLD/usr/lib");
     let mut original = Environment::from([
-        ("APPIMAGE", Some("/opt/bibcode.AppImage".into())),
+        ("APPIMAGE", Some("/opt/coddy-studio.AppImage".into())),
         ("APPDIR", Some(appdir.into())),
-        ("ARGV0", Some("bibcode.AppImage".into())),
+        ("ARGV0", Some("coddy-studio.AppImage".into())),
         ("OWD", Some("/opt/launch-directory".into())),
         ("GTK_THEME", Some("Adwaita:dark".into())),
         ("GDK_BACKEND", Some("wayland,x11".into())),
@@ -62,11 +62,11 @@ fn fixture(case: &str, appdir: &str) -> (Environment, Environment) {
         ("SSH_AUTH_SOCK", Some("/tmp/host-agent.sock".into())),
         ("LS_COLORS", Some("di=01;34:*.rs=01;32:ln=target".into())),
         (
-            "BIBCODE_TEST_UNRELATED_BYTES",
+            "CODDY_STUDIO_TEST_UNRELATED_BYTES",
             Some(OsString::from_vec(b"raw:\xff::keep".to_vec())),
         ),
         (
-            "BIBCODE_TEST_RAW_PLUGIN_PATH",
+            "CODDY_STUDIO_TEST_RAW_PLUGIN_PATH",
             Some(OsString::from_vec(
                 [format!("{appdir}/usr/lib:").as_bytes(), b"/host/\xff"].concat(),
             )),
@@ -83,11 +83,11 @@ fn fixture(case: &str, appdir: &str) -> (Environment, Environment) {
         ("SSH_AUTH_SOCK", Some("/tmp/host-agent.sock".into())),
         ("LS_COLORS", Some("di=01;34:*.rs=01;32:ln=target".into())),
         (
-            "BIBCODE_TEST_UNRELATED_BYTES",
+            "CODDY_STUDIO_TEST_UNRELATED_BYTES",
             Some(OsString::from_vec(b"raw:\xff::keep".to_vec())),
         ),
         (
-            "BIBCODE_TEST_RAW_PLUGIN_PATH",
+            "CODDY_STUDIO_TEST_RAW_PLUGIN_PATH",
             Some(OsString::from_vec(b"/host/\xff".to_vec())),
         ),
     ]);
@@ -111,7 +111,7 @@ fn fixture(case: &str, appdir: &str) -> (Environment, Environment) {
             )
         } else if case == "bundled-only" {
             (bundled.clone(), None)
-        } else if name == "BIBCODE_TEST_FUTURE_PLUGIN_PATH" {
+        } else if name == "CODDY_STUDIO_TEST_FUTURE_PLUGIN_PATH" {
             (
                 format!("{appdir}/usr/lib/x:/host/keep"),
                 Some("/host/keep".into()),

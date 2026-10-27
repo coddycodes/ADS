@@ -11,14 +11,14 @@ import {
 describe("terminal theme launch values", () => {
   it("maps resolved light and dark themes to exact OSC colors", () => {
     expect(terminalOscColorEnv("light")).toEqual({
-      BIBCODE_OSC_BACKGROUND: "255,255,255",
-      BIBCODE_OSC_FOREGROUND: "28,33,41",
-      BIBCODE_OSC_CURSOR: "38,56,78",
+      CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+      CODDY_STUDIO_OSC_FOREGROUND: "28,33,41",
+      CODDY_STUDIO_OSC_CURSOR: "38,56,78",
     });
     expect(terminalOscColorEnv("dark")).toEqual({
-      BIBCODE_OSC_BACKGROUND: "14,18,24",
-      BIBCODE_OSC_FOREGROUND: "237,241,247",
-      BIBCODE_OSC_CURSOR: "180,203,255",
+      CODDY_STUDIO_OSC_BACKGROUND: "14,18,24",
+      CODDY_STUDIO_OSC_FOREGROUND: "237,241,247",
+      CODDY_STUDIO_OSC_CURSOR: "180,203,255",
     });
   });
 
@@ -27,15 +27,15 @@ describe("terminal theme launch values", () => {
       commandEnv: {
         SHARED: "command",
         COMMAND_ONLY: "yes",
-        BIBCODE_OSC_BACKGROUND: "0,0,0",
-        BIBCODE_WINDOWS_CONSOLE_THEME: "command",
+        CODDY_STUDIO_OSC_BACKGROUND: "0,0,0",
+        CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "command",
       },
       runtimeEnv: {
         SHARED: "runtime",
         RUNTIME_ONLY: "yes",
-        BIBCODE_OSC_FOREGROUND: "0,0,0",
-        BIBCODE_OSC_CURSOR: "0,0,0",
-        BIBCODE_WINDOWS_CONSOLE_THEME: "runtime",
+        CODDY_STUDIO_OSC_FOREGROUND: "0,0,0",
+        CODDY_STUDIO_OSC_CURSOR: "0,0,0",
+        CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "runtime",
       },
       resolvedTheme: "light",
       windowsConsoleTheme: true,
@@ -45,16 +45,16 @@ describe("terminal theme launch values", () => {
       SHARED: "runtime",
       COMMAND_ONLY: "yes",
       RUNTIME_ONLY: "yes",
-      BIBCODE_OSC_BACKGROUND: "255,255,255",
-      BIBCODE_OSC_FOREGROUND: "28,33,41",
-      BIBCODE_OSC_CURSOR: "38,56,78",
-      BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+      CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+      CODDY_STUDIO_OSC_FOREGROUND: "28,33,41",
+      CODDY_STUDIO_OSC_CURSOR: "38,56,78",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
     });
     expect(Object.keys(merged).slice(-4)).toEqual([
-      "BIBCODE_OSC_BACKGROUND",
-      "BIBCODE_OSC_FOREGROUND",
-      "BIBCODE_OSC_CURSOR",
-      "BIBCODE_WINDOWS_CONSOLE_THEME",
+      "CODDY_STUDIO_OSC_BACKGROUND",
+      "CODDY_STUDIO_OSC_FOREGROUND",
+      "CODDY_STUDIO_OSC_CURSOR",
+      "CODDY_STUDIO_WINDOWS_CONSOLE_THEME",
     ]);
   });
 
@@ -62,42 +62,42 @@ describe("terminal theme launch values", () => {
     expect(
       mergeTerminalSpawnEnv({
         commandEnv: {
-          bibcode_osc_foreground: "command-lowercase",
-          BiBCode_Osc_Cursor: "command-mixed-case",
-          bibcode_windows_console_theme: "command-lowercase",
+          coddy_studio_osc_foreground: "command-lowercase",
+          CoddyStudio_Osc_Cursor: "command-mixed-case",
+          coddy_studio_windows_console_theme: "command-lowercase",
         },
         runtimeEnv: {
-          bibcode_osc_background: "runtime-lowercase",
-          BiBCode_Windows_Console_Theme: "runtime-mixed-case",
+          coddy_studio_osc_background: "runtime-lowercase",
+          CoddyStudio_Windows_Console_Theme: "runtime-mixed-case",
         },
         resolvedTheme: "light",
         windowsConsoleTheme: true,
       }),
     ).toEqual({
-      bibcode_osc_foreground: "command-lowercase",
-      BiBCode_Osc_Cursor: "command-mixed-case",
-      bibcode_windows_console_theme: "command-lowercase",
-      bibcode_osc_background: "runtime-lowercase",
-      BiBCode_Windows_Console_Theme: "runtime-mixed-case",
-      BIBCODE_OSC_BACKGROUND: "255,255,255",
-      BIBCODE_OSC_FOREGROUND: "28,33,41",
-      BIBCODE_OSC_CURSOR: "38,56,78",
-      BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+      coddy_studio_osc_foreground: "command-lowercase",
+      CoddyStudio_Osc_Cursor: "command-mixed-case",
+      coddy_studio_windows_console_theme: "command-lowercase",
+      coddy_studio_osc_background: "runtime-lowercase",
+      CoddyStudio_Windows_Console_Theme: "runtime-mixed-case",
+      CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+      CODDY_STUDIO_OSC_FOREGROUND: "28,33,41",
+      CODDY_STUDIO_OSC_CURSOR: "38,56,78",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
     });
   });
 
   it("omits the Windows console theme when it is not requested", () => {
     expect(
       mergeTerminalSpawnEnv({
-        commandEnv: { BIBCODE_WINDOWS_CONSOLE_THEME: "command" },
-        runtimeEnv: { BIBCODE_WINDOWS_CONSOLE_THEME: "runtime" },
+        commandEnv: { CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "command" },
+        runtimeEnv: { CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "runtime" },
         resolvedTheme: "dark",
         windowsConsoleTheme: false,
       }),
     ).toEqual({
-      BIBCODE_OSC_BACKGROUND: "14,18,24",
-      BIBCODE_OSC_FOREGROUND: "237,241,247",
-      BIBCODE_OSC_CURSOR: "180,203,255",
+      CODDY_STUDIO_OSC_BACKGROUND: "14,18,24",
+      CODDY_STUDIO_OSC_FOREGROUND: "237,241,247",
+      CODDY_STUDIO_OSC_CURSOR: "180,203,255",
     });
   });
 

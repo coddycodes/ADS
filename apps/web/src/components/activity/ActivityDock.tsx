@@ -3,7 +3,7 @@ import {
   type ActivityLifecycle,
   type ActivitySection,
   type ActivitySnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   BotIcon,
   ChevronDownIcon,

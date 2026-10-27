@@ -20,7 +20,7 @@ const oldInlineBootstrap = `<script>
         const DARK_BACKGROUND = "#161616";
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
         try {
-          const storedTheme = window.localStorage.getItem("bibcode:theme");
+          const storedTheme = window.localStorage.getItem("coddy-studio:theme");
           const theme =
             storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
               ? storedTheme
@@ -166,7 +166,7 @@ describe("themeBootstrapVersionPlugin", () => {
     const source = NodeFS.readFileSync(bootstrapPath, "utf8");
     const plugin = themeBootstrapVersionPlugin();
 
-    expect(plugin.name).toBe("bibcode-theme-bootstrap-version");
+    expect(plugin.name).toBe("coddy-studio-theme-bootstrap-version");
     expect(plugin.transformIndexHtml.handler(html)).toBe(versionThemeBootstrap(html, source));
   });
 });
@@ -252,7 +252,7 @@ function evaluateBootstrap(
     localStorage: {
       getItem(key: string) {
         if (storageThrows) throw new Error("Storage is unavailable");
-        return key === "bibcode:theme" ? storedTheme : null;
+        return key === "coddy-studio:theme" ? storedTheme : null;
       },
     },
     matchMedia(query: string) {

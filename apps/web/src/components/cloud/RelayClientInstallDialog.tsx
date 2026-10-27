@@ -1,6 +1,6 @@
 import { DownloadIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
-import type { RelayClientInstallProgressStage } from "@bibcode/contracts";
+import type { RelayClientInstallProgressStage } from "@coddy/contracts";
 
 import {
   completeRelayClientInstallDialogClose,
@@ -69,8 +69,8 @@ export function RelayClientInstallDialog() {
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? "BiBCode is preparing this environment for secure access through BiBCode Connect."
-              : "BiBCode needs the relay client to make this environment available through BiBCode Connect."}
+              ? "Coddy Studio is preparing this environment for secure access through Coddy Connect."
+              : "Coddy Studio needs the relay client to make this environment available through Coddy Connect."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -91,14 +91,14 @@ export function RelayClientInstallDialog() {
                 value={activeStepIndex + 1}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Keep BiBCode open while the relay client is installed.
+                Keep Coddy Studio open while the relay client is installed.
               </p>
             </div>
           ) : (
             <div className="rounded-xl border border-border/70 bg-muted/35 p-3">
               <p className="text-sm font-medium text-foreground">Managed relay client</p>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                BiBCode will download and install version{" "}
+                Coddy Studio will download and install version{" "}
                 {view.status === "confirming" ? view.version : ""} locally.
               </p>
             </div>

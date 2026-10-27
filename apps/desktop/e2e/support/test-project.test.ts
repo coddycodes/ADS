@@ -25,7 +25,7 @@ import {
 
 const contexts: DesktopUiTestContext[] = [];
 const hostTemporaryDirectories: string[] = [];
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- These compatibility assertions must distinguish the native Windows host from simulated Unix targets.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- These compatibility assertions must distinguish the native Windows host from simulated Unix targets.
 const isNativeWindowsHost = process.platform === "win32";
 
 interface FixtureProtocol {
@@ -106,10 +106,10 @@ describe.each([
 ])("prepareDesktopUiTestContext on $platform", ({ platform, executableSuffix }) => {
   it("allocates its automatic run root beneath the host temporary directory", () => {
     const hostTemporaryDirectory = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-e2e-host-temp-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-e2e-host-temp-"),
     );
     hostTemporaryDirectories.push(hostTemporaryDirectory);
-    const environment: NodeJS.ProcessEnv = { BIBCODE_E2E_PLATFORM: platform };
+    const environment: NodeJS.ProcessEnv = { CODDY_STUDIO_E2E_PLATFORM: platform };
     const context = prepareDesktopUiTestContext(environment, hostTemporaryDirectory);
     contexts.push(context);
 
@@ -117,7 +117,7 @@ describe.each([
   });
 
   it("pins every provider to an absolute fixture executable", () => {
-    const environment: NodeJS.ProcessEnv = { BIBCODE_E2E_PLATFORM: platform };
+    const environment: NodeJS.ProcessEnv = { CODDY_STUDIO_E2E_PLATFORM: platform };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
 
@@ -144,12 +144,12 @@ describe.each([
     for (const provider of Object.values(settings.providers)) {
       expect(NodePath.isAbsolute(provider.binaryPath)).toBe(true);
     }
-    expect(environment.BIBCODE_E2E_SHIM_DIRECTORY).toBe(context.shimDirectory);
+    expect(environment.CODDY_STUDIO_E2E_SHIM_DIRECTORY).toBe(context.shimDirectory);
   });
 
   it("isolates provider user inventory inside the disposable run root", () => {
     const environment: NodeJS.ProcessEnv = {
-      BIBCODE_E2E_PLATFORM: platform,
+      CODDY_STUDIO_E2E_PLATFORM: platform,
       APPDATA: String.raw`C:\Users\host-must-not-be-used\AppData\Roaming`,
       HOME: "/host/home-must-not-be-used",
       LOCALAPPDATA: String.raw`C:\Users\host-must-not-be-used\AppData\Local`,
@@ -163,7 +163,7 @@ describe.each([
     expect(context.fixtureUserHomePath).toBe(expectedFixtureUserHome);
     expect(NodePath.isAbsolute(context.fixtureUserHomePath)).toBe(true);
     expect(context.fixtureUserHomePath.startsWith(`${context.runRoot}${NodePath.sep}`)).toBe(true);
-    expect(environment.BIBCODE_E2E_USER_HOME).toBe(expectedFixtureUserHome);
+    expect(environment.CODDY_STUDIO_E2E_USER_HOME).toBe(expectedFixtureUserHome);
     for (const relativePath of [
       ".cursor/commands/review.md",
       ".cursor/skills/frontend/SKILL.md",
@@ -230,7 +230,7 @@ describe.each([
 it.runIf(isNativeWindowsHost)(
   "executes the Cursor action shim through the native Windows command processor",
   () => {
-    const environment: NodeJS.ProcessEnv = { BIBCODE_E2E_PLATFORM: "win" };
+    const environment: NodeJS.ProcessEnv = { CODDY_STUDIO_E2E_PLATFORM: "win" };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
     const editorShimPath = NodePath.join(context.shimDirectory, "cursor.cmd");
@@ -256,7 +256,7 @@ it.runIf(isNativeWindowsHost)(
 
 describe.each(["mac", "linux"])("prepareDesktopUiTestContext on %s", (platform) => {
   it("keeps the canonical Codex helper socket below the Unix path limit", () => {
-    const environment: NodeJS.ProcessEnv = { BIBCODE_E2E_PLATFORM: platform };
+    const environment: NodeJS.ProcessEnv = { CODDY_STUDIO_E2E_PLATFORM: platform };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
     const canonicalStateRoot = isNativeWindowsHost
@@ -281,7 +281,7 @@ describe.each(["mac", "linux"])("prepareDesktopUiTestContext on %s", (platform) 
 
 describe("packaged provider composer fixture", () => {
   it("keeps a slow Codex turn running through steer and completes it only on its release marker", async () => {
-    const environment: NodeJS.ProcessEnv = { PATH: process.env.PATH, BIBCODE_E2E_PLATFORM: "mac" };
+    const environment: NodeJS.ProcessEnv = { PATH: process.env.PATH, CODDY_STUDIO_E2E_PLATFORM: "mac" };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
     const protocol = startCodexFixture(
@@ -324,7 +324,7 @@ describe("packaged provider composer fixture", () => {
           {
             method: "turn/completed",
             params: {
-              threadId: "bibcode-ui-provider-thread",
+              threadId: "coddy-studio-ui-provider-thread",
               turn: { id: started.turn.id, status: "completed" },
             },
           },
@@ -352,8 +352,8 @@ describe("packaged provider composer fixture", () => {
     async (settle) => {
       const environment: NodeJS.ProcessEnv = {
         PATH: process.env.PATH,
-        BIBCODE_E2E_PLATFORM: "mac",
-        BIBCODE_E2E_SLOW_TURN_MS: "200",
+        CODDY_STUDIO_E2E_PLATFORM: "mac",
+        CODDY_STUDIO_E2E_SLOW_TURN_MS: "200",
       };
       const context = prepareDesktopUiTestContext(environment);
       contexts.push(context);
@@ -377,7 +377,7 @@ describe("packaged provider composer fixture", () => {
             {
               method: "turn/completed",
               params: {
-                threadId: "bibcode-ui-provider-thread",
+                threadId: "coddy-studio-ui-provider-thread",
                 turn: {
                   id: started.turn.id,
                   status: settle === "interrupt" ? "interrupted" : "completed",
@@ -404,7 +404,7 @@ describe("packaged provider composer fixture", () => {
   it("replays the Claude user message before acknowledging the completed turn", async () => {
     const environment: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      BIBCODE_E2E_PLATFORM: "mac",
+      CODDY_STUDIO_E2E_PLATFORM: "mac",
     };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
@@ -460,7 +460,7 @@ describe("packaged provider composer fixture", () => {
   it("does not leak Task 4 activation into a later unrelated Codex process", async () => {
     const environment: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      BIBCODE_E2E_PLATFORM: "mac",
+      CODDY_STUDIO_E2E_PLATFORM: "mac",
     };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
@@ -503,7 +503,7 @@ describe("packaged provider composer fixture", () => {
   it("isolates Task 4 activity from every unrelated Codex fixture session", async () => {
     const environment: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      BIBCODE_E2E_PLATFORM: "mac",
+      CODDY_STUDIO_E2E_PLATFORM: "mac",
     };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
@@ -583,7 +583,7 @@ describe("packaged provider composer fixture", () => {
   it("shares the live activity revision across the chat and terminal fixture processes", async () => {
     const environment: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      BIBCODE_E2E_PLATFORM: "mac",
+      CODDY_STUDIO_E2E_PLATFORM: "mac",
     };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
@@ -646,9 +646,9 @@ describe("packaged provider composer fixture", () => {
     ).toEqual([
       {
         type: "project.create",
-        commandId: "bibcode-ui-activity-project-create",
-        projectId: "bibcode-ui-activity-project",
-        title: "BiBCode UI Fixture",
+        commandId: "coddy-studio-ui-activity-project-create",
+        projectId: "coddy-studio-ui-activity-project",
+        title: "Coddy Studio UI Fixture",
         workspaceRoot: "/fixture/project",
         defaultModelSelection: {
           instanceId: "codex",
@@ -659,9 +659,9 @@ describe("packaged provider composer fixture", () => {
       },
       {
         type: "thread.create",
-        commandId: "bibcode-ui-activity-thread-create",
-        threadId: "bibcode-ui-activity-thread",
-        projectId: "bibcode-ui-activity-project",
+        commandId: "coddy-studio-ui-activity-thread-create",
+        threadId: "coddy-studio-ui-activity-thread",
+        projectId: "coddy-studio-ui-activity-project",
         title: "Activity acceptance fixture",
         modelSelection: {
           instanceId: "codex",
@@ -676,10 +676,10 @@ describe("packaged provider composer fixture", () => {
       },
       {
         type: "thread.turn.start",
-        commandId: "bibcode-ui-activity-turn-start",
-        threadId: "bibcode-ui-activity-thread",
+        commandId: "coddy-studio-ui-activity-turn-start",
+        threadId: "coddy-studio-ui-activity-thread",
         message: {
-          messageId: "bibcode-ui-activity-message",
+          messageId: "coddy-studio-ui-activity-message",
           role: "user",
           text: "load deterministic activity",
           attachments: [],
@@ -694,13 +694,13 @@ describe("packaged provider composer fixture", () => {
         createdAt: "2026-07-29T18:00:02.000Z",
       },
     ]);
-    expect(desktopActivityFixture.thread.id).toBe("bibcode-ui-activity-thread");
+    expect(desktopActivityFixture.thread.id).toBe("coddy-studio-ui-activity-thread");
   });
 
   it("uses observation-time timestamps for a newly materialized activity fixture", async () => {
     const environment: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      BIBCODE_E2E_PLATFORM: "mac",
+      CODDY_STUDIO_E2E_PLATFORM: "mac",
     };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
@@ -789,7 +789,7 @@ describe("packaged provider composer fixture", () => {
   });
 
   it("writes provider-native workspace metadata and exports an absolute input log", () => {
-    const environment: NodeJS.ProcessEnv = { BIBCODE_E2E_PLATFORM: "mac" };
+    const environment: NodeJS.ProcessEnv = { CODDY_STUDIO_E2E_PLATFORM: "mac" };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
 
@@ -812,15 +812,15 @@ describe("packaged provider composer fixture", () => {
       [...compatibleCursorSkills].toSorted(),
     );
     expect(NodePath.isAbsolute(context.providerInputLogPath)).toBe(true);
-    expect(environment.BIBCODE_E2E_PROVIDER_INPUT_LOG).toBe(context.providerInputLogPath);
+    expect(environment.CODDY_STUDIO_E2E_PROVIDER_INPUT_LOG).toBe(context.providerInputLogPath);
     expect(NodePath.isAbsolute(context.nativeActionLogPath)).toBe(true);
-    expect(environment.BIBCODE_E2E_NATIVE_ACTION_LOG).toBe(context.nativeActionLogPath);
-    expect(environment.BIBCODE_LOG).toContain("bibcode::desktop_e2e=info");
+    expect(environment.CODDY_STUDIO_E2E_NATIVE_ACTION_LOG).toBe(context.nativeActionLogPath);
+    expect(environment.CODDY_STUDIO_LOG).toContain("coddy-studio::desktop_e2e=info");
     expect(NodeFS.readFileSync(context.nativeActionLogPath, "utf8")).toBe("");
   });
 
   it("generates native protocol fixtures while keeping hidden and prose-only agents inline-inert", () => {
-    const environment: NodeJS.ProcessEnv = { BIBCODE_E2E_PLATFORM: "mac" };
+    const environment: NodeJS.ProcessEnv = { CODDY_STUDIO_E2E_PLATFORM: "mac" };
     const context = prepareDesktopUiTestContext(environment);
     contexts.push(context);
     const fixtureSource = (name: string): string =>
@@ -850,9 +850,9 @@ describe("packaged provider composer fixture", () => {
 
 describe("archiveAndCleanupDesktopUiTestContext", () => {
   it("configures retries for transient Windows locks while removing the run directory", () => {
-    const runRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-cleanup-"));
+    const runRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-cleanup-"));
     const artifactDirectory = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-cleanup-artifacts-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-cleanup-artifacts-"),
     );
     const context: DesktopUiTestContext = {
       runRoot,

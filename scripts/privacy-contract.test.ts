@@ -49,14 +49,14 @@ const forbiddenTelemetryMarkers = [
   "alchemy/Axiom",
   "TelemetryLive",
   "google.com/s2/favicons",
-  "BIBCODE_RELAY_CLIENT_OTLP",
-  "BIBCODE_MOBILE_OTLP",
+  "CODDY_STUDIO_RELAY_CLIENT_OTLP",
+  "CODDY_STUDIO_MOBILE_OTLP",
   "VITE_RELAY_OTLP",
   "OTEL_EXPORTER_OTLP",
   "/api/observability/v1/traces",
   "otlpTracesUrl",
   "otlpMetricsUrl",
-  "@bibcode/shared/relayTracing",
+  "@coddy/shared/relayTracing",
 ];
 
 function isSourceFile(name: string): boolean {
@@ -85,7 +85,7 @@ function privacySourceFiles(repoRoot: string): Array<string> {
     ".vscode",
     "apps",
     "infra",
-    "oxlint-plugin-bibcode",
+    "oxlint-plugin-coddy-studio",
     "packages",
     "scripts",
     "tools",
@@ -160,9 +160,9 @@ describe("zero-telemetry privacy contract", () => {
 
     expect(webDependencyNames).toEqual([
       "@base-ui/react",
-      "@bibcode/client-runtime",
-      "@bibcode/contracts",
-      "@bibcode/shared",
+      "@coddy/client-runtime",
+      "@coddy/contracts",
+      "@coddy/shared",
       "@clerk/react",
       "@dnd-kit/core",
       "@dnd-kit/modifiers",
@@ -309,7 +309,7 @@ describe("zero-telemetry privacy contract", () => {
   });
 
   it("scans executable web, manifest, shell, and environment files", () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-privacy-"));
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-privacy-"));
     const fixtures = [
       "page.astro",
       "index.html",
@@ -404,13 +404,13 @@ describe("zero-telemetry privacy contract", () => {
     });
 
     const deployRelayJob = workflowJob(".github/workflows/deploy-relay.yml", "deploy_relay");
-    expect(deployRelayJob).toContain("vp run --filter bibcode-relay deploy");
+    expect(deployRelayJob).toContain("vp run --filter coddy-studio-relay deploy");
     expect(deployRelayJob).toContain(
       '      ALCHEMY_TELEMETRY_DISABLED: "1"\n      DO_NOT_TRACK: "1"',
     );
 
     const releaseRelayJob = workflowJob(".github/workflows/release.yml", "relay_public_config");
-    expect(releaseRelayJob).toContain("vp run --filter bibcode-relay deploy");
+    expect(releaseRelayJob).toContain("vp run --filter coddy-studio-relay deploy");
     expect(releaseRelayJob).toContain(
       '      ALCHEMY_TELEMETRY_DISABLED: "1"\n      DO_NOT_TRACK: "1"',
     );

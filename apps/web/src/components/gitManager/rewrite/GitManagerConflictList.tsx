@@ -1,4 +1,4 @@
-import type { GitManagerBlockedReason, GitManagerConflictState } from "@bibcode/contracts";
+import type { GitManagerBlockedReason, GitManagerConflictState } from "@coddy/contracts";
 import { AlertTriangleIcon, CheckCircle2Icon, ChevronDownIcon, Undo2Icon } from "lucide-react";
 import { memo, useCallback, useState } from "react";
 

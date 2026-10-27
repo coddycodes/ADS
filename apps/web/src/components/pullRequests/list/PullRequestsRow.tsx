@@ -3,11 +3,11 @@ import type {
   PullRequestsContext,
   PullRequestsListRow,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { Link } from "@tanstack/react-router";
 import { CircleCheckIcon, CircleDotIcon, CircleXIcon, MessageSquareIcon } from "lucide-react";
 import { memo } from "react";
-import { formatChangeRequestNumber } from "@bibcode/shared/sourceControl";
+import { formatChangeRequestNumber } from "@coddy/shared/sourceControl";
 import { formatRelativeTimeLabel } from "../../../timestampFormat";
 import { PullRequestsActor } from "../shared/PullRequestsActor";
 import { PullRequestsLabelChip } from "../shared/PullRequestsLabelChip";

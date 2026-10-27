@@ -6,7 +6,7 @@ outstanding as detailed below.
 
 ## Tested revision and environment
 
-- Repository: BiBCode, branch `mubeda/main`.
+- Repository: Coddy Studio, branch `mubeda/main`.
 - HEAD: `dc5d6d3852572317d0f1fff461b98e69c43ed23a`, with the existing skill-discovery,
   target-selection, and terminal-clipboard work preserved in the dirty checkout.
 - Host: Omarchy 4.0.4, Linux x86_64, kernel `7.2.5-3-omarchy`.

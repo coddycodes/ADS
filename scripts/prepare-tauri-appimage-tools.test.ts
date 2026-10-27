@@ -19,7 +19,7 @@ vi.mock("node:fs", async (importOriginal) => {
 const REPOSITORY_ROOT = NodePath.resolve(import.meta.dirname, "..");
 const FIXTURE_PLUGIN = new TextEncoder().encode("#!/usr/bin/env bash\nexit 0\n");
 const LEGACY_UPSTREAM_FILENAME = "linuxdeploy-plugin-gtk-upstream.sh";
-const UPSTREAM_FILENAME = "bibcode-linuxdeploy-gtk-upstream.sh";
+const UPSTREAM_FILENAME = "coddy-studio-linuxdeploy-gtk-upstream.sh";
 const FIXTURE_PIN = {
   url: "https://example.invalid/linuxdeploy-plugin-gtk.sh",
   sha256: "fb99eae951f1adc14d1a4a9a186c21930db2786b3208c94c7d9af382bd1048e5",
@@ -27,7 +27,7 @@ const FIXTURE_PIN = {
 const temporaryDirectories: Array<string> = [];
 
 function makeRepositoryRoot(): string {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-appimage-tools-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-appimage-tools-"));
   temporaryDirectories.push(root);
   const wrapperDirectory = NodePath.join(root, "scripts/tauri");
   NodeFS.mkdirSync(wrapperDirectory, { recursive: true });
@@ -107,7 +107,7 @@ describe("prepare Tauri AppImage tools", () => {
         name.startsWith("linuxdeploy-plugin-"),
       ),
     ).toEqual(["linuxdeploy-plugin-gtk.sh"]);
-    // oxlint-disable-next-line bibcode/no-global-process-runtime -- These filesystem integration tests assert executable modes on the host platform.
+    // oxlint-disable-next-line coddy/no-global-process-runtime -- These filesystem integration tests assert executable modes on the host platform.
     if (process.platform !== "win32") {
       expect(NodeFS.statSync(upstreamPath).mode & 0o111).not.toBe(0);
       expect(NodeFS.statSync(wrapperPath).mode & 0o111).not.toBe(0);
@@ -178,7 +178,7 @@ describe("prepare Tauri AppImage tools", () => {
 
     expect(result).toMatchObject({ status: "prepared", usedCachedUpstream: true });
     expect(NodeFS.readFileSync(upstreamPath)).toEqual(Buffer.from(FIXTURE_PLUGIN));
-    // oxlint-disable-next-line bibcode/no-global-process-runtime -- These filesystem integration tests assert executable modes on the host platform.
+    // oxlint-disable-next-line coddy/no-global-process-runtime -- These filesystem integration tests assert executable modes on the host platform.
     if (process.platform !== "win32") {
       expect(NodeFS.statSync(upstreamPath).mode & 0o111).not.toBe(0);
     }

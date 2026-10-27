@@ -279,7 +279,7 @@ async fn read_fingerprint_once(
     .await?;
 
     let mut proof = FingerprintProof::default();
-    proof.push("version", b"bibcode.catalog-fingerprint.v1")?;
+    proof.push("version", b"coddy-studio.catalog-fingerprint.v1")?;
     proof.push(
         "repository-lifecycle",
         &request.repository_lifecycle_epoch.to_le_bytes(),
@@ -1889,9 +1889,9 @@ mod tests {
             .current_dir(cwd)
             .args([
                 "-c",
-                "user.name=BiBCode Test",
+                "user.name=Coddy Studio Test",
                 "-c",
-                "user.email=test@bibcode.local",
+                "user.email=test@coddy-studio.local",
             ])
             .args(args)
             .output()

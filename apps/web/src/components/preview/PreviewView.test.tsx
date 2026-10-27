@@ -13,7 +13,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ReactElement } from "react";
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 
 const h = vi.hoisted(() => {
   const state = {
@@ -36,7 +36,7 @@ const h = vi.hoisted(() => {
     unreachableReason: null as string | null,
     unreachableNotices: [] as unknown[],
     gateway: false,
-    gatewayNavUrl: "http://10.0.0.2:41000/__bibcode/bootstrap?cap=CAP&to=%2F",
+    gatewayNavUrl: "http://10.0.0.2:41000/__coddy-studio/bootstrap?cap=CAP&to=%2F",
     gatewayUnreachableMessage: null as string | null,
     gatewayRefusedByServer: false,
     localFailureCalls: [] as unknown[],
@@ -118,7 +118,7 @@ const capture = (kind: string, props: Record<string, unknown>) => {
   h.captures.push({ kind, props });
 };
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { error?: unknown }) =>
     result.error ?? new Error("squashed failure"),
 }));

@@ -26,7 +26,7 @@ type ReportFuture = std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + 
 type InstallReporter = Arc<dyn Fn(RelayClientInstallEvent) -> ReportFuture + Send + Sync>;
 
 pub const CLOUDFLARED_VERSION: &str = "2026.5.2";
-pub const CLOUDFLARED_PATH_ENV_NAME: &str = "BIBCODE_CLOUDFLARED_PATH";
+pub const CLOUDFLARED_PATH_ENV_NAME: &str = "CODDY_STUDIO_CLOUDFLARED_PATH";
 
 const MAX_DOWNLOAD_BYTES: usize = 128 * 1024 * 1024;
 const INSTALL_LOCK_RETRY_COUNT: usize = 100;
@@ -100,7 +100,7 @@ impl RelayClientOptions {
     #[must_use]
     pub fn native(base_dir: impl Into<PathBuf>) -> Self {
         Self::new(base_dir, native_platform(), native_arch()).with_optional_executable_override(
-            crate::environment_identity::bibcode_env_var(CLOUDFLARED_PATH_ENV_NAME),
+            crate::environment_identity::coddy_studio_env_var(CLOUDFLARED_PATH_ENV_NAME),
         )
     }
 
@@ -185,7 +185,7 @@ impl NativeRelayClient {
             .connect_timeout(Duration::from_secs(15))
             .timeout(options.download_timeout)
             .redirect(reqwest::redirect::Policy::limited(5))
-            .user_agent(concat!("bibcode/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("coddy-studio/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|error| {
                 format!("download_failed: could not initialize HTTP client: {error}")
@@ -259,7 +259,7 @@ impl NativeRelayClient {
             RelayInstallError::new(
                 "unsupported_platform",
                 format!(
-                    "BiBCode does not provide a managed relay client binary for {}-{}.",
+                    "Coddy Studio does not provide a managed relay client binary for {}-{}.",
                     self.options.platform, self.options.arch
                 ),
             )

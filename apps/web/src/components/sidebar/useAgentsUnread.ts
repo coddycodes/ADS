@@ -1,4 +1,4 @@
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 

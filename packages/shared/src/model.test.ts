@@ -5,7 +5,7 @@ import {
   ProviderInstanceId,
   type ModelCapabilities,
   type ProviderOptionDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import {
   applyClaudePromptEffortPrefix,

@@ -647,9 +647,9 @@ mod tests {
         let renderer_pid = server_pid + 2;
         let unrelated_pid = server_pid + 3;
         let mut webview = row(webview_pid, server_pid, 200);
-        webview.command = "msedgewebview2.exe --embedded-browser-webview=1 --webview-exe-name=BiBCode-Desktop.EXE".to_owned();
+        webview.command = "msedgewebview2.exe --embedded-browser-webview=1 --webview-exe-name=Coddy Studio-Desktop.EXE".to_owned();
         let mut unrelated = row(unrelated_pid, 1, 400);
-        unrelated.command = "msedgewebview2.exe --embedded-browser-webview=1 --webview-exe-name=bibcode-desktop.exe".to_owned();
+        unrelated.command = "msedgewebview2.exe --embedded-browser-webview=1 --webview-exe-name=coddy-studio-desktop.exe".to_owned();
         let native = Arc::new(FakeNativeProcessRowSource::new(vec![
             row(server_pid, 1, 100),
             webview,
@@ -659,7 +659,9 @@ mod tests {
         let sampler = NativeResourceSampler::with_native_process_source(
             native,
             ProcessAttributionRegistry::new(),
-            Arc::new(WebView2DesktopUiProcessObserver::new("bibcode-desktop.exe")),
+            Arc::new(WebView2DesktopUiProcessObserver::new(
+                "coddy-studio-desktop.exe",
+            )),
         );
 
         let snapshot = sampler.sample().await.expect("sample should succeed");
@@ -670,7 +672,7 @@ mod tests {
                 .processes
                 .iter()
                 .find(|process| process.identity.pid == pid)
-                .expect("BiBCode WebView2 process");
+                .expect("Coddy Studio WebView2 process");
             assert_eq!(process.scope, AttributionScope::Core);
             assert_eq!(process.kind, AttributionKind::Ui);
         }

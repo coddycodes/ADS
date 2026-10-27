@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, type ResolvedKeybindingsConfig } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId, type ResolvedKeybindingsConfig } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -333,7 +333,7 @@ vi.mock("@pierre/diffs/react", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { _tag: string }) => result._tag === "Interrupted",
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error,
 }));
@@ -866,7 +866,7 @@ describe("file explorer toggle", () => {
 
     const toggle = ui.byLabel("Toggle", "Hide file explorer");
     (toggle.onPressedChange as () => void)();
-    expect(testState.setLocalStorageItem).toHaveBeenCalledWith("bibcode.fileExplorerOpen", false);
+    expect(testState.setLocalStorageItem).toHaveBeenCalledWith("coddy-studio.fileExplorerOpen", false);
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     testState.setLocalStorageItem.mockImplementation(() => {
@@ -1717,7 +1717,7 @@ describe("effects wiring", () => {
   });
 
   it("renders a guarded read-only file surface and passes the same reason to the browser", () => {
-    const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+    const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
     setFileData("const retained = true;\n");
     const markup = renderPanel(baseProps({ workspaceUnavailable: reason }));
 

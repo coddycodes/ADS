@@ -50,12 +50,12 @@ use crate::{
     },
 };
 
-pub const ENVIRONMENT_DESCRIPTOR_PATH: &str = "/.well-known/bibcode/environment";
+pub const ENVIRONMENT_DESCRIPTOR_PATH: &str = "/.well-known/coddy-studio/environment";
 pub(crate) const WS_E2EE_PATH: &str = "/ws-e2ee";
 pub(crate) const REMOTE_PROTOCOL_VERSION: u32 = 1;
 pub(crate) const MIN_COMPATIBLE_REMOTE_PROTOCOL: u32 = 1;
-pub const DESKTOP_SHUTDOWN_PATH: &str = "/.well-known/bibcode/desktop/shutdown";
-pub const DESKTOP_SHUTDOWN_TOKEN_HEADER: &str = "x-bibcode-desktop-bootstrap-token";
+pub const DESKTOP_SHUTDOWN_PATH: &str = "/.well-known/coddy-studio/desktop/shutdown";
+pub const DESKTOP_SHUTDOWN_TOKEN_HEADER: &str = "x-coddy-studio-desktop-bootstrap-token";
 
 const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'; connect-src 'self' http: https: ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 const IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
@@ -114,9 +114,9 @@ pub const ROUTE_INVENTORY: &[RouteSpec] = &[
     route(RouteMethod::Post, "/api/connect/relay-config"),
     route(RouteMethod::Get, "/api/connect/link-state"),
     route(RouteMethod::Post, "/api/connect/unlink"),
-    route(RouteMethod::Post, "/api/bibcode-connect/health"),
+    route(RouteMethod::Post, "/api/coddy-connect/health"),
     route(RouteMethod::Post, "/api/connect/mint-credential"),
-    route(RouteMethod::Post, "/api/bibcode-connect/mint-credential"),
+    route(RouteMethod::Post, "/api/coddy-connect/mint-credential"),
     route(RouteMethod::Get, "/ws"),
     route(RouteMethod::Get, WS_E2EE_PATH),
     route(RouteMethod::Post, "/api/diagnostics/logs.zip"),
@@ -214,7 +214,7 @@ pub(crate) struct AppState {
     pub http_routes: HttpRoutesState,
     pub admission_gate: RpcAdmissionGate,
     pub update_maintenance: Option<Arc<UpdateMaintenance>>,
-    /// Serves BiBCode Connect preview hostnames; `None` without a production runtime.
+    /// Serves Coddy Connect preview hostnames; `None` without a production runtime.
     pub preview_gateway: Option<PreviewGateway>,
 }
 
@@ -250,8 +250,8 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// BiBCode Connect preview hostnames reach this port through the tunnel. The preview
-/// gateway serves them, never BiBCode's own routes, CORS, or admission gate; the raw
+/// Coddy Connect preview hostnames reach this port through the tunnel. The preview
+/// gateway serves them, never Coddy Studio's own routes, CORS, or admission gate; the raw
 /// `Host` is matched before forwarded headers are applied.
 async fn route_relay_previews(
     State(gateway): State<Option<PreviewGateway>>,
@@ -772,7 +772,7 @@ async fn serve_static(
 }
 
 /// The web app's entry document, marked as served by this server: a
-/// `<meta name="bibcode-served-host">` names the host the request was served for. The app pairs
+/// `<meta name="coddy-studio-served-host">` names the host the request was served for. The app pairs
 /// with its own origin only when the marker matches the host it runs on; a copy of this document
 /// deployed elsewhere, or a page without it, stays a remote client. Only a plain authority is
 /// written, so the Host header cannot inject markup, and the response varies by Host so no cache
@@ -785,7 +785,7 @@ async fn serve_entry_document(path: &Path, method: &Method, headers: &HeaderMap)
     let document = match served_host(headers) {
         Some(host) => match document.find("</head>") {
             Some(head_end) => format!(
-                "{}<meta name=\"bibcode-served-host\" content=\"{host}\">{}",
+                "{}<meta name=\"coddy-studio-served-host\" content=\"{host}\">{}",
                 &document[..head_end],
                 &document[head_end..]
             ),
@@ -1062,7 +1062,7 @@ mod tests {
         let root = tempfile::tempdir().expect("static root");
         std::fs::write(
             root.path().join("index.html"),
-            "<!doctype html><html><head><title>BiBCode</title></head><body></body></html>",
+            "<!doctype html><html><head><title>Coddy Studio</title></head><body></body></html>",
         )
         .expect("entry document");
         std::fs::create_dir(root.path().join("assets")).expect("assets");
@@ -1083,7 +1083,9 @@ mod tests {
         for path in ["/", "/pair", "/index.html"] {
             let (body, vary) = serve(path, "Box.LAN:3773").await;
             assert!(
-                body.contains(r#"<meta name="bibcode-served-host" content="box.lan:3773"></head>"#),
+                body.contains(
+                    r#"<meta name="coddy-studio-served-host" content="box.lan:3773"></head>"#
+                ),
                 "{path}: {body}"
             );
             assert_eq!(
@@ -1095,7 +1097,7 @@ mod tests {
         assert!(body.contains(r#"content="[::1]:3773""#), "{body}");
         for host in [r#"box.lan" onload="x"#, "box.lan:3773/x", "a b"] {
             let (body, _) = serve("/", host).await;
-            assert!(!body.contains("bibcode-served-host"), "{host}: {body}");
+            assert!(!body.contains("coddy-studio-served-host"), "{host}: {body}");
         }
         let (asset, _) = serve("/assets/app-AbCd1234.js", "box.lan:3773").await;
         assert_eq!(asset, "</head>");
@@ -1108,7 +1110,7 @@ mod tests {
             headers.insert(HOST, HeaderValue::from_static("127.0.0.1:3773"));
             headers.insert(
                 X_FORWARDED_HOST,
-                HeaderValue::from_static("bibcode.example.test, inner.proxy"),
+                HeaderValue::from_static("coddy-studio.example.test, inner.proxy"),
             );
             headers.insert(X_FORWARDED_PROTO, HeaderValue::from_static("https"));
             headers
@@ -1116,7 +1118,7 @@ mod tests {
         for loopback in ["127.0.0.1", "::1", "::ffff:127.0.0.1"] {
             let mut headers = forwarded();
             apply_forwarded_headers(&mut headers, Some(loopback.parse().unwrap()));
-            assert_eq!(headers[HOST], "bibcode.example.test", "{loopback}");
+            assert_eq!(headers[HOST], "coddy-studio.example.test", "{loopback}");
             assert_eq!(headers[X_FORWARDED_PROTO], "https", "{loopback}");
         }
         for untrusted in [Some("192.168.1.9".parse().unwrap()), None] {
@@ -1175,7 +1177,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn relay_preview_hosts_are_served_by_the_gateway_not_bibcode_routes() {
+    async fn relay_preview_hosts_are_served_by_the_gateway_not_coddy_studio_routes() {
         use crate::preview::{
             PreviewManager,
             gateway::{
@@ -1303,7 +1305,7 @@ mod tests {
                 vec![
                     (
                         "access-control-allow-headers",
-                        "authorization,content-type,b3,traceparent,dpop,idempotency-key,x-bibcode-desktop-bootstrap-token",
+                        "authorization,content-type,b3,traceparent,dpop,idempotency-key,x-coddy-studio-desktop-bootstrap-token",
                     ),
                     ("access-control-allow-methods", "GET,POST,DELETE,OPTIONS"),
                     ("access-control-allow-origin", "*"),
@@ -1363,10 +1365,10 @@ mod tests {
             "https://random.example.test",
             "http://127.0.0.1:65000",
             "http://localhost:5734",
-            "bibcode://other",
+            "coddy-studio://other",
             // The desktop app sends a bearer token, and cookies from its origins are refused.
-            "bibcode://app",
-            "bibcode-dev://app",
+            "coddy-studio://app",
+            "coddy-studio-dev://app",
             "null",
         ] {
             assert_dev_cors_origin(Method::GET, origin, false).await;
@@ -1379,10 +1381,10 @@ mod tests {
             "https://random.example.test",
             "http://127.0.0.1:65000",
             "http://localhost:5734",
-            "bibcode://other",
+            "coddy-studio://other",
             // The desktop app sends a bearer token, and cookies from its origins are refused.
-            "bibcode://app",
-            "bibcode-dev://app",
+            "coddy-studio://app",
+            "coddy-studio-dev://app",
             "null",
         ] {
             assert_dev_cors_origin(Method::OPTIONS, origin, false).await;

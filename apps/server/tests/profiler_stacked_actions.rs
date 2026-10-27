@@ -10,7 +10,7 @@ mod websocket_frames;
 
 use std::{fs, path::Path, process::Command, sync::Arc, time::Duration};
 
-use bibcode_server::{
+use coddy_studio_server::{
     RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     diagnostics::profiler::{findings::fingerprint, profiler_dir, runtime::ProfilerRuntime},
     production::git_vcs::{GitVcsRpcServices, register_git_vcs_rpc},
@@ -46,9 +46,10 @@ async fn stacked_action_outcomes_reach_the_profiler() {
     let cwd = repository.path().to_string_lossy().into_owned();
 
     let mut registry = RpcRegistry::empty();
-    let hosts = Arc::new(bibcode_server::source_control::ProviderHosts::default());
-    let git =
-        Arc::new(bibcode_server::git::GitRepository::default().with_provider_hosts(hosts.clone()));
+    let hosts = Arc::new(coddy_studio_server::source_control::ProviderHosts::default());
+    let git = Arc::new(
+        coddy_studio_server::git::GitRepository::default().with_provider_hosts(hosts.clone()),
+    );
     register_git_vcs_rpc(
         &mut registry,
         GitVcsRpcServices::with_repository(git, hosts)
@@ -77,7 +78,7 @@ async fn stacked_action_outcomes_reach_the_profiler() {
     .await;
     assert_eq!(committed["kind"], "action_finished", "{committed}");
 
-    // A request BiBCode refuses before any Git effect: an event, never a finding.
+    // A request Coddy Studio refuses before any Git effect: an event, never a finding.
     let rejected = run_action(
         &mut socket,
         "2",
@@ -180,8 +181,8 @@ fn init_repository(cwd: &Path) {
     let hooks = cwd.join(".hooks-empty");
     for args in [
         vec!["init", "--quiet", "-b", "main"],
-        vec!["config", "user.name", "BiBCode Test"],
-        vec!["config", "user.email", "bibcode@example.invalid"],
+        vec!["config", "user.name", "Coddy Studio Test"],
+        vec!["config", "user.email", "coddy-studio@example.invalid"],
         vec!["config", "commit.gpgSign", "false"],
         vec!["config", "core.autocrlf", "false"],
         vec!["config", "core.hooksPath", &hooks.to_string_lossy()],

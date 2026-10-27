@@ -1,4 +1,4 @@
-import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
+import type { AtomCommandResult } from "@coddy/client-runtime/state/runtime";
 import type { DiffLineAnnotation, FileContents, LineAnnotation } from "@pierre/diffs";
 import { Editor, type EditorOptions } from "@pierre/diffs/edit";
 

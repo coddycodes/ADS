@@ -830,7 +830,7 @@ struct PreviewTunnelCloseInput {
     tunnel_id: String,
 }
 
-/// The preview tunnel methods (#69). Each is bound to the caller's own BiBCode session: a
+/// The preview tunnel methods (#69). Each is bound to the caller's own Coddy Studio session: a
 /// tunnel is written to and closed only by the session that opened it.
 fn register_tunnel_rpc(registry: &mut RpcRegistry, tunnels: PreviewTunnels) {
     let open = tunnels.clone();

@@ -1,4 +1,4 @@
-import { createFilesystemEnvironmentAtoms } from "@bibcode/client-runtime/state/filesystem";
+import { createFilesystemEnvironmentAtoms } from "@coddy/client-runtime/state/filesystem";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

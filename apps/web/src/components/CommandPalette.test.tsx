@@ -8,13 +8,13 @@
  * palette by invoking the captured handlers (onExecuteItem, onValueChange,
  * onKeyDown, button onClick) directly and re-rendering.
  */
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-} from "@bibcode/client-runtime/state/shell";
-import { createModelSelection } from "@bibcode/shared/model";
+} from "@coddy/client-runtime/state/shell";
+import { createModelSelection } from "@coddy/shared/model";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -348,7 +348,7 @@ vi.mock("./ui/toast", () => ({
 }));
 
 import { CommandPalette, reduceCommandPaletteUiState } from "./CommandPalette";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { makeEnvironmentHttpApiClient } from "@bibcode/client-runtime/rpc";
+import { makeEnvironmentHttpApiClient } from "@coddy/client-runtime/rpc";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,7 +8,7 @@ import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 export class PrimaryEnvironmentHttpClient extends Context.Service<
   PrimaryEnvironmentHttpClient,
   Effect.Success<ReturnType<typeof makeEnvironmentHttpApiClient>>
->()("@bibcode/web/environments/primary/httpClient/PrimaryEnvironmentHttpClient") {}
+>()("@coddy/web/environments/primary/httpClient/PrimaryEnvironmentHttpClient") {}
 
 const make = Effect.suspend(() =>
   makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/")),

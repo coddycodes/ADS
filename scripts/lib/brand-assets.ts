@@ -1,12 +1,12 @@
 export const BRAND_ASSET_PATHS = {
-  macIconPng: "assets/prod/black-macos-1024.png",
-  linuxIconPng: "assets/prod/black-universal-1024.png",
-  macIconIcns: "assets/prod/bibcode-black-macos.icns",
-  windowsIconIco: "assets/prod/bibcode-black-windows.ico",
-  webFaviconIco: "assets/prod/bibcode-black-web-favicon.ico",
-  webFavicon16Png: "assets/prod/bibcode-black-web-favicon-16x16.png",
-  webFavicon32Png: "assets/prod/bibcode-black-web-favicon-32x32.png",
-  webAppleTouchIconPng: "assets/prod/bibcode-black-web-apple-touch-180.png",
+  macIconPng: "assets/prod/coddy-studio-macos-1024.png",
+  linuxIconPng: "assets/prod/coddy-studio-universal-1024.png",
+  macIconIcns: "assets/prod/coddy-studio-macos.icns",
+  windowsIconIco: "assets/prod/coddy-studio-windows.ico",
+  webFaviconIco: "assets/prod/coddy-studio-web-favicon.ico",
+  webFavicon16Png: "assets/prod/coddy-studio-web-favicon-16x16.png",
+  webFavicon32Png: "assets/prod/coddy-studio-web-favicon-32x32.png",
+  webAppleTouchIconPng: "assets/prod/coddy-studio-web-apple-touch-180.png",
 } as const;
 
 export type WebAssetBrand = "development" | "nightly" | "production";

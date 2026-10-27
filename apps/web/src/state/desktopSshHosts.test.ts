@@ -1,4 +1,4 @@
-import type { DesktopDiscoveredSshHost } from "@bibcode/contracts";
+import type { DesktopDiscoveredSshHost } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AtomRegistry } from "effect/reactivity";
 import * as AsyncResult from "effect/reactivity/AsyncResult";

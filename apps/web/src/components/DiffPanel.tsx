@@ -3,9 +3,9 @@ import { useParams } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
-import { safeErrorLogAttributes } from "@bibcode/client-runtime/errors";
-import type { ScopedThreadRef, TurnId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/runtime";
+import { safeErrorLogAttributes } from "@coddy/client-runtime/errors";
+import type { ScopedThreadRef, TurnId } from "@coddy/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,

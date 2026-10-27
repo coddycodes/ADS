@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@bibcode/contracts";
+import { ProjectId, ThreadId } from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {

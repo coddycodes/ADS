@@ -1,4 +1,4 @@
-import { type ApprovalRequestId, type ProviderApprovalDecision } from "@bibcode/contracts";
+import { type ApprovalRequestId, type ProviderApprovalDecision } from "@coddy/contracts";
 import { memo } from "react";
 import { Button } from "../ui/button";
 

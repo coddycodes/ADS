@@ -12,7 +12,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ReactNode } from "react";
-import type { AuthSessionState } from "@bibcode/contracts";
+import type { AuthSessionState } from "@coddy/contracts";
 
 const harness = vi.hoisted(() => {
   type Matcher = (initial: unknown) => boolean;
@@ -130,7 +130,7 @@ vi.mock("../../connection/onboarding", () => ({
   connectPairing: { label: "connectPairing" },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: () => testState.squashError,
 }));
 
@@ -139,7 +139,7 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 
 vi.mock("../../branding", () => ({
-  APP_DISPLAY_NAME: "BiBCode",
+  APP_DISPLAY_NAME: "Coddy Studio",
 }));
 
 vi.mock("../ui/button", () => ({
@@ -227,7 +227,7 @@ afterEach(() => {
 describe("PairingPendingSurface", () => {
   it("renders the app name and the validating copy", () => {
     const markup = renderToStaticMarkup(<PairingPendingSurface />);
-    expect(markup).toContain("BiBCode");
+    expect(markup).toContain("Coddy Studio");
     expect(markup).toContain("Pairing with this environment");
     expect(markup).toContain("Validating the pairing link");
   });

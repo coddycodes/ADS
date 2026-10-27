@@ -5,7 +5,7 @@ import type {
   AdvertisedEndpointReachability,
   AdvertisedEndpointSource,
   AdvertisedEndpointStatus,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 export interface CreateAdvertisedEndpointInput {
   readonly id: string;

@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessPlatform } from "@bibcode/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@coddy/shared/hostProcess";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -32,13 +32,13 @@ import {
 const temporaryDirectories: Array<string> = [];
 
 const createTemporaryDirectory = (): string => {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-shell-"));
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-shell-"));
   temporaryDirectories.push(directory);
   return directory;
 };
 
 const createWorkspaceTemporaryDirectory = (): string => {
-  const directory = NodeFS.mkdtempSync(NodePath.join(process.cwd(), ".bibcode-shell-"));
+  const directory = NodeFS.mkdtempSync(NodePath.join(process.cwd(), ".coddy-studio-shell-"));
   temporaryDirectories.push(directory);
   return directory;
 };
@@ -48,9 +48,9 @@ afterEach(() => {
     const parent = NodePath.dirname(directory);
     const base = NodePath.basename(directory);
     const isSystemTemporaryDirectory =
-      parent === NodePath.resolve(NodeOS.tmpdir()) && base.startsWith("bibcode-shell-");
+      parent === NodePath.resolve(NodeOS.tmpdir()) && base.startsWith("coddy-studio-shell-");
     const isWorkspaceTemporaryDirectory =
-      parent === process.cwd() && base.startsWith(".bibcode-shell-");
+      parent === process.cwd() && base.startsWith(".coddy-studio-shell-");
     if (!isSystemTemporaryDirectory && !isWorkspaceTemporaryDirectory) {
       throw new Error(`Refusing to remove unexpected test directory: ${directory}`);
     }
@@ -73,7 +73,7 @@ describe("extractPathFromShellOutput", () => {
   it("extracts the path between capture markers", () => {
     expect(
       extractPathFromShellOutput(
-        "__BIBCODE_PATH_START__\n/opt/homebrew/bin:/usr/bin\n__BIBCODE_PATH_END__\n",
+        "__CODDY_STUDIO_PATH_START__\n/opt/homebrew/bin:/usr/bin\n__CODDY_STUDIO_PATH_END__\n",
       ),
     ).toBe("/opt/homebrew/bin:/usr/bin");
   });
@@ -81,7 +81,7 @@ describe("extractPathFromShellOutput", () => {
   it("ignores shell startup noise around the capture markers", () => {
     expect(
       extractPathFromShellOutput(
-        "Welcome to fish\n__BIBCODE_PATH_START__\n/opt/homebrew/bin:/usr/bin\n__BIBCODE_PATH_END__\nBye\n",
+        "Welcome to fish\n__CODDY_STUDIO_PATH_START__\n/opt/homebrew/bin:/usr/bin\n__CODDY_STUDIO_PATH_END__\nBye\n",
       ),
     ).toBe("/opt/homebrew/bin:/usr/bin");
   });
@@ -91,9 +91,9 @@ describe("extractPathFromShellOutput", () => {
   });
 
   it("returns null for a missing end marker or an empty captured path", () => {
-    expect(extractPathFromShellOutput("__BIBCODE_PATH_START__/usr/bin")).toBeNull();
+    expect(extractPathFromShellOutput("__CODDY_STUDIO_PATH_START__/usr/bin")).toBeNull();
     expect(
-      extractPathFromShellOutput("__BIBCODE_PATH_START__\n \n__BIBCODE_PATH_END__"),
+      extractPathFromShellOutput("__CODDY_STUDIO_PATH_START__\n \n__CODDY_STUDIO_PATH_END__"),
     ).toBeNull();
   });
 });
@@ -106,7 +106,7 @@ describe("readPathFromLoginShell", () => {
         args: ReadonlyArray<string>,
         options: { encoding: "utf8"; timeout: number },
       ) => string
-    >(() => "__BIBCODE_ENV_PATH_START__\n/a:/b\n__BIBCODE_ENV_PATH_END__\n");
+    >(() => "__CODDY_STUDIO_ENV_PATH_START__\n/a:/b\n__CODDY_STUDIO_ENV_PATH_END__\n");
 
     expect(readPathFromLoginShell("/opt/homebrew/bin/fish", execFile)).toBe("/a:/b");
     expect(execFile).toHaveBeenCalledTimes(1);
@@ -124,8 +124,8 @@ describe("readPathFromLoginShell", () => {
     expect(args).toHaveLength(2);
     expect(args?.[0]).toBe("-ilc");
     expect(args?.[1]).toContain("printenv PATH || true");
-    expect(args?.[1]).toContain("__BIBCODE_ENV_PATH_START__");
-    expect(args?.[1]).toContain("__BIBCODE_ENV_PATH_END__");
+    expect(args?.[1]).toContain("__CODDY_STUDIO_ENV_PATH_START__");
+    expect(args?.[1]).toContain("__CODDY_STUDIO_ENV_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
   });
 });
@@ -179,7 +179,7 @@ describe("readEnvironmentFromLoginShell", () => {
 
   it("ignores captures with missing markers", () => {
     const execFile = vi.fn(() =>
-      ["__BIBCODE_ENV_PATH_START__", "/usr/bin", "__BIBCODE_ENV_OTHER_END__"].join("\n"),
+      ["__CODDY_STUDIO_ENV_PATH_START__", "/usr/bin", "__CODDY_STUDIO_ENV_OTHER_END__"].join("\n"),
     );
     expect(readEnvironmentFromLoginShell("/bin/sh", ["PATH", "OTHER"], execFile)).toEqual({});
   });
@@ -193,12 +193,12 @@ describe("readEnvironmentFromLoginShell", () => {
       ) => string
     >(() =>
       [
-        "__BIBCODE_ENV_PATH_START__",
+        "__CODDY_STUDIO_ENV_PATH_START__",
         "/a:/b",
-        "__BIBCODE_ENV_PATH_END__",
-        "__BIBCODE_ENV_SSH_AUTH_SOCK_START__",
+        "__CODDY_STUDIO_ENV_PATH_END__",
+        "__CODDY_STUDIO_ENV_SSH_AUTH_SOCK_START__",
         "/tmp/secretive.sock",
-        "__BIBCODE_ENV_SSH_AUTH_SOCK_END__",
+        "__CODDY_STUDIO_ENV_SSH_AUTH_SOCK_END__",
       ].join("\n"),
     );
 
@@ -218,11 +218,11 @@ describe("readEnvironmentFromLoginShell", () => {
       ) => string
     >(() =>
       [
-        "__BIBCODE_ENV_PATH_START__",
+        "__CODDY_STUDIO_ENV_PATH_START__",
         "/a:/b",
-        "__BIBCODE_ENV_PATH_END__",
-        "__BIBCODE_ENV_SSH_AUTH_SOCK_START__",
-        "__BIBCODE_ENV_SSH_AUTH_SOCK_END__",
+        "__CODDY_STUDIO_ENV_PATH_END__",
+        "__CODDY_STUDIO_ENV_SSH_AUTH_SOCK_START__",
+        "__CODDY_STUDIO_ENV_SSH_AUTH_SOCK_END__",
       ].join("\n"),
     );
 
@@ -240,9 +240,9 @@ describe("readEnvironmentFromLoginShell", () => {
       ) => string
     >(() =>
       [
-        "__BIBCODE_ENV_CUSTOM_VAR_START__",
+        "__CODDY_STUDIO_ENV_CUSTOM_VAR_START__",
         "  padded value  ",
-        "__BIBCODE_ENV_CUSTOM_VAR_END__",
+        "__CODDY_STUDIO_ENV_CUSTOM_VAR_END__",
       ].join("\n"),
     );
 
@@ -325,7 +325,7 @@ describe("readEnvironmentFromWindowsShell", () => {
   });
 
   it("supports an omitted options object with an explicit executor", () => {
-    const execFile = vi.fn(() => "__BIBCODE_ENV_PATH_START__\nC:\\Tools\n__BIBCODE_ENV_PATH_END__");
+    const execFile = vi.fn(() => "__CODDY_STUDIO_ENV_PATH_START__\nC:\\Tools\n__CODDY_STUDIO_ENV_PATH_END__");
     expect(readEnvironmentFromWindowsShell(["PATH"], undefined, execFile)).toEqual({
       PATH: "C:\\Tools",
     });
@@ -340,7 +340,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       ) => string
     >(
       () =>
-        "__BIBCODE_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__BIBCODE_ENV_PATH_END__\n",
+        "__CODDY_STUDIO_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__CODDY_STUDIO_ENV_PATH_END__\n",
     );
 
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
@@ -362,7 +362,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       ) => string
     >(
       () =>
-        "__BIBCODE_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__BIBCODE_ENV_FNM_DIR_END__\r\n",
+        "__CODDY_STUDIO_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__CODDY_STUDIO_ENV_FNM_DIR_END__\r\n",
     );
 
     expect(readEnvironmentFromWindowsShell(["FNM_DIR"], execFile)).toEqual({
@@ -372,7 +372,7 @@ describe("readEnvironmentFromWindowsShell", () => {
 
   it("omits requested variables that are absent from successful PowerShell output", () => {
     const execFile = vi.fn(
-      () => "__BIBCODE_ENV_PATH_START__\nC:\\Tools\n__BIBCODE_ENV_PATH_END__\n",
+      () => "__CODDY_STUDIO_ENV_PATH_START__\nC:\\Tools\n__CODDY_STUDIO_ENV_PATH_END__\n",
     );
     expect(readEnvironmentFromWindowsShell(["PATH", "FNM_DIR"], execFile)).toEqual({
       PATH: "C:\\Tools",
@@ -386,7 +386,7 @@ describe("readEnvironmentFromWindowsShell", () => {
         args: ReadonlyArray<string>,
         options: { encoding: "utf8"; timeout: number },
       ) => string
-    >(() => "__BIBCODE_ENV_PATH_START__\nC:\\Tools\n__BIBCODE_ENV_PATH_END__\n");
+    >(() => "__CODDY_STUDIO_ENV_PATH_START__\nC:\\Tools\n__CODDY_STUDIO_ENV_PATH_END__\n");
 
     expect(readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, execFile)).toEqual({
       PATH: "C:\\Tools",
@@ -410,7 +410,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       if (file === "pwsh.exe") {
         throw new Error("spawn pwsh.exe ENOENT");
       }
-      return "__BIBCODE_ENV_PATH_START__\nC:\\Tools\n__BIBCODE_ENV_PATH_END__\n";
+      return "__CODDY_STUDIO_ENV_PATH_START__\nC:\\Tools\n__CODDY_STUDIO_ENV_PATH_END__\n";
     });
 
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
@@ -806,7 +806,7 @@ effectIt.layer(NodeServices.layer)("default POSIX executable access", (it) => {
 describe("default Windows environment executor", () => {
   it("uses the Node child-process boundary when no executor is supplied", async () => {
     const execFileSync = vi.fn(
-      () => "__BIBCODE_ENV_PATH_START__\nC:\\Default\n__BIBCODE_ENV_PATH_END__\n",
+      () => "__CODDY_STUDIO_ENV_PATH_START__\nC:\\Default\n__CODDY_STUDIO_ENV_PATH_END__\n",
     );
     vi.resetModules();
     vi.doMock("node:child_process", async () => ({

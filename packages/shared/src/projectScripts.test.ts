@@ -33,7 +33,7 @@ describe("project script runtime helpers", () => {
 
       expect(projectScriptCwd(input), JSON.stringify(worktreePath)).toBe("/repo");
       expect(projectScriptRuntimeEnv(input), JSON.stringify(worktreePath)).toEqual({
-        BIBCODE_PROJECT_ROOT: "/repo",
+        CODDY_STUDIO_PROJECT_ROOT: "/repo",
       });
     }
   });
@@ -43,17 +43,17 @@ describe("project script runtime helpers", () => {
 
     expect(projectScriptCwd({ project: { cwd: "/repo" }, worktreePath })).toBe(worktreePath);
     expect(projectScriptRuntimeEnv({ project: { cwd: "/repo" }, worktreePath })).toEqual({
-      BIBCODE_PROJECT_ROOT: "/repo",
-      BIBCODE_WORKTREE_PATH: worktreePath,
+      CODDY_STUDIO_PROJECT_ROOT: "/repo",
+      CODDY_STUDIO_WORKTREE_PATH: worktreePath,
     });
   });
 
   it("builds the base environment without inventing a worktree path", () => {
     expect(projectScriptRuntimeEnv({ project: { cwd: "/repo" } })).toEqual({
-      BIBCODE_PROJECT_ROOT: "/repo",
+      CODDY_STUDIO_PROJECT_ROOT: "/repo",
     });
     expect(projectScriptRuntimeEnv({ project: { cwd: "/repo" }, worktreePath: "" })).toEqual({
-      BIBCODE_PROJECT_ROOT: "/repo",
+      CODDY_STUDIO_PROJECT_ROOT: "/repo",
     });
   });
 
@@ -63,14 +63,14 @@ describe("project script runtime helpers", () => {
         project: { cwd: "/repo" },
         worktreePath: "/worktree",
         extraEnv: {
-          BIBCODE_PROJECT_ROOT: "/custom",
-          BIBCODE_WORKTREE_PATH: "/custom-worktree",
+          CODDY_STUDIO_PROJECT_ROOT: "/custom",
+          CODDY_STUDIO_WORKTREE_PATH: "/custom-worktree",
           CUSTOM_FLAG: "1",
         },
       }),
     ).toEqual({
-      BIBCODE_PROJECT_ROOT: "/custom",
-      BIBCODE_WORKTREE_PATH: "/custom-worktree",
+      CODDY_STUDIO_PROJECT_ROOT: "/custom",
+      CODDY_STUDIO_WORKTREE_PATH: "/custom-worktree",
       CUSTOM_FLAG: "1",
     });
   });

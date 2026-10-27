@@ -4,7 +4,7 @@
 
 ## Tested revision and environment
 
-- Repository: BiBCode, branch `mubeda/main`.
+- Repository: Coddy Studio, branch `mubeda/main`.
 - Base HEAD: `dc5d6d3852572317d0f1fff461b98e69c43ed23a`, with uncommitted fixes.
 - The earlier [provider skill discovery patch](2026-10-01-provider-skill-discovery.md) was preserved.
 - Native automated host: Linux x86_64, kernel `7.2.5-3-omarchy`.

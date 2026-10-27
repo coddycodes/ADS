@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pullRequestsEnvironment } from "../../state/pullRequests";
 import { HOVER_PREFETCH_MS, prefetchGate, recordPrefetch } from "./hoverPrefetch.logic";

@@ -1,8 +1,8 @@
-import { TerminalCustomFontFamily, type TerminalFontPreference } from "@bibcode/contracts/settings";
+import { TerminalCustomFontFamily, type TerminalFontPreference } from "@coddy/contracts/settings";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export const TERMINAL_NERD_FONT_FAMILY = "BiBCode JetBrainsMono Nerd Font Mono";
+export const TERMINAL_NERD_FONT_FAMILY = "Coddy Studio JetBrainsMono Nerd Font Mono";
 export const TERMINAL_FONT_GLYPH_PROBE = "\ue0b0\uf115\u{f0001}";
 
 interface TerminalFontFaceSet {

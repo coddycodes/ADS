@@ -958,7 +958,7 @@ async fn a_moved_project_root_readmits_the_threads_that_inherit_it() {
 /// Measures keystroke round trips over a real authenticated WebSocket while the SQLite worker or
 /// the connection's outbound lane is busy (#82). Prints percentiles; asserts nothing.
 ///
-/// `BIBCODE_MEASURE_AUTH=0` runs the same session unauthenticated, isolating the per-request
+/// `CODDY_STUDIO_MEASURE_AUTH=0` runs the same session unauthenticated, isolating the per-request
 /// session refresh the read loop performs before it spawns a handler.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "measurement; run with --ignored --nocapture"]
@@ -970,7 +970,8 @@ async fn measure_keystroke_round_trips_under_database_and_outbound_load() {
         rpc::{RpcSessionContext, run_session},
     };
 
-    let authenticated = std::env::var("BIBCODE_MEASURE_AUTH").map_or(true, |value| value != "0");
+    let authenticated =
+        std::env::var("CODDY_STUDIO_MEASURE_AUTH").map_or(true, |value| value != "0");
     let mut fixture = Fixture::start().await;
     let temp = tempfile::tempdir().expect("auth state");
     let config = ServerConfig::new(temp.path())
@@ -1000,7 +1001,7 @@ async fn measure_keystroke_round_trips_under_database_and_outbound_load() {
 
     let mut rpc = RpcRegistry::empty();
     register_server_terminal_rpc(&mut rpc, fixture.services.clone());
-    let chunk_bytes = std::env::var("BIBCODE_MEASURE_CHUNK_BYTES")
+    let chunk_bytes = std::env::var("CODDY_STUDIO_MEASURE_CHUNK_BYTES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(1024 * 1024);

@@ -5,11 +5,11 @@ import type {
   SourceControlProviderInfo,
   SourceControlProviderKind,
   VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   NEUTRAL_CHANGE_REQUEST_PRESENTATION,
   resolveChangeRequestPresentation,
-} from "@bibcode/shared/sourceControl";
+} from "@coddy/shared/sourceControl";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -338,7 +338,7 @@ describe("resolveCreatePullRequestReview", () => {
 
   it("tells an unidentified host how to get identified", () => {
     expect(UNIDENTIFIED_HOST_REASON).toBe(
-      "BiBCode hasn't identified this repository's host yet. Open Pull Requests for this project or run Rescan in Settings → Source Control.",
+      "Coddy Studio hasn't identified this repository's host yet. Open Pull Requests for this project or run Rescan in Settings → Source Control.",
     );
   });
 

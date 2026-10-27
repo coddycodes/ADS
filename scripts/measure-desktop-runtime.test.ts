@@ -44,11 +44,11 @@ const rows: ReadonlyArray<RuntimeProcessRow> = [
   {
     pid: 10,
     ppid: 1,
-    processName: "BiBCode",
-    command: "BiBCode.exe",
+    processName: "Coddy Studio",
+    command: "Coddy Studio.exe",
     privateBytes: 100,
     workingSetBytes: 150,
-    mainWindowTitle: "BiBCode",
+    mainWindowTitle: "Coddy Studio",
   },
   {
     pid: 11,
@@ -98,11 +98,11 @@ it("ignores stale children that predate the launched desktop process", () => {
     {
       pid: 10,
       ppid: 1,
-      processName: "BiBCode",
-      command: "BiBCode.exe",
+      processName: "Coddy Studio",
+      command: "Coddy Studio.exe",
       privateBytes: 100,
       workingSetBytes: 150,
-      mainWindowTitle: "BiBCode",
+      mainWindowTitle: "Coddy Studio",
       startedAtEpochMs: 10_000,
     },
     {
@@ -168,7 +168,7 @@ it("parses runtime measurement CLI flags with repeated args and environment entr
       "--label",
       "tauri-win",
       "--command",
-      "BiBCode.exe",
+      "Coddy Studio.exe",
       "--arg",
       "--inspect",
       "--arg",
@@ -176,15 +176,15 @@ it("parses runtime measurement CLI flags with repeated args and environment entr
       "--cwd",
       "X:/repo",
       "--ready-url",
-      "http://127.0.0.1:3773/.well-known/bibcode/environment",
+      "http://127.0.0.1:3773/.well-known/coddy-studio/environment",
       "--window-title",
-      "BiBCode",
+      "Coddy Studio",
       "--idle-ms",
       "5000",
       "--timeout-ms",
       "60000",
       "--env",
-      "BIBCODE_HOME=X:/tmp/bibcode",
+      "CODDY_STUDIO_HOME=X:/tmp/coddy-studio",
       "--keep-running",
       "--json-out",
       "out/runtime.json",
@@ -193,14 +193,14 @@ it("parses runtime measurement CLI flags with repeated args and environment entr
     ]),
     {
       label: "tauri-win",
-      command: "BiBCode.exe",
+      command: "Coddy Studio.exe",
       args: ["--inspect", "value"],
       cwd: "X:/repo",
-      readyUrl: "http://127.0.0.1:3773/.well-known/bibcode/environment",
-      windowTitle: "BiBCode",
+      readyUrl: "http://127.0.0.1:3773/.well-known/coddy-studio/environment",
+      windowTitle: "Coddy Studio",
       idleMs: 5_000,
       timeoutMs: 60_000,
-      env: { BIBCODE_HOME: "X:/tmp/bibcode" },
+      env: { CODDY_STUDIO_HOME: "X:/tmp/coddy-studio" },
       keepRunning: true,
       jsonOut: "out/runtime.json",
       markdownOut: "out/runtime.md",
@@ -252,7 +252,7 @@ it("reports missing desktop commands as measurement errors", async () => {
     measureDesktopRuntime(
       {
         label: "missing-command",
-        command: "bibcode-missing-desktop-command-for-test",
+        command: "coddy-studio-missing-desktop-command-for-test",
         args: [],
         idleMs: 1,
         timeoutMs: 1,
@@ -262,12 +262,12 @@ it("reports missing desktop commands as measurement errors", async () => {
       makeMeasurementHost({
         spawn: async () => {
           throw new Error(
-            "Failed to start desktop process 'bibcode-missing-desktop-command-for-test'",
+            "Failed to start desktop process 'coddy-studio-missing-desktop-command-for-test'",
           );
         },
       }),
     ),
-  ).rejects.toThrow("Failed to start desktop process 'bibcode-missing-desktop-command-for-test'");
+  ).rejects.toThrow("Failed to start desktop process 'coddy-studio-missing-desktop-command-for-test'");
 });
 
 it("rejects incomplete and malformed CLI values", () => {
@@ -312,23 +312,23 @@ it("normalizes Windows and POSIX process sampler rows", () => {
     normalizeWindowsProcessRows({
       ProcessId: 42,
       ParentProcessId: 7,
-      ProcessName: "bibcode",
+      ProcessName: "coddy-studio",
       CommandLine: "",
       PrivateMemorySize64: 100,
       WorkingSet64: 0,
       WorkingSetSize: 200,
-      MainWindowTitle: "BiBCode",
+      MainWindowTitle: "Coddy Studio",
       CreationTimeIso: "2026-07-14T00:00:00.000Z",
     }),
     [
       {
         pid: 42,
         ppid: 7,
-        processName: "bibcode",
-        command: "bibcode",
+        processName: "coddy-studio",
+        command: "coddy-studio",
         privateBytes: 100,
         workingSetBytes: 200,
-        mainWindowTitle: "BiBCode",
+        mainWindowTitle: "Coddy Studio",
         startedAtEpochMs: Date.parse("2026-07-14T00:00:00.000Z"),
       },
     ],
@@ -379,7 +379,7 @@ it("executes both platform sampler command plans through the abortable reader", 
   ) => {
     calls.push({ command, signal: options.signal });
     return command === "powershell.exe"
-      ? JSON.stringify({ ProcessId: 42, ParentProcessId: 1, ProcessName: "bibcode" })
+      ? JSON.stringify({ ProcessId: 42, ParentProcessId: 1, ProcessName: "coddy-studio" })
       : " 9 1 4 app /bin/app\n";
   };
   const signal = new AbortController().signal;
@@ -495,7 +495,7 @@ it("polls readiness deterministically and cancels every response body", async ()
 it("polls window readiness and reports timeout", async () => {
   let now = 0;
   let reads = 0;
-  const duration = await waitForWindowTitle(10, "bibcode", 2_000, {
+  const duration = await waitForWindowTitle(10, "coddy-studio", 2_000, {
     now: () => now,
     sleep: async (ms) => {
       now += ms;
@@ -504,7 +504,7 @@ it("polls window readiness and reports timeout", async () => {
       reads += 1;
       return reads === 1
         ? rows.map((row) => ({ ...row, mainWindowTitle: "" }))
-        : [{ ...rows[0]!, mainWindowTitle: "BiBCode ready" }];
+        : [{ ...rows[0]!, mainWindowTitle: "Coddy Studio ready" }];
     },
   });
   assert.equal(duration, 500);
@@ -568,7 +568,7 @@ it("rejects readiness work that is already cancelled", async () => {
   await expect(
     waitForWindowTitle(
       10,
-      "BiBCode",
+      "Coddy Studio",
       1,
       { now: () => 0, sleep: async () => undefined, readProcessRows: async () => rows },
       controller.signal,
@@ -1018,7 +1018,7 @@ it("cancels and awaits sibling readiness gates before process cleanup", async ()
         command: "app",
         args: [],
         readyUrl: "http://localhost/ready",
-        windowTitle: "BiBCode",
+        windowTitle: "Coddy Studio",
         idleMs: 1,
         timeoutMs: 10,
         env: {},
@@ -1108,7 +1108,7 @@ it("retains reparented descendants when the root exits during every pre-sample p
           command: "app",
           args: [],
           ...(phase === "url" ? { readyUrl: "http://localhost:5733/ready" } : {}),
-          ...(phase === "window" ? { windowTitle: "BiBCode" } : {}),
+          ...(phase === "window" ? { windowTitle: "Coddy Studio" } : {}),
           idleMs: 777,
           timeoutMs: 100,
           env: {},
@@ -1334,7 +1334,7 @@ it("composes every runtime host operation from injected system dependencies", as
   );
   const signal = new AbortController().signal;
   assert.equal(await host.waitForReadyUrl("http://localhost/ready", 1, signal), 0);
-  assert.equal(await host.waitForWindowTitle(10, "BiBCode", 1, signal), 0);
+  assert.equal(await host.waitForWindowTitle(10, "Coddy Studio", 1, signal), 0);
   const monitorController = new AbortController();
   monitorController.abort(new Error("stop composed monitor"));
   if (!host.monitorOwnership) throw new Error("Windows host did not compose ownership monitoring.");
@@ -1420,7 +1420,7 @@ it("skips periodic ownership sampling for POSIX measurements", async () => {
 });
 
 it("writes text files, records timestamps, and restores process exit state", () => {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-measure-write-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-measure-write-"));
   const originalExitCode = process.exitCode;
   try {
     const filePath = NodePath.join(root, "nested", "output.txt");
@@ -1448,7 +1448,7 @@ it("measures readiness, sampling, and cleanup through an injected host", async (
       command: "app",
       args: [],
       readyUrl: "http://localhost:5733/ready",
-      windowTitle: "BiBCode",
+      windowTitle: "Coddy Studio",
       idleMs: 5,
       timeoutMs: 100,
       env: {},
@@ -1478,7 +1478,7 @@ it("measures readiness, sampling, and cleanup through an injected host", async (
 });
 
 it("writes CLI artifacts and reports main failures without mutating process state", async () => {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-measure-cli-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-measure-cli-"));
   const stdout: string[] = [];
   const stderr: string[] = [];
   const host = makeMeasurementHost({

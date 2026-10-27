@@ -4,9 +4,9 @@ import * as NodeOS from "node:os";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NetService from "@bibcode/shared/Net";
-import { HostProcessEnvironment } from "@bibcode/shared/hostProcess";
-import { resolveSpawnCommand } from "@bibcode/shared/shell";
+import * as NetService from "@coddy/shared/Net";
+import { HostProcessEnvironment } from "@coddy/shared/hostProcess";
+import { resolveSpawnCommand } from "@coddy/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Hash from "effect/Hash";
@@ -26,21 +26,21 @@ const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
 
-export const DEFAULT_BIBCODE_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".bibcode"),
+export const DEFAULT_CODDY_STUDIO_HOME = Effect.map(Effect.service(Path.Path), (path) =>
+  path.join(NodeOS.homedir(), ".coddy/studio"),
 );
 
 const MODE_ARGS = {
   dev: [
     "run",
-    "--filter=@bibcode/contracts",
-    "--filter=@bibcode/web",
-    "--filter=bibcode",
+    "--filter=@coddy/contracts",
+    "--filter=@coddy/web",
+    "--filter=coddy-studio",
     "--parallel",
     "dev",
   ],
-  "dev:server": ["run", "--filter=bibcode", "dev"],
-  "dev:web": ["run", "--filter=@bibcode/web", "dev"],
+  "dev:server": ["run", "--filter=coddy-studio", "dev"],
+  "dev:web": ["run", "--filter=@coddy/web", "dev"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
@@ -67,7 +67,7 @@ export class DevRunnerConfigurationError extends Schema.TaggedError<DevRunnerCon
 export class DevRunnerInvalidPortOffsetError extends Schema.TaggedError<DevRunnerInvalidPortOffsetError>()(
   "DevRunnerInvalidPortOffsetError",
   {
-    configKey: Schema.Literal("BIBCODE_PORT_OFFSET"),
+    configKey: Schema.Literal("CODDY_STUDIO_PORT_OFFSET"),
     portOffset: Schema.Finite,
     minimum: Schema.Finite,
   },
@@ -146,8 +146,8 @@ const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
 const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
   Config.Int(name).pipe(Config.option, Config.map(optionToUndefined));
 const OffsetConfig = Config.all({
-  portOffset: optionalIntegerConfig("BIBCODE_PORT_OFFSET"),
-  devInstance: optionalStringConfig("BIBCODE_DEV_INSTANCE"),
+  portOffset: optionalIntegerConfig("CODDY_STUDIO_PORT_OFFSET"),
+  devInstance: optionalStringConfig("CODDY_STUDIO_DEV_INSTANCE"),
 });
 
 export function resolveOffset(config: {
@@ -161,7 +161,7 @@ export function resolveOffset(config: {
     if (config.portOffset < 0) {
       return Effect.fail(
         new DevRunnerInvalidPortOffsetError({
-          configKey: "BIBCODE_PORT_OFFSET",
+          configKey: "CODDY_STUDIO_PORT_OFFSET",
           portOffset: config.portOffset,
           minimum: 0,
         }),
@@ -169,7 +169,7 @@ export function resolveOffset(config: {
     }
     return Effect.succeed({
       offset: config.portOffset,
-      source: `BIBCODE_PORT_OFFSET=${config.portOffset}`,
+      source: `CODDY_STUDIO_PORT_OFFSET=${config.portOffset}`,
     });
   }
 
@@ -181,12 +181,12 @@ export function resolveOffset(config: {
   if (/^\d+$/.test(seed)) {
     return Effect.succeed({
       offset: Number(seed),
-      source: `numeric BIBCODE_DEV_INSTANCE=${seed}`,
+      source: `numeric CODDY_STUDIO_DEV_INSTANCE=${seed}`,
     });
   }
 
   const offset = ((Hash.string(seed) >>> 0) % MAX_HASH_OFFSET) + 1;
-  return Effect.succeed({ offset, source: `hashed BIBCODE_DEV_INSTANCE=${seed}` });
+  return Effect.succeed({ offset, source: `hashed CODDY_STUDIO_DEV_INSTANCE=${seed}` });
 }
 
 function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
@@ -198,7 +198,7 @@ function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, neve
       return path.resolve(configured);
     }
 
-    return yield* DEFAULT_BIBCODE_HOME;
+    return yield* DEFAULT_CODDY_STUDIO_HOME;
   });
 }
 
@@ -237,8 +237,8 @@ export function createDevRunnerEnv({
       ...baseEnv,
       PORT: String(webPort),
       VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://localhost:${webPort}`,
-      BIBCODE_HOME: resolvedBaseDir,
-      BIBCODE_PORT: String(serverPort),
+      CODDY_STUDIO_HOME: resolvedBaseDir,
+      CODDY_STUDIO_PORT: String(serverPort),
       VITE_HTTP_URL: `http://localhost:${serverPort}`,
       VITE_WS_URL: `ws://localhost:${serverPort}`,
     };
@@ -246,40 +246,40 @@ export function createDevRunnerEnv({
     // Rebuilt ad-hoc macOS binaries have unstable code requirements, so an
     // automatic Claude keychain read can prompt after every dev rebuild.
     // Explicitly opt in when testing provider usage with a signed/stable host.
-    if (output.BIBCODE_CLAUDE_KEYCHAIN_ACCESS !== "enabled") {
-      output.BIBCODE_CLAUDE_KEYCHAIN_ACCESS = "disabled";
+    if (output.CODDY_STUDIO_CLAUDE_KEYCHAIN_ACCESS !== "enabled") {
+      output.CODDY_STUDIO_CLAUDE_KEYCHAIN_ACCESS = "disabled";
     }
 
     if (host !== undefined) {
-      output.BIBCODE_HOST = host;
+      output.CODDY_STUDIO_HOST = host;
     }
 
     if (noBrowser !== undefined) {
-      output.BIBCODE_NO_BROWSER = String(noBrowser);
+      output.CODDY_STUDIO_NO_BROWSER = String(noBrowser);
     } else {
-      Reflect.deleteProperty(output, "BIBCODE_NO_BROWSER");
+      Reflect.deleteProperty(output, "CODDY_STUDIO_NO_BROWSER");
     }
 
     if (autoBootstrapProjectFromCwd !== undefined) {
-      output.BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
+      output.CODDY_STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
     } else {
-      Reflect.deleteProperty(output, "BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD");
+      Reflect.deleteProperty(output, "CODDY_STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD");
     }
 
     if (logWebSocketEvents !== undefined) {
-      output.BIBCODE_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
+      output.CODDY_STUDIO_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
     } else {
-      Reflect.deleteProperty(output, "BIBCODE_LOG_WS_EVENTS");
+      Reflect.deleteProperty(output, "CODDY_STUDIO_LOG_WS_EVENTS");
     }
 
     if (mode === "dev") {
-      output.BIBCODE_MODE = "web";
-      Reflect.deleteProperty(output, "BIBCODE_DESKTOP_WS_URL");
+      output.CODDY_STUDIO_MODE = "web";
+      Reflect.deleteProperty(output, "CODDY_STUDIO_DESKTOP_WS_URL");
     }
 
     if (mode === "dev:server" || mode === "dev:web") {
-      output.BIBCODE_MODE = "web";
-      Reflect.deleteProperty(output, "BIBCODE_DESKTOP_WS_URL");
+      output.CODDY_STUDIO_MODE = "web";
+      Reflect.deleteProperty(output, "CODDY_STUDIO_DESKTOP_WS_URL");
     }
 
     return output;
@@ -460,7 +460,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       Effect.mapError(
         (cause) =>
           new DevRunnerConfigurationError({
-            configKeys: ["BIBCODE_PORT_OFFSET", "BIBCODE_DEV_INSTANCE"],
+            configKeys: ["CODDY_STUDIO_PORT_OFFSET", "CODDY_STUDIO_DEV_INSTANCE"],
             cause,
           }),
       ),
@@ -495,7 +495,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         : "";
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.BIBCODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.BIBCODE_HOME)}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.CODDY_STUDIO_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.CODDY_STUDIO_HOME)}`,
     );
 
     if (input.dryRun) {
@@ -561,32 +561,32 @@ const devRunnerCli = Command.make("dev-runner", {
     Argument.withDescription("Development mode to run."),
   ),
   homeDir: Flag.String("home-dir").pipe(
-    Flag.withDescription("Base directory for all BiBCode data (equivalent to BIBCODE_HOME)."),
-    Flag.withFallbackConfig(optionalStringConfig("BIBCODE_HOME")),
+    Flag.withDescription("Base directory for all Coddy Studio data (equivalent to CODDY_STUDIO_HOME)."),
+    Flag.withFallbackConfig(optionalStringConfig("CODDY_STUDIO_HOME")),
   ),
   noBrowser: Flag.Boolean("no-browser").pipe(
-    Flag.withDescription("Browser auto-open toggle (equivalent to BIBCODE_NO_BROWSER)."),
-    Flag.withFallbackConfig(optionalBooleanConfig("BIBCODE_NO_BROWSER")),
+    Flag.withDescription("Browser auto-open toggle (equivalent to CODDY_STUDIO_NO_BROWSER)."),
+    Flag.withFallbackConfig(optionalBooleanConfig("CODDY_STUDIO_NO_BROWSER")),
   ),
   autoBootstrapProjectFromCwd: Flag.Boolean("auto-bootstrap-project-from-cwd").pipe(
     Flag.withDescription(
-      "Auto-bootstrap toggle (equivalent to BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
+      "Auto-bootstrap toggle (equivalent to CODDY_STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
     ),
-    Flag.withFallbackConfig(optionalBooleanConfig("BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
+    Flag.withFallbackConfig(optionalBooleanConfig("CODDY_STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
   ),
   logWebSocketEvents: Flag.Boolean("log-websocket-events").pipe(
-    Flag.withDescription("WebSocket event logging toggle (equivalent to BIBCODE_LOG_WS_EVENTS)."),
+    Flag.withDescription("WebSocket event logging toggle (equivalent to CODDY_STUDIO_LOG_WS_EVENTS)."),
     Flag.withAlias("log-ws-events"),
-    Flag.withFallbackConfig(optionalBooleanConfig("BIBCODE_LOG_WS_EVENTS")),
+    Flag.withFallbackConfig(optionalBooleanConfig("CODDY_STUDIO_LOG_WS_EVENTS")),
   ),
   host: Flag.String("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to BIBCODE_HOST)."),
-    Flag.withFallbackConfig(optionalStringConfig("BIBCODE_HOST")),
+    Flag.withDescription("Server host/interface override (forwards to CODDY_STUDIO_HOST)."),
+    Flag.withFallbackConfig(optionalStringConfig("CODDY_STUDIO_HOST")),
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to BIBCODE_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("BIBCODE_PORT")),
+    Flag.withDescription("Server port override (forwards to CODDY_STUDIO_PORT)."),
+    Flag.withFallbackConfig(optionalPortConfig("CODDY_STUDIO_PORT")),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),

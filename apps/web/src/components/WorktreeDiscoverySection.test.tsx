@@ -11,8 +11,8 @@ import {
   type ServerConfig,
   type VcsWorktreeCatalogSnapshot,
   type VcsWorktreeDescriptor,
-} from "@bibcode/contracts";
-import { createModelSelection } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { createModelSelection } from "@coddy/shared/model";
 import { AsyncResult } from "effect/reactivity";
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -392,8 +392,8 @@ describe("WorktreeDiscoverySection", () => {
       .map((element) => element.getAttribute("aria-label"))
       .filter((name): name is string => name?.startsWith("Add feature/shared from") === true);
     expect(addNames).toEqual([
-      `Add feature/shared from Shared host (environment ${ENVIRONMENT_ID}, project ${PROJECT_ID}) at ${sharedPath} to BiBCode`,
-      `Add feature/shared from Shared host (environment ${REMOTE_ENVIRONMENT_ID}, project ${REMOTE_PROJECT_ID}) at ${sharedPath} to BiBCode`,
+      `Add feature/shared from Shared host (environment ${ENVIRONMENT_ID}, project ${PROJECT_ID}) at ${sharedPath} to Coddy Studio`,
+      `Add feature/shared from Shared host (environment ${REMOTE_ENVIRONMENT_ID}, project ${REMOTE_PROJECT_ID}) at ${sharedPath} to Coddy Studio`,
     ]);
     expect(new Set(addNames).size).toBe(2);
 
@@ -430,8 +430,8 @@ describe("WorktreeDiscoverySection", () => {
           name?.startsWith("Add discovered worktree feature/shared") === true,
       );
     expect(shownNames).toEqual([
-      `Add discovered worktree feature/shared from Shared host (environment ${ENVIRONMENT_ID}, project ${PROJECT_ID}) at ${sharedPath} to BiBCode`,
-      `Add discovered worktree feature/shared from Shared host (environment ${REMOTE_ENVIRONMENT_ID}, project ${REMOTE_PROJECT_ID}) at ${sharedPath} to BiBCode`,
+      `Add discovered worktree feature/shared from Shared host (environment ${ENVIRONMENT_ID}, project ${PROJECT_ID}) at ${sharedPath} to Coddy Studio`,
+      `Add discovered worktree feature/shared from Shared host (environment ${REMOTE_ENVIRONMENT_ID}, project ${REMOTE_PROJECT_ID}) at ${sharedPath} to Coddy Studio`,
     ]);
     expect(new Set(shownNames).size).toBe(2);
   });
@@ -457,11 +457,11 @@ describe("WorktreeDiscoverySection", () => {
     );
 
     expect(
-      button(`Add feature/shared from ${LOCAL_ACCESSIBLE_SCOPE} at ${localPath} to BiBCode`),
+      button(`Add feature/shared from ${LOCAL_ACCESSIBLE_SCOPE} at ${localPath} to Coddy Studio`),
     ).toBeDefined();
     expect(
       button(
-        `Add discovered worktree feature/shared from ${REMOTE_ACCESSIBLE_SCOPE} at ${remotePath} to BiBCode`,
+        `Add discovered worktree feature/shared from ${REMOTE_ACCESSIBLE_SCOPE} at ${remotePath} to Coddy Studio`,
       ),
     ).toBeDefined();
 
@@ -547,7 +547,7 @@ describe("WorktreeDiscoverySection", () => {
         const addAction = candidateRow.lastElementChild as HTMLButtonElement | null;
         expect(addAction?.getAttribute("data-worktree-add-action")).toBe("true");
         expect(addAction?.className).toContain("shrink-0");
-        expect(addAction?.getAttribute("aria-label")).toContain(` at ${path} to BiBCode`);
+        expect(addAction?.getAttribute("aria-label")).toContain(` at ${path} to Coddy Studio`);
       }
     },
   );
@@ -567,7 +567,7 @@ describe("WorktreeDiscoverySection", () => {
     );
 
     await act(async () =>
-      button(`Add feature/one from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/one to BiBCode`).click(),
+      button(`Add feature/one from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/one to Coddy Studio`).click(),
     );
 
     expect(testState.commandCalls).toContainEqual({
@@ -664,7 +664,7 @@ describe("WorktreeDiscoverySection", () => {
     );
 
     await act(async () => {
-      button(`Add feature/one from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/one to BiBCode`).click();
+      button(`Add feature/one from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/one to Coddy Studio`).click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -703,7 +703,7 @@ describe("WorktreeDiscoverySection", () => {
     expect(testState.toastAdd).toHaveBeenCalledWith({
       type: "success",
       title: "Added 1 discovered worktree",
-      description: "All discovered worktrees were added to BiBCode.",
+      description: "All discovered worktrees were added to Coddy Studio.",
     });
 
     await act(async () =>
@@ -734,7 +734,7 @@ describe("WorktreeDiscoverySection", () => {
 
     await act(async () => {
       button(
-        `Add feature/only from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/only to BiBCode`,
+        `Add feature/only from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/only to Coddy Studio`,
       ).click();
       await Promise.resolve();
     });
@@ -772,7 +772,7 @@ describe("WorktreeDiscoverySection", () => {
 
     await act(async () => {
       button(
-        `Add feature/delayed from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/delayed to BiBCode`,
+        `Add feature/delayed from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/delayed to Coddy Studio`,
       ).click();
       await Promise.resolve();
     });
@@ -891,7 +891,7 @@ describe("WorktreeDiscoverySection", () => {
     expect(document.body.textContent).toContain("/worktrees/shown");
     await act(async () =>
       button(
-        `Add discovered worktree feature/shown from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/shown to BiBCode`,
+        `Add discovered worktree feature/shown from ${LOCAL_ACCESSIBLE_SCOPE} at /worktrees/shown to Coddy Studio`,
       ).click(),
     );
 

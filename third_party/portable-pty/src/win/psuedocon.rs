@@ -87,7 +87,7 @@ impl PsuedoCon {
                 output.as_raw_handle() as _,
                 // INHERIT_CURSOR makes conhost emit a DSR cursor-position
                 // query and blocks startup until the PTY client replies.
-                // BiBCode streams terminal bytes without emulating a terminal
+                // Coddy Studio streams terminal bytes without emulating a terminal
                 // response parser, so enabling it deadlocks every direct
                 // console child before it can produce embedded output.
                 PSEUDOCONSOLE_RESIZE_QUIRK | PSEUDOCONSOLE_WIN32_INPUT_MODE,

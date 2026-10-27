@@ -1,4 +1,4 @@
-import type { LocalApi } from "@bibcode/contracts";
+import type { LocalApi } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
 

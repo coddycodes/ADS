@@ -1,5 +1,5 @@
 {
-  "name": "@bibcode/shared",
+  "name": "@coddy/shared",
   "private": true,
   "type": "module",
   "exports": {
@@ -194,7 +194,7 @@
     "test": "node ../../scripts/run-local-vp.mjs test run"
   },
   "dependencies": {
-    "@bibcode/contracts": "workspace:*",
+    "@coddy/contracts": "workspace:*",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "effect": "catalog:",

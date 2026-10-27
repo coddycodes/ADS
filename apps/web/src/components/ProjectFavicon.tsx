@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { FolderIcon } from "lucide-react";
 import { useState } from "react";
 import { useAssetUrl } from "../assets/assetUrls";

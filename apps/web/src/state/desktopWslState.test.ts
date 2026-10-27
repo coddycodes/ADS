@@ -1,4 +1,4 @@
-import type { DesktopWslState } from "@bibcode/contracts";
+import type { DesktopWslState } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { AtomRegistry } from "effect/reactivity";

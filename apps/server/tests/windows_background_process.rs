@@ -3,13 +3,13 @@
 
 use std::{path::Path, process::Stdio, time::Duration};
 
-use bibcode_server::process::{
+use coddy_studio_server::process::{
     configure_background_command, configure_supervised_background_command_wrap,
 };
 use process_wrap::tokio::{ChildWrapper, CommandWrap};
 use windows_sys::Win32::System::Console::GetConsoleWindow;
 
-const CONSOLE_PROBE_CHILD_ENV: &str = "BIBCODE_TEST_GUI_CONSOLE_PROBE_CHILD";
+const CONSOLE_PROBE_CHILD_ENV: &str = "CODDY_STUDIO_TEST_GUI_CONSOLE_PROBE_CHILD";
 const CONSOLE_PROBE_INTEGRATION_DEADLINE: Duration = Duration::from_secs(30);
 const NO_CONSOLE_MARKER: &str = "no-console";
 

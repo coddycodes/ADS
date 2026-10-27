@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/models";
 import { describe, expect, it } from "vite-plus/test";
 
 import { rankBesideThreadCandidates } from "./openBesideThread.logic";

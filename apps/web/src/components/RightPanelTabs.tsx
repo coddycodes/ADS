@@ -1,6 +1,6 @@
-import type { ContextMenuItem, PreviewSessionSnapshot } from "@bibcode/contracts";
-import { formatChangeRequestNumber } from "@bibcode/shared/sourceControl";
-import { getTerminalLabel } from "@bibcode/shared/terminalLabels";
+import type { ContextMenuItem, PreviewSessionSnapshot } from "@coddy/contracts";
+import { formatChangeRequestNumber } from "@coddy/shared/sourceControl";
+import { getTerminalLabel } from "@coddy/shared/terminalLabels";
 import {
   Bot,
   ClipboardList,
@@ -68,7 +68,7 @@ interface RightPanelTabsProps {
 }
 
 const SURFACE_DISABLED_REASONS = {
-  browser: "Browser previews are only available in the BiBCode desktop app.",
+  browser: "Browser previews are only available in the Coddy Studio desktop app.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
   sourceControl: "Source control is only available for server threads in Git repositories.",

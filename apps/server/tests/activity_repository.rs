@@ -1,5 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use bibcode_server::{
+use coddy_studio_server::{
     activity::{
         ActivityActorControlState, ActivityActorSummary, ActivityCapabilities, ActivityChange,
         ActivityDelta, ActivityEntry, ActivityEntryKind, ActivityEntryTone,
@@ -1652,7 +1652,7 @@ async fn canonical_fractional_timestamps_sort_by_instant() {
         .expect("roster");
     assert!(matches!(
         &page.records[0],
-        bibcode_server::activity::ActivityRecordSummary::Actor(actor)
+        coddy_studio_server::activity::ActivityRecordSummary::Actor(actor)
             if actor.id == "actor:fractional"
     ));
 }
@@ -3435,7 +3435,7 @@ fn actor_summary(
     started_at: &str,
     updated_at: &str,
     terminal_at: Option<&str>,
-) -> Result<ActivityActorSummary, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityActorSummary, coddy_studio_server::activity::ActivityModelError> {
     ActivityActorSummary::try_new(
         id,
         parent_actor_id,
@@ -3457,7 +3457,7 @@ fn work_item_summary(
     started_at: &str,
     updated_at: &str,
     terminal_at: Option<&str>,
-) -> Result<ActivityWorkItemSummary, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityWorkItemSummary, coddy_studio_server::activity::ActivityModelError> {
     ActivityWorkItemSummary::try_new(
         id,
         owner_actor_id,
@@ -3510,7 +3510,7 @@ fn entry(
     owner_kind: ActivityRecordKind,
     owner_id: &str,
     created_at: &str,
-) -> Result<ActivityEntry, bibcode_server::activity::ActivityModelError> {
+) -> Result<ActivityEntry, coddy_studio_server::activity::ActivityModelError> {
     ActivityEntry::try_new(
         id,
         owner_kind,

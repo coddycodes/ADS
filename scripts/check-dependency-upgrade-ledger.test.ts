@@ -21,7 +21,7 @@ function writeFixture(root: string, relativePath: string, contents: string): voi
 }
 
 function withRepositoryFixture<T>(run: (root: string) => T, temporaryBase = NodeOS.tmpdir()): T {
-  const root = NodeFS.mkdtempSync(NodePath.join(temporaryBase, "bibcode-dependency-ledger-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(temporaryBase, "coddy-studio-dependency-ledger-"));
   try {
     writeFixture(
       root,
@@ -54,10 +54,10 @@ function withRepositoryFixture<T>(run: (root: string) => T, temporaryBase = Node
       root,
       "apps/web/package.json",
       JSON.stringify({
-        name: "@bibcode/web",
+        name: "@coddy/web",
         dependencies: {
           "@base-ui/react": "^1.4.1",
-          "@bibcode/contracts": "workspace:*",
+          "@coddy/contracts": "workspace:*",
           effect: "catalog:",
         },
       }),
@@ -66,7 +66,7 @@ function withRepositoryFixture<T>(run: (root: string) => T, temporaryBase = Node
       root,
       "apps/desktop/package.json",
       JSON.stringify({
-        name: "@bibcode/desktop",
+        name: "@coddy/desktop",
         scripts: {
           build: "pnpm dlx @tauri-apps/cli@2.11.4 build",
         },
@@ -88,7 +88,7 @@ function withRepositoryFixture<T>(run: (root: string) => T, temporaryBase = Node
         'portable-pty = "0.9.0"',
         'windows = "0.62.2"',
         'windows-sys = "0.61.2"',
-        'bibcode-server = { path = "apps/server" }',
+        'coddy-studio-server = { path = "apps/server" }',
         "",
         "[patch.crates-io]",
         'portable-pty = { path = "third_party/portable-pty" }',
@@ -102,7 +102,7 @@ function withRepositoryFixture<T>(run: (root: string) => T, temporaryBase = Node
       "apps/server/Cargo.toml",
       [
         "[package]",
-        'name = "bibcode-server"',
+        'name = "coddy-studio-server"',
         'version = "0.0.0"',
         "",
         "[dependencies]",
@@ -300,7 +300,7 @@ function findUnexpectedSourceReferences(root: string, dependency: string): Array
 describe("dependency upgrade ledger discovery", () => {
   it("cleans a repository fixture when its callback fails", () => {
     const temporaryBase = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-dependency-ledger-owner-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-dependency-ledger-owner-"),
     );
     try {
       expect(() =>
@@ -327,7 +327,7 @@ describe("dependency upgrade ledger discovery", () => {
 
     expect(inventory.entries.map((entry) => entry.key)).toContain("js:apps/web:@base-ui/react");
     expect(inventory.entries.map((entry) => entry.key)).toContain("js:catalog:effect");
-    expect(inventory.entries.some((entry) => entry.name === "@bibcode/contracts")).toBe(false);
+    expect(inventory.entries.some((entry) => entry.name === "@coddy/contracts")).toBe(false);
     expect(inventory.entries.find((entry) => entry.key === "js:catalog:effect")?.locations).toEqual(
       ["apps/web/package.json", "package.json", "pnpm-workspace.yaml"],
     );
@@ -374,7 +374,7 @@ describe("dependency upgrade ledger discovery", () => {
     const keys = inventory.entries.map((entry) => entry.key);
 
     expect(keys).toContain("rust:workspace:serde");
-    expect(keys).toContain("rust:workspace:bibcode-server");
+    expect(keys).toContain("rust:workspace:coddy-studio-server");
     expect(keys).toContain("rust:apps/server/tests/fixtures/demo:xpty");
     expect(keys).toEqual(
       expect.arrayContaining([

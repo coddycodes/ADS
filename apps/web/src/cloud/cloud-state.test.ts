@@ -81,7 +81,7 @@ vi.mock("effect/Effect", () => ({ map: () => (value: unknown) => value }));
 vi.mock("effect/Layer", () => ({ effect: () => ({}) }));
 vi.mock("effect/http", () => ({ HttpClient: { HttpClient: {} } }));
 
-vi.mock("@bibcode/client-runtime/relay", () => ({
+vi.mock("@coddy/client-runtime/relay", () => ({
   ManagedRelay: { ManagedRelayClient: {} },
   managedRelaySessionAtom: { key: "managed-session" },
   createManagedRelayQueryManager: () => ({
@@ -150,7 +150,7 @@ describe("managed relay cloud state", () => {
     const state = useManagedRelayEnvironments();
     expect(h.environmentsAtom).toHaveBeenCalledWith("account-1");
     expect(state.accountId).toBe("account-1");
-    expect(errorLog).toHaveBeenCalledWith("[bibcode-cloud] Relay environment listing failed", {
+    expect(errorLog).toHaveBeenCalledWith("[coddy-studio-cloud] Relay environment listing failed", {
       message: "relay unavailable",
       traceId: "trace-1",
     });
@@ -225,6 +225,6 @@ describe("primary cloud link state", () => {
     };
     expect(usePrimaryCloudLinkState().error).toBe("link failed");
     h.primaryResult = { _tag: "Failure", cause: Cause.fail("unknown"), waiting: false };
-    expect(usePrimaryCloudLinkState().error).toBe("Could not read BiBCode Connect link state.");
+    expect(usePrimaryCloudLinkState().error).toBe("Could not read Coddy Connect link state.");
   });
 });

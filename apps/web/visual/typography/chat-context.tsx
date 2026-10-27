@@ -4,7 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useState } from "react";
 import ChatMarkdown from "../../src/components/ChatMarkdown";
 import PlanSidebar from "../../src/components/PlanSidebar";

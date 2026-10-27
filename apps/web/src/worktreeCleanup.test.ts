@@ -8,7 +8,7 @@ describe("getBulkThreadDeletionConfirmation", () => {
       [
         "Delete 3 threads?",
         "This permanently clears conversation history for these threads.",
-        "2 worktree-backed threads will be removed from BiBCode only. Git worktrees and files are left untouched.",
+        "2 worktree-backed threads will be removed from Coddy Studio only. Git worktrees and files are left untouched.",
       ].join("\n"),
     );
   });
@@ -30,19 +30,19 @@ describe("formatWorktreePathForDisplay", () => {
 
   it("shows only the last path segment for unix-like paths", () => {
     const result = formatWorktreePathForDisplay(
-      "/Users/julius/.bibcode/worktrees/bibcode-mvp/bibcode-4e609bb8",
+      "/Users/julius/.coddy/studio/worktrees/coddy-studio-mvp/coddy-studio-4e609bb8",
     );
-    expect(result).toBe("bibcode-4e609bb8");
+    expect(result).toBe("coddy-studio-4e609bb8");
   });
 
   it("normalizes windows separators before selecting the final segment", () => {
     const result = formatWorktreePathForDisplay(
-      "C:\\Users\\julius\\.bibcode\\worktrees\\bibcode-mvp\\bibcode-4e609bb8",
+      "C:\\Users\\julius\\.coddy/studio\\worktrees\\coddy-studio-mvp\\coddy-studio-4e609bb8",
     );
-    expect(result).toBe("bibcode-4e609bb8");
+    expect(result).toBe("coddy-studio-4e609bb8");
   });
 
-  it("uses the final segment even when outside ~/.bibcode/worktrees", () => {
+  it("uses the final segment even when outside ~/.coddy/studio/worktrees", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree");
     expect(result).toBe("my-worktree");
   });

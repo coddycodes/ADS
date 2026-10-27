@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     DESKTOP_MAINTENANCE_TOKEN_HEADER, MAINTENANCE_UPDATE_CANCEL_PATH,
     MAINTENANCE_UPDATE_COMMIT_PATH, MAINTENANCE_UPDATE_PREPARE_PATH,
     MAINTENANCE_UPDATE_STATUS_PATH, MaintenanceError, PrepareForUpdateResult, UpdateMaintenance,

@@ -57,7 +57,7 @@ Electron main process at 195.7 MiB private memory and its Node server process at
 single process at 140.4 MiB. The final architecture removes that sidecar, so
 these figures must not be presented as its memory baseline.
 
-The final cold process tree had seven processes: one `bibcode-desktop` process
+The final cold process tree had seven processes: one `coddy-studio-desktop` process
 and six WebView2 processes, with no Node process. The Rust host, including the
 in-process Axum server, used 26.0 MiB private memory. Relative to historical
 Electron, final cold idle private memory is 56.7% lower and the NSIS installer
@@ -82,9 +82,9 @@ Measure a packaged process tree:
 
 ```powershell
 node scripts/measure-desktop-runtime.ts --label tauri-win-release `
-  --command target/release/bibcode-desktop.exe `
-  --ready-url http://127.0.0.1:3773/.well-known/bibcode/environment `
-  --window-title "BiBCode" `
+  --command target/release/coddy-studio-desktop.exe `
+  --ready-url http://127.0.0.1:3773/.well-known/coddy-studio/environment `
+  --window-title "Coddy Studio" `
   --idle-ms 30000
 ```
 

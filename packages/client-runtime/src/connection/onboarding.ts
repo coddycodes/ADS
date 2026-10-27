@@ -1,9 +1,9 @@
-import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@bibcode/contracts";
-import { resolveRemotePairingTarget } from "@bibcode/shared/remote";
+import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@coddy/contracts";
+import { resolveRemotePairingTarget } from "@coddy/shared/remote";
 import {
   PairingCodeParseError,
   PairingCodeUnsupportedVersionError,
-} from "@bibcode/shared/pairingCode";
+} from "@coddy/shared/pairingCode";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -91,7 +91,7 @@ export class ConnectionOnboarding extends Context.Service<
       input: BearerConnectionUpdateInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
   }
->()("@bibcode/client-runtime/connection/onboarding/ConnectionOnboarding") {}
+>()("@coddy/client-runtime/connection/onboarding/ConnectionOnboarding") {}
 
 const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.resolvePairingTarget")(
   function* (input: PairingConnectionInput) {

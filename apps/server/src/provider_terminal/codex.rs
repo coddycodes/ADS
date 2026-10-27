@@ -3703,7 +3703,7 @@ mod tests {
         let socket_path = sandbox.path("helper.sock");
         let executable = sandbox.executable_script(
             "helper",
-            "socket=${3#unix://}\n/bin/sh -c 'trap \"\" HUP; echo $$ > \"$BIBCODE_CHILD_PID\"; exec sleep 30' & while [ ! -s \"$BIBCODE_CHILD_PID\" ]; do :; done\n: > \"$socket\"\nsleep 1\nexit 0",
+            "socket=${3#unix://}\n/bin/sh -c 'trap \"\" HUP; echo $$ > \"$CODDY_STUDIO_CHILD_PID\"; exec sleep 30' & while [ ! -s \"$CODDY_STUDIO_CHILD_PID\" ]; do :; done\n: > \"$socket\"\nsleep 1\nexit 0",
             "",
         );
         let events = CodexHelperFixtureEvents {
@@ -3731,7 +3731,7 @@ mod tests {
                     endpoint.clone(),
                 ],
                 cwd: sandbox.root().to_path_buf(),
-                env: sandbox.environment([("BIBCODE_CHILD_PID", &child_pid_environment)]),
+                env: sandbox.environment([("CODDY_STUDIO_CHILD_PID", &child_pid_environment)]),
                 endpoint,
                 socket_path,
                 process_attribution: ProcessAttributionRegistry::new(),

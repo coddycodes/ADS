@@ -38,7 +38,10 @@ pub(crate) fn install() {
             if let Some(message) = field("MESSAGE")
                 && is_display_loss(field("GLIB_DOMAIN"), message)
             {
-                bibcode_server::diagnostics::profiler::note_exit("display-lost", Some(message));
+                coddy_studio_server::diagnostics::profiler::note_exit(
+                    "display-lost",
+                    Some(message),
+                );
             }
             glib::log_writer_default(level, fields)
         });
@@ -56,7 +59,7 @@ mod tests {
             "Error flushing display: Broken pipe",
             "Lost connection to Wayland compositor.",
             "Error reading events from display: Connection reset by peer",
-            "bibcode-desktop: Fatal IO error 11 (Resource temporarily unavailable) on X server :0.",
+            "coddy-studio-desktop: Fatal IO error 11 (Resource temporarily unavailable) on X server :0.",
         ] {
             assert!(is_display_loss(Some("Gdk"), message), "{message}");
         }

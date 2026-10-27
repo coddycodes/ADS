@@ -154,7 +154,7 @@ export function isTauriBuildCommand(args) {
 export function windowsPackagingPreflight(
   args,
   env,
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone launcher samples the host platform once and still accepts an injected platform in tests.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone launcher samples the host platform once and still accepts an injected platform in tests.
   platform = NodeOS.platform(),
 ) {
   if (platform !== "win32" || !isTauriBuildCommand(args)) {
@@ -244,7 +244,7 @@ export function runMsvc(args, options = {}) {
   const comspec = options.comspec ?? process.env.ComSpec ?? "cmd.exe";
   const scriptPath = NodePath.join(
     options.tmpdir ?? NodeOS.tmpdir(),
-    `bibcode-msvc-${architecture}-${options.pid ?? process.pid}-${options.now?.() ?? Date.now()}.cmd`,
+    `coddy-studio-msvc-${architecture}-${options.pid ?? process.pid}-${options.now?.() ?? Date.now()}.cmd`,
   );
   const writeFileSync = options.writeFileSync ?? NodeFS.writeFileSync;
   const rmSync = options.rmSync ?? NodeFS.rmSync;

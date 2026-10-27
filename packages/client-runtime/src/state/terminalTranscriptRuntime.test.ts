@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import type { TerminalAttachStreamEvent, TerminalSessionSnapshot } from "@bibcode/contracts";
+import type { TerminalAttachStreamEvent, TerminalSessionSnapshot } from "@coddy/contracts";
 
 import {
   createTerminalTranscriptRuntime,

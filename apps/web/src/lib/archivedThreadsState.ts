@@ -4,8 +4,8 @@ import {
   createArchivedThreadSnapshotsAtomFamily,
   makeArchivedThreadsEnvironmentKey,
   parseArchivedThreadsEnvironmentKey,
-} from "@bibcode/client-runtime/state/threads";
-import type { EnvironmentId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/threads";
+import type { EnvironmentId } from "@coddy/contracts";
 import { useCallback, useEffect, useMemo } from "react";
 
 import { orchestrationEnvironment } from "../state/orchestration";

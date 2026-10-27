@@ -13,7 +13,7 @@ export const coverageInclude = [
   "infra/relay/alchemy.run.ts",
   "infra/relay/scripts/**/*.ts",
   "infra/relay/src/**/*.ts",
-  "oxlint-plugin-bibcode/**/*.ts",
+  "oxlint-plugin-coddy-studio/**/*.ts",
   "packages/client-runtime/scripts/**/*.ts",
   "packages/client-runtime/src/**/*.ts",
   "packages/client-runtime/vite.config.runtime.ts",
@@ -133,7 +133,7 @@ export default defineConfig({
       "**/routeTree.gen.ts",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-bibcode/index.ts"],
+    jsPlugins: ["./oxlint-plugin-coddy-studio/index.ts"],
     categories: {
       correctness: "warn",
       suspicious: "warn",
@@ -170,18 +170,18 @@ export default defineConfig({
         {
           paths: [
             {
-              name: "@bibcode/client-runtime",
+              name: "@coddy/client-runtime",
               message:
-                "Import from an explicit @bibcode/client-runtime/* subpath. The package has no root export.",
+                "Import from an explicit @coddy/client-runtime/* subpath. The package has no root export.",
             },
           ],
         },
       ],
-      "bibcode/no-effect-event-in-memo-or-forward-ref": "error",
-      "bibcode/no-global-process-runtime": "error",
-      "bibcode/no-inline-schema-compile": "warn",
-      "bibcode/no-manual-effect-runtime-in-tests": "error",
-      "bibcode/namespace-node-imports": "error",
+      "coddy/no-effect-event-in-memo-or-forward-ref": "error",
+      "coddy/no-global-process-runtime": "error",
+      "coddy/no-inline-schema-compile": "warn",
+      "coddy/no-manual-effect-runtime-in-tests": "error",
+      "coddy/namespace-node-imports": "error",
     },
     options: {
       // Zero warnings: any lint warning fails `vp check`.

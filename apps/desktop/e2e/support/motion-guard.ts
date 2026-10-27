@@ -1,14 +1,14 @@
 export async function installDesktopUiMotionGuard(): Promise<void> {
   await browser.execute(() => {
-    const selector = "style[data-bibcode-desktop-ui-automation]";
+    const selector = "style[data-coddy-studio-desktop-ui-automation]";
     if (!document.querySelector(selector)) {
       const style = document.createElement("style");
-      style.dataset.bibcodeDesktopUiAutomation = "true";
+      style.dataset.coddyStudioDesktopUiAutomation = "true";
       style.textContent = [
         `
-    html:not([data-bibcode-desktop-ui-motion="native"]) *,
-    html:not([data-bibcode-desktop-ui-motion="native"]) *::before,
-    html:not([data-bibcode-desktop-ui-motion="native"]) *::after {
+    html:not([data-coddy-studio-desktop-ui-motion="native"]) *,
+    html:not([data-coddy-studio-desktop-ui-motion="native"]) *::before,
+    html:not([data-coddy-studio-desktop-ui-motion="native"]) *::after {
       animation-delay: 0s !important;
       animation-duration: 0s !important;
       transition-delay: 0s !important;
@@ -34,12 +34,12 @@ export async function installDesktopUiMotionGuard(): Promise<void> {
       ].join("\n");
       document.head.append(style);
     }
-    document.documentElement.dataset.bibcodeDesktopUiMotion = "disabled";
+    document.documentElement.dataset.coddyStudioDesktopUiMotion = "disabled";
   });
 }
 
 export async function setDesktopUiMotionMode(mode: "native" | "disabled"): Promise<void> {
   await browser.execute((value: string) => {
-    document.documentElement.dataset.bibcodeDesktopUiMotion = value;
+    document.documentElement.dataset.coddyStudioDesktopUiMotion = value;
   }, mode);
 }

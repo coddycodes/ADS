@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { PullRequestsMergeReadiness } from "@bibcode/contracts";
+import type { PullRequestsMergeReadiness } from "@coddy/contracts";
 import { projectRef, renderReviewMarkup as renderToStaticMarkup } from "../review/testHelpers";
 import { describe, expect, it } from "vite-plus/test";
 import { PullRequestsMergeBox } from "./PullRequestsMergeBox";

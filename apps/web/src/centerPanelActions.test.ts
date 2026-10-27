@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const h = vi.hoisted(() => ({
@@ -27,7 +27,7 @@ vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { interrupted?: boolean }) => result.interrupted === true,
   squashAtomCommandFailure: (result: { cause?: unknown }) => result.cause,
 }));

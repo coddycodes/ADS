@@ -1,5 +1,5 @@
-import { SERVER_NAME_REQUIRED_MESSAGE } from "@bibcode/client-runtime/connection";
-import type { EnvironmentId } from "@bibcode/contracts";
+import { SERVER_NAME_REQUIRED_MESSAGE } from "@coddy/client-runtime/connection";
+import type { EnvironmentId } from "@coddy/contracts";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "../../ui/button";

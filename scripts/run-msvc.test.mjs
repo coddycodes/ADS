@@ -19,7 +19,7 @@ import {
 
 const directoryAliasCapability = (() => {
   const fixtureRoot = NodeFS.mkdtempSync(
-    NodePath.join(NodeOS.tmpdir(), "bibcode-directory-alias-capability-"),
+    NodePath.join(NodeOS.tmpdir(), "coddy-studio-directory-alias-capability-"),
   );
   const physicalRoot = NodePath.join(fixtureRoot, "physical");
   const aliasRoot = NodePath.join(fixtureRoot, "alias");
@@ -168,13 +168,13 @@ describe("run-msvc", () => {
 
   it("canonicalizes an explicit Cargo test target before launch", () => {
     const mkdirSync = vi.fn();
-    const realpathSync = vi.fn(() => "/private/tmp/bibcode-task9f-target");
+    const realpathSync = vi.fn(() => "/private/tmp/coddy-studio-task9f-target");
     const spawnSync = vi.fn(() => ({ status: 0 }));
-    const resolvedTarget = NodePath.resolve("/tmp/bibcode-task9f-target");
+    const resolvedTarget = NodePath.resolve("/tmp/coddy-studio-task9f-target");
 
     expect(
-      runMsvc(["cargo", "test", "-p", "bibcode-desktop"], {
-        env: { CARGO_TARGET_DIR: "/tmp/bibcode-task9f-target" },
+      runMsvc(["cargo", "test", "-p", "coddy-studio-desktop"], {
+        env: { CARGO_TARGET_DIR: "/tmp/coddy-studio-task9f-target" },
         programFilesX86: "",
         mkdirSync,
         realpathSync,
@@ -188,26 +188,26 @@ describe("run-msvc", () => {
     expect(realpathSync).toHaveBeenCalledWith(resolvedTarget);
     expect(spawnSync).toHaveBeenCalledWith(
       "cargo",
-      ["test", "-p", "bibcode-desktop"],
+      ["test", "-p", "coddy-studio-desktop"],
       expect.objectContaining({
         env: expect.objectContaining({
-          CARGO_TARGET_DIR: "/private/tmp/bibcode-task9f-target",
+          CARGO_TARGET_DIR: "/private/tmp/coddy-studio-task9f-target",
         }),
       }),
     );
   });
 
   it("uses the native canonical target identity on every platform", () => {
-    const resolvedTarget = NodePath.resolve("/tmp/bibcode-task9f-target");
+    const resolvedTarget = NodePath.resolve("/tmp/coddy-studio-task9f-target");
     for (const canonicalTarget of [
-      "/private/tmp/bibcode-task9f-target",
-      "/tmp/bibcode-task9f-target",
-      "C:\\isolated\\bibcode-task9f-target",
+      "/private/tmp/coddy-studio-task9f-target",
+      "/tmp/coddy-studio-task9f-target",
+      "C:\\isolated\\coddy-studio-task9f-target",
     ]) {
       const mkdirSync = vi.fn();
       const realpathSync = vi.fn(() => canonicalTarget);
       const configured = {
-        CARGO_TARGET_DIR: "/tmp/bibcode-task9f-target",
+        CARGO_TARGET_DIR: "/tmp/coddy-studio-task9f-target",
         SENTINEL: "kept",
       };
 
@@ -221,7 +221,7 @@ describe("run-msvc", () => {
         recursive: true,
       });
       expect(realpathSync).toHaveBeenCalledWith(resolvedTarget);
-      expect(configured.CARGO_TARGET_DIR).toBe("/tmp/bibcode-task9f-target");
+      expect(configured.CARGO_TARGET_DIR).toBe("/tmp/coddy-studio-task9f-target");
     }
   });
 
@@ -265,7 +265,7 @@ describe("run-msvc", () => {
 
   it("creates and canonicalizes real absent and relative Cargo test targets", () => {
     const fixtureRoot = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-cargo-target-contract-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-cargo-target-contract-"),
     );
     const physicalRoot = NodePath.join(fixtureRoot, "physical");
     const spawnSync = vi.fn(() => ({ status: 0 }));
@@ -325,7 +325,7 @@ describe("run-msvc", () => {
     "canonicalizes a real directory-alias Cargo test target",
     () => {
       const fixtureRoot = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "bibcode-cargo-target-alias-contract-"),
+        NodePath.join(NodeOS.tmpdir(), "coddy-studio-cargo-target-alias-contract-"),
       );
       const physicalRoot = NodePath.join(fixtureRoot, "physical");
       const aliasRoot = NodePath.join(fixtureRoot, "alias");
@@ -383,12 +383,12 @@ describe("run-msvc", () => {
       }),
     ).toBe(0);
     expect(writeFileSync).toHaveBeenCalledWith(
-      NodePath.join("C:/tmp", "bibcode-msvc-x64-12-34.cmd"),
+      NodePath.join("C:/tmp", "coddy-studio-msvc-x64-12-34.cmd"),
       expect.stringContaining('cargo "test name"'),
     );
     expect(spawnSync).toHaveBeenLastCalledWith(
       "custom-cmd.exe",
-      ["/d", "/c", NodePath.join("C:/tmp", "bibcode-msvc-x64-12-34.cmd")],
+      ["/d", "/c", NodePath.join("C:/tmp", "coddy-studio-msvc-x64-12-34.cmd")],
       expect.objectContaining({
         env: expect.objectContaining({
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: expect.stringContaining(

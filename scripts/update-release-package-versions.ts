@@ -13,7 +13,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
-import { fromJsonStringPretty } from "@bibcode/shared/schemaJson";
+import { fromJsonStringPretty } from "@coddy/shared/schemaJson";
 
 export class ReleasePackageManifestError extends Schema.TaggedError<ReleasePackageManifestError>()(
   "ReleasePackageManifestError",
@@ -197,7 +197,7 @@ const replaceCargoPackageVersion = (source: string, version: string): CargoVersi
 
 const replaceCargoLockVersions = (source: string, version: string): CargoVersionReplacement => {
   const packageHeaders = Array.from(source.matchAll(/^\[\[package\]\][ \t]*\r?$/gm));
-  const targetNames = new Set(["bibcode-desktop", "bibcode-server"]);
+  const targetNames = new Set(["coddy-studio-desktop", "coddy-studio-server"]);
   const seenNames = new Set<string>();
   const replacements: Array<{ readonly start: number; readonly end: number }> = [];
 
@@ -291,10 +291,10 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
       ),
     );
     changes.push({
-      backupPath: `${filePath}.bibcode-${transactionId}.backup`,
+      backupPath: `${filePath}.coddy-studio-${transactionId}.backup`,
       content: applyManifestTextStyle(packageJsonString, style),
       filePath,
-      tempPath: `${filePath}.bibcode-${transactionId}.stage`,
+      tempPath: `${filePath}.coddy-studio-${transactionId}.stage`,
       backupAttempted: false,
       backupReady: false,
       replacementAttempted: false,
@@ -331,10 +331,10 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
     if (!replacement.changed) continue;
 
     changes.push({
-      backupPath: `${filePath}.bibcode-${transactionId}.backup`,
+      backupPath: `${filePath}.coddy-studio-${transactionId}.backup`,
       content: replacement.content,
       filePath,
-      tempPath: `${filePath}.bibcode-${transactionId}.stage`,
+      tempPath: `${filePath}.coddy-studio-${transactionId}.stage`,
       backupAttempted: false,
       backupReady: false,
       replacementAttempted: false,

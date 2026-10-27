@@ -7,7 +7,7 @@ import type {
   OrchestrationThread,
   OrchestrationThreadActivity,
   ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 

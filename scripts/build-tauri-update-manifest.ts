@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
-import { fromJsonStringPretty } from "@bibcode/shared/schemaJson";
+import { fromJsonStringPretty } from "@coddy/shared/schemaJson";
 
 import {
   TAURI_UPDATE_TARGETS,
@@ -21,7 +21,7 @@ export interface BuildTauriUpdateManifestInput {
   readonly assetsDir: string;
   readonly version: string;
   readonly tag: string;
-  readonly repository: "mubeda/BibCode";
+  readonly repository: "mubeda/CoddyStudio";
   readonly pubDate: string;
   readonly notes: string;
 }
@@ -107,7 +107,7 @@ const BuildInputSchema = Schema.Struct({
   assetsDir: Schema.NonEmptyString,
   version: StableVersion,
   tag: Schema.NonEmptyString,
-  repository: Schema.Literal("mubeda/BibCode"),
+  repository: Schema.Literal("mubeda/CoddyStudio"),
   pubDate: Schema.String.check(
     Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2)$/),
   ),

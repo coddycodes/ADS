@@ -13,8 +13,8 @@ import type {
   ActivitySectionHealth,
   ActivitySnapshot,
   ActivityWorkItemSummary,
-} from "@bibcode/contracts";
-import { ACTIVITY_PAGE_MAX_LENGTH } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { ACTIVITY_PAGE_MAX_LENGTH } from "@coddy/contracts";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";

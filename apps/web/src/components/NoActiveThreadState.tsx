@@ -25,7 +25,7 @@ export function NoActiveThreadState() {
         <Empty className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle className="text-foreground text-xl">Let's BibCode...</EmptyTitle>
+              <EmptyTitle className="text-foreground text-xl">Let's CoddyStudio...</EmptyTitle>
             </EmptyHeader>
           </div>
         </Empty>

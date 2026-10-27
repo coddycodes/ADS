@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   } catch {
     // Ignore unavailable/storage errors so startup can continue.
   }
-  if (import.meta.env.VITE_BIBCODE_DESKTOP_E2E === "1") {
+  if (import.meta.env.VITE_CODDY_STUDIO_DESKTOP_E2E === "1") {
     await import("@wdio/tauri-plugin");
   }
   if (isTauri) {

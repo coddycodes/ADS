@@ -36,11 +36,11 @@ describe("path helpers", () => {
 
 describe("joinHostPath", () => {
   it("joins Windows drive paths with Windows separators", () => {
-    expect(joinHostPath("X:\\Workspaces\\bibcode", "new-folder")).toBe(
-      "X:\\Workspaces\\bibcode\\new-folder",
+    expect(joinHostPath("X:\\Workspaces\\coddy-studio", "new-folder")).toBe(
+      "X:\\Workspaces\\coddy-studio\\new-folder",
     );
-    expect(joinHostPath("X:/Workspaces/bibcode/", "team/new-folder")).toBe(
-      "X:\\Workspaces\\bibcode\\team\\new-folder",
+    expect(joinHostPath("X:/Workspaces/coddy-studio/", "team/new-folder")).toBe(
+      "X:\\Workspaces\\coddy-studio\\team\\new-folder",
     );
   });
 

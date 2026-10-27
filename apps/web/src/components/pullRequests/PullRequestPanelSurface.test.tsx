@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
-import { AVAILABLE_CONNECTION_STATE } from "@bibcode/client-runtime/connection";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import type { ServerConfig } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { AVAILABLE_CONNECTION_STATE } from "@coddy/client-runtime/connection";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import type { ServerConfig } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { act, useContext, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

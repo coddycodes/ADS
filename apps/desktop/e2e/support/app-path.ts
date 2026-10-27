@@ -15,10 +15,10 @@ export class DesktopAppPathConfigurationError extends Error {
 const requiredConfiguredPath = (
   environment: Readonly<Record<string, string | undefined>>,
 ): string => {
-  const configuredPath = environment.BIBCODE_E2E_APP_PATH?.trim();
+  const configuredPath = environment.CODDY_STUDIO_E2E_APP_PATH?.trim();
   if (configuredPath === undefined || configuredPath.length === 0) {
     throw new DesktopAppPathConfigurationError(
-      "BIBCODE_E2E_APP_PATH must point to an already-built packaged application.",
+      "CODDY_STUDIO_E2E_APP_PATH must point to an already-built packaged application.",
     );
   }
   return configuredPath;
@@ -31,28 +31,28 @@ export function resolveDesktopAppPath(input: ResolveDesktopAppPathInput): string
     case "mac": {
       if (!NodePath.posix.isAbsolute(configuredPath)) {
         throw new DesktopAppPathConfigurationError(
-          "BIBCODE_E2E_APP_PATH must be an absolute macOS application path.",
+          "CODDY_STUDIO_E2E_APP_PATH must be an absolute macOS application path.",
         );
       }
       if (/\.dmg$/i.test(configuredPath)) {
         throw new DesktopAppPathConfigurationError(
-          "Copy the app from the DMG to an isolated install directory and set BIBCODE_E2E_APP_PATH to that .app bundle.",
+          "Copy the app from the DMG to an isolated install directory and set CODDY_STUDIO_E2E_APP_PATH to that .app bundle.",
         );
       }
       if (/\.app$/i.test(configuredPath)) {
-        return NodePath.posix.join(configuredPath, "Contents", "MacOS", "bibcode-desktop");
+        return NodePath.posix.join(configuredPath, "Contents", "MacOS", "coddy-studio-desktop");
       }
       if (/\.app\/Contents\/MacOS\/[^/]+$/i.test(configuredPath)) {
         return configuredPath;
       }
       throw new DesktopAppPathConfigurationError(
-        "BIBCODE_E2E_APP_PATH must point to an installed .app bundle or its executable.",
+        "CODDY_STUDIO_E2E_APP_PATH must point to an installed .app bundle or its executable.",
       );
     }
     case "linux": {
       if (!NodePath.posix.isAbsolute(configuredPath) || !/\.AppImage$/i.test(configuredPath)) {
         throw new DesktopAppPathConfigurationError(
-          "BIBCODE_E2E_APP_PATH must point to an absolute Linux AppImage.",
+          "CODDY_STUDIO_E2E_APP_PATH must point to an absolute Linux AppImage.",
         );
       }
       return configuredPath;
@@ -60,7 +60,7 @@ export function resolveDesktopAppPath(input: ResolveDesktopAppPathInput): string
     case "win": {
       if (!NodePath.win32.isAbsolute(configuredPath) || !/\.exe$/i.test(configuredPath)) {
         throw new DesktopAppPathConfigurationError(
-          "BIBCODE_E2E_APP_PATH must point to the absolute NSIS-installed executable.",
+          "CODDY_STUDIO_E2E_APP_PATH must point to the absolute NSIS-installed executable.",
         );
       }
       return configuredPath;

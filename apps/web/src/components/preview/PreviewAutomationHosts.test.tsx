@@ -19,9 +19,9 @@ import {
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_AUTOMATION_OPERATIONS,
   ThreadId,
-} from "@bibcode/contracts";
-import type { DesktopPreviewBridge } from "@bibcode/contracts";
-import type { PreviewAutomationRequest } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import type { DesktopPreviewBridge } from "@coddy/contracts";
+import type { PreviewAutomationRequest } from "@coddy/contracts";
 
 const h = vi.hoisted(() => {
   const state = {
@@ -121,12 +121,12 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
   };
 });
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { error?: unknown }) =>
     result.error ?? new Error("squashed failure"),
 }));
 
-vi.mock("@bibcode/shared/previewViewport", () => ({
+vi.mock("@coddy/shared/previewViewport", () => ({
   resolvePreviewViewport: () => h.resizeSetting,
 }));
 
@@ -163,7 +163,7 @@ vi.mock("~/browser/previewGateway", () => ({
         : { kind: "ok", url: h.gatewayNavUrl ?? input.canonicalUrl },
     );
   },
-  isGatewayBootstrapUrl: (url: string | null) => url?.includes("/__bibcode/bootstrap") ?? false,
+  isGatewayBootstrapUrl: (url: string | null) => url?.includes("/__coddy-studio/bootstrap") ?? false,
   canonicalizePreviewUrl: (url: string) =>
     url.startsWith("http://127.0.0.1:50000/") ? h.resolvedUrl : url,
 }));
@@ -889,7 +889,7 @@ describe("handleRequest: navigate + resize", () => {
     const handle = mountHost();
     seedReadyTab("tab-1");
     h.resolvedUrl = "http://localhost:5173/";
-    h.gatewayNavUrl = "http://127.0.0.1:50000/__bibcode/bootstrap?cap=C&to=%2F";
+    h.gatewayNavUrl = "http://127.0.0.1:50000/__coddy-studio/bootstrap?cap=C&to=%2F";
     // The page the bootstrap replaced itself with, on this client's gateway origin.
     h.automationStatus = { ...h.automationStatus, url: "http://127.0.0.1:50000/" };
 
@@ -916,7 +916,7 @@ describe("handleRequest: navigate + resize", () => {
       const bootstrap = {
         ...h.automationStatus,
         loading: false,
-        url: "http://127.0.0.1:50000/__bibcode/bootstrap?cap=C&to=%2F",
+        url: "http://127.0.0.1:50000/__coddy-studio/bootstrap?cap=C&to=%2F",
       };
       const real = { ...h.automationStatus, loading: false, url: "http://127.0.0.1:50000/" };
       // Overlay readiness, then the bootstrap page, then the real page.

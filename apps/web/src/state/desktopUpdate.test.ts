@@ -1,4 +1,4 @@
-import type { DesktopUpdateState } from "@bibcode/contracts";
+import type { DesktopUpdateState } from "@coddy/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";

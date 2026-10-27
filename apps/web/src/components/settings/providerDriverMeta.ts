@@ -1,13 +1,14 @@
 import {
   ClaudeSettings,
   CodexSettings,
+  CoddySettings,
   CursorSettings,
   GrokSettings,
   OpenCodeSettings,
   ProviderDriverKind,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { ClaudeAI, CoddyIcon, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -46,6 +47,12 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "Claude",
     icon: ClaudeAI,
     settingsSchema: ClaudeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("coddy"),
+    label: "Coddy",
+    icon: CoddyIcon,
+    settingsSchema: CoddySettings,
   },
   {
     value: ProviderDriverKind.make("cursor"),

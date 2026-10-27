@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
-import { GitManagerOperationError, type VcsRepositoryUnavailableReason } from "@bibcode/contracts";
+import { EnvironmentRpcUnavailableError } from "@coddy/client-runtime/rpc";
+import { GitManagerOperationError, type VcsRepositoryUnavailableReason } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { act } from "react";

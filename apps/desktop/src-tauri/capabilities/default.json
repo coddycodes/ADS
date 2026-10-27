@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for the BiBCode Tauri desktop shell.",
+  "description": "Default permissions for the Coddy Studio Tauri desktop shell.",
   "webviews": ["main"],
   "permissions": [
     "allow-desktop-bridge",

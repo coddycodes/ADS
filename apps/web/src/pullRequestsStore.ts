@@ -1,11 +1,11 @@
-import { parseProjectKey, projectKey } from "@bibcode/client-runtime/state/entities";
-import type { PullRequestsListInput, ScopedProjectRef } from "@bibcode/contracts";
+import { parseProjectKey, projectKey } from "@coddy/client-runtime/state/entities";
+import type { PullRequestsListInput, ScopedProjectRef } from "@coddy/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const PULL_REQUESTS_STORAGE_KEY = "bibcode:pull-requests-state:v1";
+export const PULL_REQUESTS_STORAGE_KEY = "coddy-studio:pull-requests-state:v1";
 export type PullRequestsDetailTab = "conversation" | "commits" | "checks" | "files";
 export type PendingInlineComment = {
   id: string;

@@ -4,7 +4,7 @@
 
 ## Tested revision
 
-- Repository: BiBCode (`https://github.com/mubeda/BibCode.git`)
+- Repository: Coddy Studio (`https://github.com/mubeda/BibCode.git`)
 - Remote: `origin`; remote branch `develop`
 - Branch or requested revision: local `mubeda/develop`; remote-server range
   `3b1864eff4b5e476bf725910fc84c11f34b31c1a..71cd7fc3f0e19e04ea8cccb11e6092146496e42e`
@@ -219,7 +219,7 @@ No command interpolation or credential value is retained in this report.
   binary read-only at `/usr/local/bin/bibcode`.
 - Exact PID/start identity: test harness/container-owned and reaped; no packaged
   desktop PID existed.
-- Other installed or development copies excluded: no installed BiBCode copy
+- Other installed or development copies excluded: no installed Coddy Studio copy
   was launched.
 - External tool, command, and path used for the Files Refresh rescan: not in
   scope and not executed.

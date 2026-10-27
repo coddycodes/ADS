@@ -1,7 +1,7 @@
 export { serializeComposerMentionPath } from "./composerReferences.ts";
 
 export type ComposerTriggerKind =
-  | "bibcode-action"
+  | "coddy-studio-action"
   | "provider-slash"
   | "provider-dollar-skill"
   | "provider-reference";
@@ -11,7 +11,7 @@ export interface ComposerTriggerProfile {
   readonly providerDollarSkill: boolean;
 }
 
-export type ComposerBiBCodeAction = "model" | "plan" | "default";
+export type ComposerCoddyStudioAction = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -85,7 +85,7 @@ export function detectComposerTrigger(
     const triggerChar = linePrefix[0];
     if (triggerChar === ":") {
       return {
-        kind: "bibcode-action",
+        kind: "coddy-studio-action",
         query: linePrefix.slice(1),
         rangeStart: lineStart,
         rangeEnd: cursor,
@@ -128,7 +128,7 @@ export function detectComposerTrigger(
   };
 }
 
-export function parseStandaloneComposerBiBCodeAction(text: string): ComposerBiBCodeAction | null {
+export function parseStandaloneComposerCoddyStudioAction(text: string): ComposerCoddyStudioAction | null {
   const match = /^:(model|plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

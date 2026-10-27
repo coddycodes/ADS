@@ -28,7 +28,7 @@ export function planPackagedDesktopUiBuild(
   const rustTarget = requireReleaseTarget(input.platform, input.arch).rustTarget;
   return {
     environment: {
-      VITE_BIBCODE_DESKTOP_E2E: "1",
+      VITE_CODDY_STUDIO_DESKTOP_E2E: "1",
       ...(input.platform === "linux" ? { NO_STRIP: "1" } : {}),
     },
     args: [
@@ -51,21 +51,21 @@ export function planPackagedDesktopUiBuild(
 
 function configuredPlatform(): DesktopUiPlatform {
   if (
-    process.env.BIBCODE_E2E_PLATFORM === "linux" ||
-    process.env.BIBCODE_E2E_PLATFORM === "mac" ||
-    process.env.BIBCODE_E2E_PLATFORM === "win"
+    process.env.CODDY_STUDIO_E2E_PLATFORM === "linux" ||
+    process.env.CODDY_STUDIO_E2E_PLATFORM === "mac" ||
+    process.env.CODDY_STUDIO_E2E_PLATFORM === "win"
   ) {
-    return process.env.BIBCODE_E2E_PLATFORM;
+    return process.env.CODDY_STUDIO_E2E_PLATFORM;
   }
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone build CLI selects its native host target.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone build CLI selects its native host target.
   return process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : "linux";
 }
 
 function configuredArch(): ReleaseArch {
-  if (process.env.BIBCODE_E2E_ARCH === "arm64" || process.env.BIBCODE_E2E_ARCH === "x64") {
-    return process.env.BIBCODE_E2E_ARCH;
+  if (process.env.CODDY_STUDIO_E2E_ARCH === "arm64" || process.env.CODDY_STUDIO_E2E_ARCH === "x64") {
+    return process.env.CODDY_STUDIO_E2E_ARCH;
   }
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The build CLI resolves its native architecture when CI did not provide one.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The build CLI resolves its native architecture when CI did not provide one.
   return process.arch === "arm64" ? "arm64" : "x64";
 }
 
@@ -73,7 +73,7 @@ function run(): void {
   const plan = planPackagedDesktopUiBuild({
     platform: configuredPlatform(),
     arch: configuredArch(),
-    ...(process.env.BIBCODE_E2E_BUNDLE ? { bundle: process.env.BIBCODE_E2E_BUNDLE } : {}),
+    ...(process.env.CODDY_STUDIO_E2E_BUNDLE ? { bundle: process.env.CODDY_STUDIO_E2E_BUNDLE } : {}),
   });
   const result = NodeChildProcess.spawnSync(process.execPath, [...plan.args], {
     env: { ...process.env, ...plan.environment },

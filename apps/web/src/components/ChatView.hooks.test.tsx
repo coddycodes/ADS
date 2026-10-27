@@ -32,9 +32,9 @@ import {
   ThreadId,
   TurnId,
   UploadError,
-} from "@bibcode/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { RpcClientError } from "effect/rpc";
@@ -42,12 +42,12 @@ import {
   BearerConnectionTarget,
   PrimaryConnectionTarget,
   type ConnectionTarget,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
-} from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/environment";
 import { desktopLocalConnectionId } from "../connection/desktopLocal";
 import { createEnvironmentPresentationPolicy } from "../connection/environmentPresentationPolicy";
 
@@ -5470,7 +5470,7 @@ describe("ChatView turn delivery resolution", () => {
       makeThread({
         session: makeSession({
           status: "error",
-          lastError: "Provider session ended when BiBCode stopped.",
+          lastError: "Provider session ended when Coddy Studio stopped.",
         }),
         messages: [
           {
@@ -5547,7 +5547,7 @@ describe("ChatView turn delivery resolution", () => {
       makeThread({
         session: makeSession({
           status: "error",
-          lastError: "Provider session ended when BiBCode stopped.",
+          lastError: "Provider session ended when Coddy Studio stopped.",
         }),
         latestTurn: {
           turnId: TurnId.make("turn-abandoned"),

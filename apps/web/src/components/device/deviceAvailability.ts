@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerConfig } from "@bibcode/contracts";
+import type { EnvironmentId, ServerConfig } from "@coddy/contracts";
 import { useAtomValue } from "@effect/atom-react";
 
 import { serverEnvironment } from "../../state/server";

@@ -192,19 +192,19 @@ describe("TerminalOpenInput", () => {
       threadId: "thread-1",
       terminalId: DEFAULT_TERMINAL_ID,
       cwd: "/tmp/project",
-      worktreePath: "/tmp/project/.bibcode/worktrees/feature-a",
+      worktreePath: "/tmp/project/.coddy/studio/worktrees/feature-a",
       cols: 100,
       rows: 24,
       env: {
-        BIBCODE_PROJECT_ROOT: "/tmp/project",
+        CODDY_STUDIO_PROJECT_ROOT: "/tmp/project",
         CUSTOM_FLAG: "1",
       },
     });
     expect(parsed.env).toMatchObject({
-      BIBCODE_PROJECT_ROOT: "/tmp/project",
+      CODDY_STUDIO_PROJECT_ROOT: "/tmp/project",
       CUSTOM_FLAG: "1",
     });
-    expect(parsed.worktreePath).toBe("/tmp/project/.bibcode/worktrees/feature-a");
+    expect(parsed.worktreePath).toBe("/tmp/project/.coddy/studio/worktrees/feature-a");
   });
 
   it("reports invalid environment keys at the complete nested path", () => {
@@ -744,8 +744,8 @@ describe("TerminalEvent", () => {
         snapshot: {
           threadId: "thread-1",
           terminalId: DEFAULT_TERMINAL_ID,
-          cwd: "/tmp/project/.bibcode/worktrees/feature-a",
-          worktreePath: "/tmp/project/.bibcode/worktrees/feature-a",
+          cwd: "/tmp/project/.coddy/studio/worktrees/feature-a",
+          worktreePath: "/tmp/project/.coddy/studio/worktrees/feature-a",
           status: "running",
           pid: 1234,
           history: "",

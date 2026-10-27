@@ -16,7 +16,7 @@ import {
   ProviderInstanceId,
   EnvironmentId,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 

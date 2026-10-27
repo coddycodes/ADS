@@ -1,4 +1,4 @@
-import { EnvironmentSelection } from "@bibcode/client-runtime/connection";
+import { EnvironmentSelection } from "@coddy/client-runtime/connection";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 

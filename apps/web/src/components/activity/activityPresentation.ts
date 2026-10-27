@@ -1,9 +1,9 @@
-import type { EnvironmentActivityState } from "@bibcode/client-runtime/state/activity";
+import type { EnvironmentActivityState } from "@coddy/client-runtime/state/activity";
 import type {
   ActivityLifecycle,
   ActivitySectionHealth,
   ActivitySnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 
 export interface ActivityDockVisibility {

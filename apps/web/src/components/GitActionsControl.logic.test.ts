@@ -1,4 +1,4 @@
-import type { VcsStatusResult } from "@bibcode/contracts";
+import type { VcsStatusResult } from "@coddy/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
@@ -1139,8 +1139,8 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
   it("does not regress a semantic thread ref back to a temporary worktree ref", () => {
     const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "bibcode/github-query-rate-limit",
-      gitStatus: status({ refName: "bibcode/bda76797" }),
+      threadBranch: "coddy-studio/github-query-rate-limit",
+      gitStatus: status({ refName: "coddy-studio/bda76797" }),
     });
 
     assert.equal(update, null);
@@ -1148,7 +1148,7 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
   it("allows a temporary worktree ref to reconcile to a semantic branch", () => {
     const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "bibcode/a9628676",
+      threadBranch: "coddy-studio/a9628676",
       gitStatus: status({ refName: "feature/diff-panel-toggle" }),
     });
 

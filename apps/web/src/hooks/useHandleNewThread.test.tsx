@@ -4,7 +4,7 @@ import {
   scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/environment";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
@@ -19,8 +19,8 @@ import {
   type ServerConfig,
   type ServerProvider,
   type ServerProviderModel,
-} from "@bibcode/contracts";
-import { createModelSelection } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { createModelSelection } from "@coddy/shared/model";
 import { act, type ReactElement, useState, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

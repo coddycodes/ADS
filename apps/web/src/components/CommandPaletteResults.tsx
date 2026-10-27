@@ -1,4 +1,4 @@
-import { type ResolvedKeybindingsConfig } from "@bibcode/contracts";
+import { type ResolvedKeybindingsConfig } from "@coddy/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {

@@ -4,7 +4,7 @@
 
 ## Tested revision and environment
 
-- Repository: BiBCode; branch `mubeda/main`.
+- Repository: Coddy Studio; branch `mubeda/main`.
 - Base HEAD: `dc5d6d3852572317d0f1fff461b98e69c43ed23a`, with the uncommitted skill-discovery patch.
 - Native automated evidence: Linux x86_64, kernel `7.2.5-3-omarchy`.
 - Rust/Cargo `1.98.0`, Node `26.10.0`, Vite+ `0.3.0`.

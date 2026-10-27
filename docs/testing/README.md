@@ -1,6 +1,6 @@
 # Testing Runbooks
 
-These runbooks describe BiBCode's current repeatable validation contract. They
+These runbooks describe Coddy Studio's current repeatable validation contract. They
 are living documentation, not execution history.
 
 ## Choose a runbook
@@ -73,7 +73,7 @@ cache. From the repository root, clean every workspace crate and then lint the
 whole workspace with warnings denied:
 
 ```sh
-cargo clean -p bibcode-server -p bibcode-desktop -p bibcode-updater-verifier
+cargo clean -p coddy-studio-server -p coddy-studio-desktop -p coddy-studio-updater-verifier
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
@@ -118,7 +118,7 @@ deep-merges fixture overrides, including partial `providerInstances`, so
 unspecified drivers stay pinned. `ensure_hermetic_settings` reads existing
 settings as the overlay and writes the hermetic base beneath them; explicit
 pinned-key overrides remain the fixture's responsibility. Read or parse errors
-fail the test. Seed the same state directory before spawning `bibcode` with
+fail the test. Seed the same state directory before spawning `coddy-studio` with
 `--base-dir`.
 
 Tests exercising probes or updates must explicitly overlay test-owned binaries
@@ -156,7 +156,7 @@ backend's `IosBackendConfig::from_process` likewise names an `xcrun` and
 `xcode-select` that do not exist, so the runtime finds no Xcode and never
 lists or boots the host's simulators. iOS tests use the fake `simctl` in
 `device::ios::testing` or the fake backend in `device::fake_backend`; only the
-opt-in `BIBCODE_IOS_SIM_TESTS=1` tests touch a real simulator.
+opt-in `CODDY_STUDIO_IOS_SIM_TESTS=1` tests touch a real simulator.
 
 The server harnesses, including the library's `control.rs` and lifecycle tests,
 and the desktop harnesses follow these rules. Cargo dev units enable the
@@ -169,7 +169,7 @@ systemd-coredump and desktop crash notifications do not fire. The process
 still terminates with SIGABRT.
 This applies to spawned threads/tasks and re-executed or CLI test binaries too;
 there is no off switch. For fixture diagnosis, set
-`BIBCODE_HERMETIC_GUARD=report` on the test child only. Report mode still refuses
+`CODDY_STUDIO_HERMETIC_GUARD=report` on the test child only. Report mode still refuses
 the operation, treating it as unavailable; it never executes the host CLI or
 loads the host credentials. Repair every diagnostic before the default run.
 
@@ -185,7 +185,7 @@ and spawning uses the checked absolute candidate without an OS-search fallback.
 On Windows, explicit extensionless names use launch extensions. Keychain access
 is always refused in dev units; use fixture files instead.
 The optional reviewed-Claude attestation and preparation-budget checks select
-only `BIBCODE_CLAUDE_ATTESTATION_FIXTURE`, with the same root checks; they never
+only `CODDY_STUDIO_CLAUDE_ATTESTATION_FIXTURE`, with the same root checks; they never
 fall back to an installation in the developer's HOME. Keep their child HOME
 and credential context disposable, and record the fixture provenance separately
 when explicitly qualifying those optional checks.
@@ -198,7 +198,7 @@ test with a narrow fixture PATH. Never fix a diagnostic by using Report mode in
 CI, allowing a host directory, or running a real provider/hosting CLI. Server
 and desktop dev-dependencies activate the guard, including workspace tests;
 normal dependencies and production builds leave it disabled. CI also checks
-`cargo check -p bibcode-server --lib --bins -j 2` separately so production cfg
+`cargo check -p coddy-studio-server --lib --bins -j 2` separately so production cfg
 paths remain compiled, and builds SSH's CLI via the guarded `cli_smoke` dev unit.
 
 ## Static rendering and Zustand
@@ -245,7 +245,7 @@ run `node ../../scripts/run-local-vp.mjs` with the same arguments.
 where Effect Events retain their first render's values in `memo(C)` without a
 compare function, `forwardRef(C)`, and `memo(forwardRef(C), compare)`, despite a
 committed prop update; plain functions and `memo(C, compare)` are controls.
-The error rule `bibcode/no-effect-event-in-memo-or-forward-ref` refuses these
+The error rule `coddy/no-effect-event-in-memo-or-forward-ref` refuses these
 patterns in same-file components and hooks only; imported hooks and components
 are not followed. Run the probe in the web package's compiled lane. If it fails
 after a react-dom upgrade because a prohibited form starts returning the new

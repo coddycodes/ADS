@@ -1,6 +1,6 @@
 import { afterEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, type RemoteUpdateSnapshot, WS_METHODS } from "@bibcode/contracts";
+import { EnvironmentId, type RemoteUpdateSnapshot, WS_METHODS } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";

@@ -1,4 +1,4 @@
-import { createEnvironmentCatalogAtoms } from "@bibcode/client-runtime/state/connections";
+import { createEnvironmentCatalogAtoms } from "@coddy/client-runtime/state/connections";
 
 import { connectionAtomRuntime } from "./runtime";
 

@@ -12,10 +12,10 @@ vi.mock("../ui/tooltip", () => ({
   ),
 }));
 
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 
 import { SidebarProjectAvailability } from "./SidebarProjectAvailability";
-import type { EnvironmentConnectionPresentation } from "@bibcode/client-runtime/connection";
+import type { EnvironmentConnectionPresentation } from "@coddy/client-runtime/connection";
 
 import type { SidebarProjectAvailabilityView } from "../Sidebar.logic";
 
@@ -254,7 +254,7 @@ describe("SidebarProjectAvailability", () => {
         {
           phase: "reconnecting",
           error:
-            "The remote host did not issue a pairing credential within 30 seconds. Check the connection; BiBCode keeps trying.",
+            "The remote host did not issue a pairing credential within 30 seconds. Check the connection; Coddy Studio keeps trying.",
           traceId: null,
         },
       );
@@ -263,7 +263,7 @@ describe("SidebarProjectAvailability", () => {
       expect(visible).toContain("Cached projects remain visible.");
       expect(visible).not.toContain("did not issue a pairing credential");
       expect(tooltip).toBe(
-        "The remote host did not issue a pairing credential within 30 seconds. Check the connection; BiBCode keeps trying.",
+        "The remote host did not issue a pairing credential within 30 seconds. Check the connection; Coddy Studio keeps trying.",
       );
     });
 

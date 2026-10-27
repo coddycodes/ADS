@@ -32,7 +32,7 @@ vi.mock("@clerk/react", () => ({ useAuth: () => harness.auth }));
 vi.mock("effect/Effect", () => ({
   flatMap: (callback: (client: unknown) => unknown) => ({ callback }),
 }));
-vi.mock("@bibcode/client-runtime/relay", () => ({
+vi.mock("@coddy/client-runtime/relay", () => ({
   ManagedRelay: {
     ManagedRelayClient: {
       pipe: (operation: { callback: (client: unknown) => unknown }) =>
@@ -41,7 +41,7 @@ vi.mock("@bibcode/client-runtime/relay", () => ({
   },
   setManagedRelaySession: (_registry: unknown, session: unknown) => harness.setSession(session),
 }));
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   reportAtomCommandResult: (result: unknown, options: unknown) => harness.report(result, options),
   settleAsyncResult: async (operation: () => Promise<unknown>) => operation(),
   settlePromise: async (operation: () => Promise<unknown>) => {

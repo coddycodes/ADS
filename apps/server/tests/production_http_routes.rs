@@ -5,7 +5,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
 };
-use bibcode_server::production::http_routes::{
+use coddy_studio_server::production::http_routes::{
     AssetHttpResponse, Authorized, DiagnosticLogsHttpResponse, HttpRouteError, HttpRoutesState,
     JsonOperation, JsonRouteResponse, MAX_DIAGNOSTIC_BODY_BYTES, MAX_JSON_BODY_BYTES,
     McpHttpResponse, RouteContext, add_routes,
@@ -73,7 +73,7 @@ async fn routes_apply_exact_scopes_and_preserve_json_wire_shapes() {
         ),
         (
             "POST",
-            "/api/bibcode-connect/health",
+            "/api/coddy-connect/health",
             JsonOperation::ConnectHealth,
             None,
             Some(json!({"environmentId":"env-1"})),
@@ -87,7 +87,7 @@ async fn routes_apply_exact_scopes_and_preserve_json_wire_shapes() {
         ),
         (
             "POST",
-            "/api/bibcode-connect/mint-credential",
+            "/api/coddy-connect/mint-credential",
             JsonOperation::ConnectMintCredential,
             None,
             Some(json!({"environmentId":"env-1"})),
@@ -198,7 +198,7 @@ async fn crash_dumps_in_the_diagnostic_bundle_need_the_operate_scope() {
         Box::pin(async move {
             calls.lock().await.push(include_crash_dumps);
             Ok(DiagnosticLogsHttpResponse {
-                filename: "bibcode-diagnostics-20260715T123456Z.zip".to_owned(),
+                filename: "coddy-studio-diagnostics-20260715T123456Z.zip".to_owned(),
                 bytes: b"PK-test-archive".to_vec(),
             })
         })
@@ -239,7 +239,7 @@ async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
             assert!(!context.cancellation.is_cancelled());
             calls.lock().await.push((frontend_log, include_crash_dumps));
             Ok(DiagnosticLogsHttpResponse {
-                filename: "bibcode-diagnostics-20260715T123456Z.zip".to_owned(),
+                filename: "coddy-studio-diagnostics-20260715T123456Z.zip".to_owned(),
                 bytes: b"PK-test-archive".to_vec(),
             })
         })
@@ -264,7 +264,7 @@ async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     assert_eq!(
         response.headers()[header::CONTENT_DISPOSITION],
-        "attachment; filename=\"bibcode-diagnostics-20260715T123456Z.zip\""
+        "attachment; filename=\"coddy-studio-diagnostics-20260715T123456Z.zip\""
     );
     assert_eq!(
         to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
@@ -631,11 +631,11 @@ fn state_with_json_recorder(calls: Arc<Mutex<Vec<JsonRecorderCall>>>) -> HttpRou
 async fn transfer_routes_stream_downloads_and_accept_uploads() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().to_path_buf();
-    let access = bibcode_server::transfer::TransferAccess::new(b"secret".to_vec());
+    let access = coddy_studio_server::transfer::TransferAccess::new(b"secret".to_vec());
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
     state.transfer_download =
-        bibcode_server::production::transfer_routes::download_handler(access.clone());
-    state.transfer_upload = bibcode_server::production::transfer_routes::upload_handler(
+        coddy_studio_server::production::transfer_routes::download_handler(access.clone());
+    state.transfer_upload = coddy_studio_server::production::transfer_routes::upload_handler(
         access.clone(),
         Arc::new(|_root| Box::pin(async {})),
     );
@@ -792,7 +792,7 @@ async fn body_json(response: axum::response::Response) -> Value {
 async fn transfer_routes_distinguish_archive_and_upload_size_failures() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().to_path_buf();
-    let access = bibcode_server::transfer::TransferAccess::new(b"secret".to_vec());
+    let access = coddy_studio_server::transfer::TransferAccess::new(b"secret".to_vec());
     std::fs::create_dir_all(root.join("dir")).unwrap();
     std::fs::write(root.join("dir/a.txt"), "hello").unwrap();
     std::fs::write(root.join("dir/b.txt"), "hello").unwrap();
@@ -800,7 +800,7 @@ async fn transfer_routes_distinguish_archive_and_upload_size_failures() {
 
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
     state.transfer_download =
-        bibcode_server::production::transfer_routes::download_handler_with_limits(
+        coddy_studio_server::production::transfer_routes::download_handler_with_limits(
             access.clone(),
             1,
             u64::MAX,
@@ -818,7 +818,7 @@ async fn transfer_routes_distinguish_archive_and_upload_size_failures() {
 
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
     state.transfer_download =
-        bibcode_server::production::transfer_routes::download_handler_with_limits(
+        coddy_studio_server::production::transfer_routes::download_handler_with_limits(
             access.clone(),
             usize::MAX,
             4,
@@ -835,7 +835,7 @@ async fn transfer_routes_distinguish_archive_and_upload_size_failures() {
     assert_eq!(body["limit"], 4);
 
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
-    state.transfer_upload = bibcode_server::production::transfer_routes::upload_handler(
+    state.transfer_upload = coddy_studio_server::production::transfer_routes::upload_handler(
         access.clone(),
         Arc::new(|_root| Box::pin(async {})),
     );
@@ -866,12 +866,12 @@ async fn a_minted_download_url_redeems_against_the_transfer_route() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/app.ts"), "export const answer = 42;").unwrap();
 
-    let access = bibcode_server::transfer::TransferAccess::new(b"secret".to_vec());
-    let rpc = bibcode_server::workspace::WorkspaceRpc::with_dependencies(
-        bibcode_server::workspace::WorkspaceService::default(),
-        bibcode_server::workspace::WorkspaceRpcDependencies {
+    let access = coddy_studio_server::transfer::TransferAccess::new(b"secret".to_vec());
+    let rpc = coddy_studio_server::workspace::WorkspaceRpc::with_dependencies(
+        coddy_studio_server::workspace::WorkspaceService::default(),
+        coddy_studio_server::workspace::WorkspaceRpcDependencies {
             transfer_access: Some(access.clone()),
-            ..bibcode_server::workspace::WorkspaceRpcDependencies::default()
+            ..coddy_studio_server::workspace::WorkspaceRpcDependencies::default()
         },
     );
     let minted = rpc
@@ -884,7 +884,8 @@ async fn a_minted_download_url_redeems_against_the_transfer_route() {
     assert_eq!(minted["kind"], "file");
 
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
-    state.transfer_download = bibcode_server::production::transfer_routes::download_handler(access);
+    state.transfer_download =
+        coddy_studio_server::production::transfer_routes::download_handler(access);
     let app = add_routes(Router::new()).with_state(TestState(state));
 
     let response = app
@@ -912,12 +913,12 @@ async fn a_minted_upload_url_writes_only_the_name_the_mint_bound() {
     let root = temp.path().to_path_buf();
     std::fs::create_dir_all(root.join("src")).unwrap();
 
-    let access = bibcode_server::transfer::TransferAccess::new(b"secret".to_vec());
-    let rpc = bibcode_server::workspace::WorkspaceRpc::with_dependencies(
-        bibcode_server::workspace::WorkspaceService::default(),
-        bibcode_server::workspace::WorkspaceRpcDependencies {
+    let access = coddy_studio_server::transfer::TransferAccess::new(b"secret".to_vec());
+    let rpc = coddy_studio_server::workspace::WorkspaceRpc::with_dependencies(
+        coddy_studio_server::workspace::WorkspaceService::default(),
+        coddy_studio_server::workspace::WorkspaceRpcDependencies {
             transfer_access: Some(access.clone()),
-            ..bibcode_server::workspace::WorkspaceRpcDependencies::default()
+            ..coddy_studio_server::workspace::WorkspaceRpcDependencies::default()
         },
     );
     let minted = rpc
@@ -934,7 +935,7 @@ async fn a_minted_upload_url_writes_only_the_name_the_mint_bound() {
     let upload_url = minted["relativeUrl"].as_str().expect("relativeUrl");
 
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
-    state.transfer_upload = bibcode_server::production::transfer_routes::upload_handler(
+    state.transfer_upload = coddy_studio_server::production::transfer_routes::upload_handler(
         access,
         Arc::new(|_root| Box::pin(async {})),
     );
@@ -968,10 +969,10 @@ async fn a_minted_upload_url_writes_only_the_name_the_mint_bound() {
 async fn a_download_names_a_non_ascii_file_without_breaking_the_response() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().to_path_buf();
-    let access = bibcode_server::transfer::TransferAccess::new(b"secret".to_vec());
+    let access = coddy_studio_server::transfer::TransferAccess::new(b"secret".to_vec());
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
     state.transfer_download =
-        bibcode_server::production::transfer_routes::download_handler(access.clone());
+        coddy_studio_server::production::transfer_routes::download_handler(access.clone());
     let app = add_routes(Router::new()).with_state(TestState(state));
 
     // A raw non-ASCII or control byte in `filename` is not a legal header value, so the ASCII

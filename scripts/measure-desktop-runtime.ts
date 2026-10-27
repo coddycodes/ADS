@@ -992,7 +992,7 @@ const defaultProcessRowsCommandRunner = makeRuntimeProcessRowsCommandRunner(
   NodeChildProcess.execFile as RuntimeExecFile,
 );
 
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- Standalone CLI samples the actual host platform and injects it into every adapter.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- Standalone CLI samples the actual host platform and injects it into every adapter.
 const defaultHostPlatform = NodeOS.platform();
 
 const defaultRuntimeMeasurementHost = makeRuntimeMeasurementHost({

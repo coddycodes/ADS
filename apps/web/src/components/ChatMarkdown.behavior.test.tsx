@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import { type EnvironmentId, ThreadId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -85,7 +85,7 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
-  windowInstance = new Window({ url: "https://bibcode.test/" });
+  windowInstance = new Window({ url: "https://coddy.test/" });
   vi.stubGlobal("window", windowInstance);
   vi.stubGlobal("document", windowInstance.document);
   vi.stubGlobal("navigator", windowInstance.navigator);
@@ -532,7 +532,7 @@ describe("ChatMarkdown external-link behavior", () => {
     await openContextMenu(link);
     expect(mocks.contextMenuShow).toHaveBeenCalledWith(
       [
-        { id: "open-in-browser", label: "Open in BiBCode browser" },
+        { id: "open-in-browser", label: "Open in Coddy Studio browser" },
         { id: "open-external", label: "Open in system browser" },
         { id: "copy-link", label: "Copy link" },
       ],

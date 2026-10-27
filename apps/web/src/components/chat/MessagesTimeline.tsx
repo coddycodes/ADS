@@ -8,9 +8,9 @@ import {
   type ScopedThreadRef,
   type ServerProviderSkill,
   type TurnId,
-} from "@bibcode/contracts";
-import { parseScopedThreadKey } from "@bibcode/client-runtime/environment";
-import { resolveChatListAnchoredEndSpace } from "@bibcode/shared/chatList";
+} from "@coddy/contracts";
+import { parseScopedThreadKey } from "@coddy/client-runtime/environment";
+import { resolveChatListAnchoredEndSpace } from "@coddy/shared/chatList";
 import {
   createContext,
   Fragment,
@@ -103,7 +103,7 @@ import {
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
-import { type TimestampFormat } from "@bibcode/contracts/settings";
+import { type TimestampFormat } from "@coddy/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
 import { formatMemoryBytes as formatBytes } from "../status-bar/statusBarFormat";
 

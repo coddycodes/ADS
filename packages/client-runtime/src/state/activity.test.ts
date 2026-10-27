@@ -12,7 +12,7 @@ import {
   type ActivitySnapshot,
   type ActivityStreamItem,
   type ServerConfig,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";

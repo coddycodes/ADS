@@ -1,4 +1,4 @@
-import type { ConnectionTarget } from "@bibcode/client-runtime/connection";
+import type { ConnectionTarget } from "@coddy/client-runtime/connection";
 
 import { isDesktopLocalConnectionTarget } from "./desktopLocal";
 import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/utils";

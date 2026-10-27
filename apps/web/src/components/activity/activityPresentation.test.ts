@@ -1,4 +1,4 @@
-import type { ActivityLifecycle, ActivitySnapshot } from "@bibcode/contracts";
+import type { ActivityLifecycle, ActivitySnapshot } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

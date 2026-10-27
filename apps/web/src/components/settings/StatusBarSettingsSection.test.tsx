@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@bibcode/contracts/settings";
+import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@coddy/contracts/settings";
 
 type Control = {
   readonly kind: "toggle-group" | "switch";

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { environmentRpcKey } from "@bibcode/client-runtime/state/runtime";
+import { environmentRpcKey } from "@coddy/client-runtime/state/runtime";
 import {
   EnvironmentId,
   PullRequestsOperationError,
@@ -7,7 +7,7 @@ import {
   type PullRequestsListInput,
   type PullRequestsListPage,
   type PullRequestsSnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act, createRef, useReducer, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";

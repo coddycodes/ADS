@@ -1,5 +1,5 @@
-import type { EnvironmentId, ScopedThreadRef } from "@bibcode/contracts";
-import { isAtomCommandInterrupted, runAtomCommand } from "@bibcode/client-runtime/state/runtime";
+import type { EnvironmentId, ScopedThreadRef } from "@coddy/contracts";
+import { isAtomCommandInterrupted, runAtomCommand } from "@coddy/client-runtime/state/runtime";
 
 import { isBrowserMode, isThisPageHost } from "~/components/preview/previewBridge";
 import { getClientSettings } from "~/hooks/useSettings";

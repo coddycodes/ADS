@@ -11,7 +11,7 @@ export class Connectivity extends Context.Service<
     readonly status: Effect.Effect<NetworkStatus>;
     readonly changes: Stream.Stream<NetworkStatus>;
   }
->()("@bibcode/client-runtime/connection/connectivity") {}
+>()("@coddy/client-runtime/connection/connectivity") {}
 
 export const make = (service: Connectivity["Service"]) => Connectivity.of(service);
 

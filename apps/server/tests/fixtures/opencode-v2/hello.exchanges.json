@@ -5,7 +5,7 @@
       "method": "POST",
       "path": "/api/session",
       "body": {
-        "title": "BiBCode capture",
+        "title": "Coddy Studio capture",
         "location": {
           "directory": "/work/project"
         },
@@ -47,7 +47,7 @@
             "created": 1792090035021,
             "updated": 1792090035021
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -90,7 +90,7 @@
             "created": 1792090035021,
             "updated": 1792090035021
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -108,13 +108,13 @@
       "method": "POST",
       "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO/prompt",
       "body": {
-        "id": "msg_bibcodecapture1792090035027",
+        "id": "msg_coddystudiocapture1792090035027",
         "text": "SAY_HELLO please"
       },
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090035027",
+          "id": "msg_coddystudiocapture1792090035027",
           "sessionID": "ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
           "time": {
             "created": 1792090035325
@@ -176,7 +176,7 @@
             }
           },
           {
-            "id": "msg_bibcodecapture1792090035027",
+            "id": "msg_coddystudiocapture1792090035027",
             "time": {
               "created": 1792090035357
             },
@@ -192,12 +192,12 @@
     },
     {
       "method": "GET",
-      "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO/message/msg_bibcodecapture1792090035027",
+      "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO/message/msg_coddystudiocapture1792090035027",
       "body": null,
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090035027",
+          "id": "msg_coddystudiocapture1792090035027",
           "time": {
             "created": 1792090035357
           },

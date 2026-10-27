@@ -2,7 +2,7 @@ import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
-} from "@bibcode/shared/searchRanking";
+} from "@coddy/shared/searchRanking";
 
 export interface ComposerCommandSearchCandidate<T> {
   readonly item: T;

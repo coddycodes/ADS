@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     CauseItem, RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     diagnostics::{
         ProcessAttributionRegistry,
@@ -156,7 +156,7 @@ async fn the_audit_and_removal_outcomes_reach_the_profiler() {
     request(
         fixture.socket(),
         "8",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({"commandId":"detach","projectId":"project-1","threadId":thread_id}),
     )
     .await;
@@ -170,7 +170,7 @@ async fn the_audit_and_removal_outcomes_reach_the_profiler() {
     request(
         fixture.socket(),
         "9",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({"commandId":"detach","projectId":"project-1","threadId":thread_id}),
     )
     .await;
@@ -435,13 +435,13 @@ async fn adopt(fixture: &mut Fixture) -> String {
         .to_owned()
 }
 
-/// A repository with one unadopted worktree where BiBCode creates its own, its project, the
+/// A repository with one unadopted worktree where Coddy Studio creates its own, its project, the
 /// catalog and the removal RPC.
 struct Fixture {
     git_config: IsolatedGitConfig,
     _root: TempDir,
     main: PathBuf,
-    /// Where BiBCode creates the repository's worktrees: `<root>/.bibcode-worktrees/main`.
+    /// Where Coddy Studio creates the repository's worktrees: `<root>/.coddy-studio-worktrees/main`.
     managed: PathBuf,
     worktree: PathBuf,
     repositories: Repositories,
@@ -449,7 +449,7 @@ struct Fixture {
     availability: WorkspaceAvailabilityRegistry,
     operations: WorktreeCatalogOperationRuntime,
     engine: OrchestrationEngine,
-    handle: Option<bibcode_server::ServerHandle>,
+    handle: Option<coddy_studio_server::ServerHandle>,
     socket: Option<TestSocket>,
 }
 
@@ -459,7 +459,7 @@ impl Fixture {
         let git = |cwd: &Path, args: &[&str]| git(&git_config, cwd, args);
         let root = tempfile::tempdir().expect("fixture root");
         let main = root.path().join("main");
-        let managed = root.path().join(".bibcode-worktrees/main");
+        let managed = root.path().join(".coddy-studio-worktrees/main");
         let worktree = managed.join("feature-external");
         fs::create_dir(&main).expect("primary directory");
         git(&main, &["init", "--initial-branch", "main"]);

@@ -714,7 +714,7 @@ mod tests {
         let (tunnels, requests) = tunnels();
         let port = tunnels.ensure_server("env-1").await.unwrap();
         // A non-loopback name the resolver here cannot find: answered without a tunnel.
-        let mut page = socks_connect(port, "bibcode-preview-test.invalid", 80).await;
+        let mut page = socks_connect(port, "coddy-studio-preview-test.invalid", 80).await;
         assert_eq!(reply_code(&mut page).await, REPLY_HOST_UNREACHABLE);
         assert!(requests.try_recv().is_err(), "no tunnel was asked for");
     }

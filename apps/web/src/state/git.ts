@@ -1,4 +1,4 @@
-import { createGitEnvironmentAtoms } from "@bibcode/client-runtime/state/git";
+import { createGitEnvironmentAtoms } from "@coddy/client-runtime/state/git";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

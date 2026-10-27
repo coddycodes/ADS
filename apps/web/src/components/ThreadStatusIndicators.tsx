@@ -2,8 +2,8 @@ import {
   scopeProjectRef,
   scopedThreadKey,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
-import type { VcsStatusResult, VcsStatusSummary } from "@bibcode/contracts";
+} from "@coddy/client-runtime/environment";
+import type { VcsStatusResult, VcsStatusSummary } from "@coddy/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";

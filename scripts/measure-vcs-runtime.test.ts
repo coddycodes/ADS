@@ -69,7 +69,7 @@ describe("measure VCS runtime arguments", () => {
 
 describe("measurement artifact identity", () => {
   it("uses compiler artifacts under a target triple and never selects a stale root artifact", () => {
-    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-vcs-build-plan-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-vcs-build-plan-"));
     try {
       const repositoryRoot = NodePath.join(root, "repository");
       const outputDirectory = NodePath.join(root, "evidence");
@@ -205,7 +205,7 @@ describe("atomic Windows process snapshots", () => {
   });
 });
 
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- Native Windows process cleanup smoke is unavailable on other hosts.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- Native Windows process cleanup smoke is unavailable on other hosts.
 const windowsIt = NodeOS.platform() === "win32" ? it : it.skip;
 
 describe("owned measurement process cleanup", () => {
@@ -253,7 +253,7 @@ describe("owned measurement process cleanup", () => {
   windowsIt(
     "reaps an exact child and grandchild after a forced timeout",
     async () => {
-      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-vcs-timeout-"));
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-vcs-timeout-"));
       try {
         const owned = await spawnTree(root, false);
         await expect(
@@ -271,7 +271,7 @@ describe("owned measurement process cleanup", () => {
   windowsIt(
     "reaps an orphaned child and grandchild after graceful parent exit",
     async () => {
-      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-vcs-graceful-"));
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-vcs-graceful-"));
       try {
         const owned = await spawnTree(root, true);
         await expect(runWithOwnedMeasurementProcess(owned, async () => "ok")).resolves.toBe("ok");

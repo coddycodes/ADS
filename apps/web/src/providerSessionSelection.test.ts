@@ -3,7 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveProviderSessionSelectionForInstance } from "./providerSessionSelection";

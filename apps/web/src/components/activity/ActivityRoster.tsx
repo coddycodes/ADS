@@ -5,7 +5,7 @@ import {
   type ActivityRecordSummary,
   type ActivitySection,
   type ActivitySnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { BotIcon, ListTodoIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useRef, type ComponentType } from "react";
 

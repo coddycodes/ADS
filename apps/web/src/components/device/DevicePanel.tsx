@@ -8,12 +8,12 @@ import type {
   DevicePlatformCatalog,
   DeviceSnapshot,
   EnvironmentId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { SmartphoneIcon, TriangleAlertIcon } from "lucide-react";

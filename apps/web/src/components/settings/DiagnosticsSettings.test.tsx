@@ -15,14 +15,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryResult,
   ServerProcessResourceHistorySummary,
   ServerTraceDiagnosticsResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 type AnyProps = Record<string, unknown>;
 
@@ -77,8 +77,8 @@ const h = vi.hoisted(() => {
     downloadError: null as unknown,
     downloadResult: {
       status: "saved",
-      filename: "bibcode-diagnostics-test.zip",
-      path: "C:\\Users\\test\\Downloads\\bibcode-diagnostics-test.zip",
+      filename: "coddy-studio-diagnostics-test.zip",
+      path: "C:\\Users\\test\\Downloads\\coddy-studio-diagnostics-test.zip",
     } as
       | { status: "saved"; filename: string; path: string }
       | { status: "downloaded"; filename: string }
@@ -109,8 +109,8 @@ const h = vi.hoisted(() => {
       h.downloadError = null;
       h.downloadResult = {
         status: "saved",
-        filename: "bibcode-diagnostics-test.zip",
-        path: "C:\\Users\\test\\Downloads\\bibcode-diagnostics-test.zip",
+        filename: "coddy-studio-diagnostics-test.zip",
+        path: "C:\\Users\\test\\Downloads\\coddy-studio-diagnostics-test.zip",
       };
     },
   };
@@ -149,7 +149,7 @@ vi.mock("@effect/atom-react", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { _tag?: string; interrupted?: boolean }) =>
     result._tag === "Interrupted" || result.interrupted === true,
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error,
@@ -361,10 +361,10 @@ function processData(
         processKey: "4242:4242",
         depth: 0,
         childPids: [100, 102],
-        command: "bibcode server",
+        command: "coddy-studio server",
         scope: "core",
         kind: "server",
-        label: "BiBCode Server",
+        label: "Coddy Studio Server",
         cpuPercent: 2.5,
         rssBytes: 1_000_000,
       }),
@@ -409,7 +409,7 @@ function summary(
     depth: 0,
     scope: "core",
     kind: "server",
-    label: "BiBCode Server",
+    label: "Coddy Studio Server",
     confidence: "exact",
     firstSeenAt: T0,
     lastSeenAt: T0,
@@ -650,7 +650,7 @@ describe("DiagnosticsSettingsPanel rendering", () => {
     expect(markup).toContain("MB");
     expect(markup).toContain("4242"); // server pid rendered verbatim
     // Attributed process labels.
-    expect(markup).toContain("BiBCode Core");
+    expect(markup).toContain("Coddy Studio Core");
     expect(markup).toContain("External Tooling");
     expect(markup).toContain(">Codex</span>");
     expect(markup).toContain(">Provider</td>");
@@ -776,7 +776,7 @@ describe("DiagnosticsSettingsPanel rendering", () => {
     seedAll();
     const markup = render();
 
-    expect(markup).toContain("BiBCode Server");
+    expect(markup).toContain("Coddy Studio Server");
     expect(markup).toContain("Codex");
     expect(markup).toContain("node worker.js");
     expect(markup).toContain("External");
@@ -1095,7 +1095,7 @@ describe("DiagnosticsSettingsPanel diagnostic log download", () => {
       expect.objectContaining({
         type: "success",
         title: "Diagnostic logs saved",
-        description: "C:\\Users\\test\\Downloads\\bibcode-diagnostics-test.zip",
+        description: "C:\\Users\\test\\Downloads\\coddy-studio-diagnostics-test.zip",
       }),
     );
   });
@@ -1120,7 +1120,7 @@ describe("DiagnosticsSettingsPanel diagnostic log download", () => {
   it("stays silent when the native save dialog is cancelled", async () => {
     h.downloadResult = {
       status: "cancelled",
-      filename: "bibcode-diagnostics-test.zip",
+      filename: "coddy-studio-diagnostics-test.zip",
     };
     seedAll();
     render();

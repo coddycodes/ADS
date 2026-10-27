@@ -1,4 +1,4 @@
-import { type TurnId } from "@bibcode/contracts";
+import { type TurnId } from "@coddy/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {

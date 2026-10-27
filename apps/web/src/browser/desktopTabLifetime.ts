@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 
 import { wantsPreviewTunnel } from "~/browser/browserTargetResolver";
 import { previewBridge } from "~/components/preview/previewBridge";

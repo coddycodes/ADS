@@ -4,7 +4,7 @@ import type {
   EnvironmentId,
   ServerProcessDiagnosticsResult,
   ServerProviderUsageResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";

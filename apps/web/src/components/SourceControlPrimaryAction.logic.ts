@@ -1,5 +1,5 @@
-import type { GitStackedAction, VcsStatusResult } from "@bibcode/contracts";
-import { isTemporaryWorktreeBranch } from "@bibcode/shared/git";
+import type { GitStackedAction, VcsStatusResult } from "@coddy/contracts";
+import { isTemporaryWorktreeBranch } from "@coddy/shared/git";
 import { GIT_MANAGER_STASH_MERGE_DISABLED_REASON } from "./gitManager/gitManagerAvailability";
 import {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,

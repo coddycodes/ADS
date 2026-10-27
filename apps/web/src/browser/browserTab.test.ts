@@ -18,8 +18,8 @@ describe("openPendingTab", () => {
 
     expect(open).toHaveBeenCalledWith("about:blank", "_blank");
     expect(tab.opener).toBeNull();
-    pending?.navigate("http://10.0.0.2:41000/__bibcode/bootstrap?cap=C&to=%2F");
-    expect(replace).toHaveBeenCalledWith("http://10.0.0.2:41000/__bibcode/bootstrap?cap=C&to=%2F");
+    pending?.navigate("http://10.0.0.2:41000/__coddy-studio/bootstrap?cap=C&to=%2F");
+    expect(replace).toHaveBeenCalledWith("http://10.0.0.2:41000/__coddy-studio/bootstrap?cap=C&to=%2F");
     pending?.close();
     expect(close).toHaveBeenCalled();
   });

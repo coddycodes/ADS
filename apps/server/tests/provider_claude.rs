@@ -1,4 +1,4 @@
-use bibcode_server::provider::claude;
+use coddy_studio_server::provider::claude;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -6,11 +6,6 @@ use std::{
     path::PathBuf,
 };
 
-use bibcode_server::activity::{
-    ACTIVITY_DETAIL_MAX_LENGTH, ACTIVITY_SUMMARY_MAX_LENGTH, ActivityActorSummary,
-    ActivityCapabilities, ActivityEntry, ActivityLifecycle, ActivityObservationState,
-    ActivityRecordKind, ProviderActivityMutation,
-};
 use claude::{
     ClaudeActivityFixtureAdapter, ClaudeActivityInputSource, ClaudeTranscriptFixtureAdapter,
     canonical::{CanonicalEvent, CanonicalEventTrace},
@@ -20,6 +15,11 @@ use claude::{
         PermissionRequestInput, ReconnectSnapshot, RuntimeMode, TurnInput, UserInputRequestInput,
         claude_hook_native_event_id_for_test,
     },
+};
+use coddy_studio_server::activity::{
+    ACTIVITY_DETAIL_MAX_LENGTH, ACTIVITY_SUMMARY_MAX_LENGTH, ActivityActorSummary,
+    ActivityCapabilities, ActivityEntry, ActivityLifecycle, ActivityObservationState,
+    ActivityRecordKind, ProviderActivityMutation,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -783,16 +783,16 @@ fn transcript_recovery_parser_accepts_only_correlated_sidechain_activity_records
     assert_eq!(entries.len(), 3);
     assert_eq!(
         entries[0].kind,
-        bibcode_server::activity::ActivityEntryKind::Commentary
+        coddy_studio_server::activity::ActivityEntryKind::Commentary
     );
     assert_eq!(entries[0].detail.as_deref(), Some("Recovered commentary"));
     assert_eq!(
         entries[1].kind,
-        bibcode_server::activity::ActivityEntryKind::Tool
+        coddy_studio_server::activity::ActivityEntryKind::Tool
     );
     assert_eq!(
         entries[2].tone,
-        bibcode_server::activity::ActivityEntryTone::Success
+        coddy_studio_server::activity::ActivityEntryTone::Success
     );
     assert!(
         entries
@@ -2009,7 +2009,7 @@ fn stop_task_control_request_encodes_the_exact_private_task_target() {
             .expect("stop task json"),
         json!({
             "type": "control_request",
-            "request_id": "bibcode-41",
+            "request_id": "coddy-studio-41",
             "request": { "subtype": "stop_task", "task_id": "task-a" }
         })
     );

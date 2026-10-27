@@ -1703,7 +1703,7 @@ mod tests {
 
     fn initialize_index_git_workspace(root: &Path) {
         run_index_git(root, &["init", "--quiet"]);
-        let excludes = root.join(".git/bibcode-test-global-excludes");
+        let excludes = root.join(".git/coddy-studio-test-global-excludes");
         std::fs::write(&excludes, "").expect("empty fixture excludes file");
         let excludes = excludes.to_string_lossy().replace('\\', "/");
         run_index_git(root, &["config", "--local", "core.excludesFile", &excludes]);
@@ -2134,7 +2134,7 @@ mod tests {
             IGNORED_DIRECTORIES + IGNORED_FILES,
             EXPECTED_IGNORED_ENTRIES
         );
-        let samples = std::env::var("BIBCODE_FILE_INDEX_BENCHMARK_SAMPLES")
+        let samples = std::env::var("CODDY_STUDIO_FILE_INDEX_BENCHMARK_SAMPLES")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(DEFAULT_SAMPLES);
@@ -3203,7 +3203,7 @@ mod tests {
 
     #[tokio::test]
     async fn rpc_error_mappers_cover_workspace_filesystem_and_asset_variants() {
-        let missing_root = std::env::temp_dir().join("bibcode-missing-workspace-rpc-root");
+        let missing_root = std::env::temp_dir().join("coddy-studio-missing-workspace-rpc-root");
         let missing_cwd = missing_root.to_string_lossy().into_owned();
         let rpc = WorkspaceRpc::new(WorkspaceService::default());
         for (method, payload, tag) in [

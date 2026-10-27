@@ -4,7 +4,7 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { DraftId } from "../../composerDraftStore";
 import {
   getComposerPromptInjectionState,

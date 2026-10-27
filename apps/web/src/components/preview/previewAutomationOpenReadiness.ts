@@ -1,4 +1,4 @@
-import type { PreviewAutomationOpenInput, PreviewSessionSnapshot } from "@bibcode/contracts";
+import type { PreviewAutomationOpenInput, PreviewSessionSnapshot } from "@coddy/contracts";
 
 export function previewAutomationOpenNeedsOverlay(
   input: PreviewAutomationOpenInput,

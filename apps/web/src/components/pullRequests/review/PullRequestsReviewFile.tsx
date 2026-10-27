@@ -5,7 +5,7 @@ import type {
   PullRequestsDetail,
   PullRequestsTimelineItem,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { DiffLineAnnotation } from "@pierre/diffs";
 import { memo, useCallback, useMemo, type ReactNode } from "react";
 import { usePullRequestsStore } from "../../../pullRequestsStore";

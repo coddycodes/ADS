@@ -8,17 +8,17 @@ import {
   type ServerConfig,
   type VcsWorktreeDescriptor,
   type WorktreeAdoptInput,
-} from "@bibcode/contracts";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+} from "@coddy/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   deriveWorktreeDiscoveryState,
   isWorktreeCatalogSupported,
-} from "@bibcode/client-runtime/state/worktrees";
+} from "@coddy/client-runtime/state/worktrees";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   ChevronRightIcon,
   CloudIcon,
@@ -448,7 +448,7 @@ function PhysicalWorktreeDiscoverySection(props: {
                 <EnvironmentBadge environmentLabel={environmentLabel} isRemote={isRemote} />
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Add existing Git worktrees to use them in BiBCode.
+                Add existing Git worktrees to use them in Coddy Studio.
               </p>
             </div>
           </div>
@@ -464,7 +464,7 @@ function PhysicalWorktreeDiscoverySection(props: {
                   const pending = pendingWorktreeKeys.has(candidate.worktreeKey);
                   return (
                     <Button
-                      aria-label={`Add ${label} from ${accessiblePhysicalScope} at ${candidate.path} to BiBCode`}
+                      aria-label={`Add ${label} from ${accessiblePhysicalScope} at ${candidate.path} to Coddy Studio`}
                       className="h-5 shrink-0 px-1.5 text-xs"
                       data-worktree-add-action="true"
                       disabled={pending || addAllPendingCount > 0}
@@ -542,7 +542,7 @@ function PhysicalWorktreeDiscoverySection(props: {
                 const pending = pendingWorktreeKeys.has(candidate.worktreeKey);
                 return (
                   <Button
-                    aria-label={`Add discovered worktree ${label} from ${accessiblePhysicalScope} at ${candidate.path} to BiBCode`}
+                    aria-label={`Add discovered worktree ${label} from ${accessiblePhysicalScope} at ${candidate.path} to Coddy Studio`}
                     className="h-5 shrink-0 px-1.5 text-xs"
                     data-worktree-add-action="true"
                     disabled={pending || addAllPendingCount > 0}

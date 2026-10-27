@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@bibcode/contracts";
+import type { ScopedThreadRef } from "@coddy/contracts";
 
 import {
   selectThreadCenterPanelState,

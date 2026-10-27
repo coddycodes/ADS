@@ -1,5 +1,5 @@
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
-import type { ScopedThreadRef } from "@bibcode/contracts";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
+import type { ScopedThreadRef } from "@coddy/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -87,7 +87,7 @@ export const useSourceControlPanelStore = create<SourceControlPanelStoreState>()
         }),
     }),
     {
-      name: "bibcode:source-control-panel-state:v1",
+      name: "coddy-studio:source-control-panel-state:v1",
       version: 2,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),

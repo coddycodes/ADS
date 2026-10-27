@@ -5,7 +5,7 @@ import type {
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryResult,
   ServerProcessResourceHistorySummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -115,8 +115,8 @@ function liveFixture(
         processKey: "100:1",
         scope: "core",
         kind: "server",
-        label: "BiBCode Server",
-        command: "bibcode server",
+        label: "Coddy Studio Server",
+        command: "coddy-studio server",
         rssBytes: 200 * 1024 ** 2,
         cpuPercent: 2,
         depth: 0,
@@ -137,8 +137,8 @@ function liveFixture(
         processKey: "300:1",
         scope: "core",
         kind: "ui",
-        label: "BiBCode UI",
-        command: "BiBCode WebContent",
+        label: "Coddy Studio UI",
+        command: "Coddy Studio WebContent",
         rssBytes: 120 * 1024 ** 2,
       }),
       processEntry({
@@ -165,11 +165,11 @@ function historySummary(
     processKey: "100:1",
     pid: 100,
     ppid: 1,
-    command: "bibcode server",
+    command: "coddy-studio server",
     depth: 0,
     scope: "core",
     kind: "server",
-    label: "BiBCode Server",
+    label: "Coddy Studio Server",
     confidence: "exact",
     firstSeenAt: T0,
     lastSeenAt: T1,
@@ -287,7 +287,7 @@ beforeEach(() => {
 });
 
 describe("ResourceDiagnosticsSections", () => {
-  it("renders a Combined headline above equal BiBCode Core and External Tooling cards", () => {
+  it("renders a Combined headline above equal Coddy Studio Core and External Tooling cards", () => {
     const markup = render();
 
     expect(markup).toContain('data-section-title="Live Processes"');
@@ -299,7 +299,7 @@ describe("ResourceDiagnosticsSections", () => {
       markup.indexOf('data-resource-card="core"'),
     );
     expect(markup).toContain('data-resource-card-pair="true"');
-    expect(markup).toContain("BiBCode Core");
+    expect(markup).toContain("Coddy Studio Core");
     expect(markup).toContain("External Tooling");
     expect(markup).toContain("Server PID");
     // #159: the memory figure says what it measures on each server OS.
@@ -309,7 +309,7 @@ describe("ResourceDiagnosticsSections", () => {
 
   it("renders memory-first rows and applies deterministic Name sorting after interaction", () => {
     let markup = render();
-    expect(markup.indexOf(">Codex<")).toBeLessThan(markup.indexOf(">BiBCode Server<"));
+    expect(markup.indexOf(">Codex<")).toBeLessThan(markup.indexOf(">Coddy Studio Server<"));
 
     const sortByName = h.buttons.find((button) => button["aria-label"] === "Sort by Name");
     if (!sortByName) throw new Error("Sort by Name button was not rendered");
@@ -325,7 +325,7 @@ describe("ResourceDiagnosticsSections", () => {
       value: { key: "name", direction: "asc" },
     });
     markup = render();
-    expect(markup.indexOf(">BiBCode Server<")).toBeLessThan(markup.indexOf(">Codex<"));
+    expect(markup.indexOf(">Coddy Studio Server<")).toBeLessThan(markup.indexOf(">Codex<"));
     expect(markup.indexOf(">Codex<")).toBeLessThan(markup.indexOf(">Detached helper<"));
   });
 
@@ -384,7 +384,7 @@ describe("ResourceDiagnosticsSections", () => {
     let historyMarkup = markup.slice(markup.indexOf('data-section-title="Resource History"'));
 
     expect(historyMarkup.indexOf(">Codex<")).toBeLessThan(
-      historyMarkup.indexOf(">BiBCode Server<"),
+      historyMarkup.indexOf(">Coddy Studio Server<"),
     );
     expect(historyMarkup).toMatch(
       /<th aria-sort="descending"[^>]*><button[^>]*aria-label="Sort history by Max Memory"/,
@@ -422,7 +422,7 @@ describe("ResourceDiagnosticsSections", () => {
     });
     markup = render();
     historyMarkup = markup.slice(markup.indexOf('data-section-title="Resource History"'));
-    expect(historyMarkup.indexOf(">BiBCode Server<")).toBeLessThan(
+    expect(historyMarkup.indexOf(">Coddy Studio Server<")).toBeLessThan(
       historyMarkup.indexOf(">Codex<"),
     );
     expect(historyMarkup).toMatch(
@@ -470,7 +470,7 @@ describe("ResourceDiagnosticsSections", () => {
       );
 
     expect(signalLabels).toEqual(["Send SIGINT to Codex", "Send SIGKILL to Codex"]);
-    expect(signalLabels.some((label) => label.includes("BiBCode"))).toBe(false);
+    expect(signalLabels.some((label) => label.includes("Coddy Studio"))).toBe(false);
     expect(signalLabels.some((label) => label.includes("Detached"))).toBe(false);
   });
 

@@ -28,14 +28,14 @@ The intended source deviations from portable-pty 0.9.0 are limited to:
 - Windows ConPTY support for supplying an existing Job Object through
   `PROC_THREAD_ATTRIBUTE_JOB_LIST` at process creation. This closes the
   interval in which a newly created ConPTY child could create descendants
-  before BiBCode assigned it to a Job.
+  before Coddy Studio assigned it to a Job.
 - Correct propagation of `TerminateProcess` success and failure from the
   Windows child-killer implementations. Upstream 0.9.0 reverses the Win32
   result check and `WinChild::kill` discards the result, which makes bounded
   cleanup unable to distinguish a terminated child from a failed fallback.
 - `CommandBuilder::iter_full_env` exposes the complete captured environment as
   `(&OsStr, &OsStr)` pairs. The upstream `iter_full_env_as_str` filters out any
-  entry whose name or value is not UTF-8. BiBCode's Linux AppImage child policy
+  entry whose name or value is not UTF-8. Coddy Studio's Linux AppImage child policy
   must inspect every effective PTY entry, including non-UTF-8 command-local
   overrides, so the text-only iterator would leave bundled paths behind. The
   accessor adds no environment filtering or AppImage policy to this crate.

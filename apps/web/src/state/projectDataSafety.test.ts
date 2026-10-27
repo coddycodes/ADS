@@ -1,4 +1,4 @@
-import type { DesktopBridge, DesktopProjectDataEnvironmentStatus } from "@bibcode/contracts";
+import type { DesktopBridge, DesktopProjectDataEnvironmentStatus } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createProjectDataSafetyStore } from "./projectDataSafety";
@@ -8,8 +8,8 @@ const status: DesktopProjectDataEnvironmentStatus = {
   label: "Local",
   runningDistro: null,
   status: "recovery-required",
-  requestedRoot: "/Users/user/.bibcode",
-  effectiveRoot: "/Users/user/.bibcode",
+  requestedRoot: "/Users/user/.coddy/studio",
+  effectiveRoot: "/Users/user/.coddy/studio",
   isFilesystemAlias: false,
   storageInstanceId: "b102f72a-c63b-4801-8f14-fba7a16856b8",
   issue: "The database is missing.",

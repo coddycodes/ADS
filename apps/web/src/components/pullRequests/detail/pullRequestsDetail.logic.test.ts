@@ -1,4 +1,4 @@
-import type { PullRequestsMergeReadiness } from "@bibcode/contracts";
+import type { PullRequestsMergeReadiness } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   approvalStatusNote,

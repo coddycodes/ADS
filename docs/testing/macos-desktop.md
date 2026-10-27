@@ -11,7 +11,7 @@ Mac executes the other artifact. Record macOS build, hardware architecture,
 and whether translation is involved.
 
 Standalone server releases provide native ARM64 and x64 `.tar.gz` archives containing
-`bibcode` and the matching web client. Validate the archive matching the native host.
+`coddy-studio` and the matching web client. Validate the archive matching the native host.
 
 ## Host and toolchain inventory
 
@@ -71,14 +71,14 @@ threads without serializing broad suites.
 Use a unique test-owned root outside a user project:
 
 ```sh
-run_root=$(mktemp -d /private/tmp/bibcode-macos-validation.XXXXXX)
+run_root=$(mktemp -d /private/tmp/coddy-studio-macos-validation.XXXXXX)
 repository="$run_root/Repository With Spaces"
 worktrees="$run_root/External Worktrees"
 alias_root="$run_root/Symlink Alias"
 mkdir -p "$repository" "$worktrees"
 git -C "$repository" init
-git -C "$repository" config user.name 'BiBCode Test'
-git -C "$repository" config user.email 'bibcode-test@example.invalid'
+git -C "$repository" config user.name 'Coddy Studio Test'
+git -C "$repository" config user.email 'coddy-studio-test@example.invalid'
 printf 'fixture\n' >"$repository/README.md"
 git -C "$repository" add README.md
 git -C "$repository" commit -m 'fixture baseline'
@@ -92,7 +92,7 @@ realpath "$alias_root"
 ```
 
 Also record the physical identity of any fixture created through `/tmp` and its
-`/private/tmp` spelling. Confirm all aliases map to one BiBCode owner while the
+`/private/tmp` spelling. Confirm all aliases map to one Coddy Studio owner while the
 UI retains useful Git-reported display spelling. Exercise discovery, adoption,
 **Add all**, **Keep hidden**, restart, and final on-disk existence only with the
 fixture worktrees.
@@ -104,7 +104,7 @@ linker, compact-unwind, process-signal, WebKit, signing, and DMG diagnostics
 with their affected test or artifact. Do not suppress a warning without
 classifying it. The known `ld: __eh_frame section too large (max 16MB) to
 encode dwarf unwind offsets in compact unwind table` message on the
-`bibcode-server` library test binary is benign: the unoptimized test binary
+`coddy-studio-server` library test binary is benign: the unoptimized test binary
 exceeds the compact-unwind encoding limit, so the linker keeps DWARF unwind
 tables for it and only exception-unwinding performance of that test binary is
 affected. It is not emitted for shipped release artifacts; report it with the
@@ -114,7 +114,7 @@ Validate Objective-C recovery with the actual optimized profile:
 
 ```sh
 rust_target="$(rustc -Vv | sed -n 's/^host: //p')"
-cargo run --release --target "$rust_target" -p bibcode-desktop --example objc_exception_probe
+cargo run --release --target "$rust_target" -p coddy-studio-desktop --example objc_exception_probe
 ```
 
 The probe must catch its native exception and exit successfully. The workspace
@@ -122,7 +122,7 @@ release profile preserves unwinding because Wry relies on it when a custom
 URL-scheme task is cancelled during navigation. The macOS desktop crate rejects
 `panic=abort`; do not disable that guard to produce an installer.
 
-For update validation, use an isolated `BIBCODE_HOME` and disposable project.
+For update validation, use an isolated `CODDY_STUDIO_HOME` and disposable project.
 Keep a read subscription open while installing an available test update and
 confirm it does not block protection. During a deliberately held mutation,
 confirm the dialog promptly shows the waiting stage, elapsed time, and an
@@ -169,12 +169,12 @@ from `Info.plist` rather than assuming that the display name equals the binary
 name:
 
 ```sh
-plist="/absolute/path/BiBCode.app/Contents/Info.plist"
+plist="/absolute/path/Coddy Studio.app/Contents/Info.plist"
 executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist"
-test -x "/absolute/path/BiBCode.app/Contents/MacOS/$executable"
-codesign --verify --deep --strict --verbose=2 /absolute/path/BiBCode.app
+test -x "/absolute/path/Coddy Studio.app/Contents/MacOS/$executable"
+codesign --verify --deep --strict --verbose=2 /absolute/path/Coddy Studio.app
 ```
 
 Mount the exact test-owned DMG read-only at a fresh mount point, inspect the
@@ -221,19 +221,19 @@ mandatory check against the exact mounted DMG application.
 Build and run packaged E2E with:
 
 ```sh
-export BIBCODE_E2E_PLATFORM=mac
-export BIBCODE_E2E_ARCH="$(node -p process.arch)"
-case "$BIBCODE_E2E_ARCH" in
+export CODDY_STUDIO_E2E_PLATFORM=mac
+export CODDY_STUDIO_E2E_ARCH="$(node -p process.arch)"
+case "$CODDY_STUDIO_E2E_ARCH" in
   arm64) rust_target=aarch64-apple-darwin ;;
   x64) rust_target=x86_64-apple-darwin ;;
   *) echo 'Unsupported macOS architecture' >&2; exit 1 ;;
 esac
 vp run test:ui:desktop:build
 
-dmg=$(find "$PWD/target/$rust_target/release/bundle/dmg" -maxdepth 1 -type f -name 'BiBCode_*.dmg' -print -quit)
+dmg=$(find "$PWD/target/$rust_target/release/bundle/dmg" -maxdepth 1 -type f -name 'CoddyStudio_*.dmg' -print -quit)
 test -n "$dmg"
-mount_dir=$(mktemp -d /private/tmp/bibcode-macos-e2e-mount.XXXXXX)
-install_dir=$(mktemp -d /private/tmp/bibcode-macos-e2e-install.XXXXXX)
+mount_dir=$(mktemp -d /private/tmp/coddy-studio-macos-e2e-mount.XXXXXX)
+install_dir=$(mktemp -d /private/tmp/coddy-studio-macos-e2e-install.XXXXXX)
 cleanup_e2e_mount() {
   hdiutil detach "$mount_dir" >/dev/null 2>&1 || true
   rmdir "$mount_dir" 2>/dev/null || true
@@ -241,21 +241,21 @@ cleanup_e2e_mount() {
 trap cleanup_e2e_mount EXIT HUP INT TERM
 hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg"
 
-ditto "$mount_dir/BiBCode.app" "$install_dir/BiBCode.app"
-executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$mount_dir/BiBCode.app/Contents/Info.plist")
-cmp "$mount_dir/BiBCode.app/Contents/MacOS/$executable" "$install_dir/BiBCode.app/Contents/MacOS/$executable"
-codesign --verify --deep --strict "$install_dir/BiBCode.app"
-export BIBCODE_E2E_APP_PATH="$install_dir/BiBCode.app"
-test -d "$BIBCODE_E2E_APP_PATH"
+ditto "$mount_dir/Coddy Studio.app" "$install_dir/Coddy Studio.app"
+executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$mount_dir/Coddy Studio.app/Contents/Info.plist")
+cmp "$mount_dir/Coddy Studio.app/Contents/MacOS/$executable" "$install_dir/Coddy Studio.app/Contents/MacOS/$executable"
+codesign --verify --deep --strict "$install_dir/Coddy Studio.app"
+export CODDY_STUDIO_E2E_APP_PATH="$install_dir/Coddy Studio.app"
+test -d "$CODDY_STUDIO_E2E_APP_PATH"
 vp run test:ui:desktop
 ```
 
-When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+When the run ends, the artifact directory (`CODDY_STUDIO_E2E_ARTIFACT_DIR`) also holds
 `app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
 page-load lifecycle and webview process failures, next to the screenshots and
 WebdriverIO logs.
 
-`BIBCODE_E2E_APP_PATH` selects the isolated installation copied from the current
+`CODDY_STUDIO_E2E_APP_PATH` selects the isolated installation copied from the current
 worktree's E2E DMG. The DMG-only bundler removes its transient staging `.app`;
 mount the resulting image to inspect and copy its signed payload, then validate
 the installed copy as in the normal macOS installation flow. Binary comparison
@@ -265,7 +265,7 @@ installation directory with the execution evidence for inspection.
 
 ## Renderer-data isolation
 
-Prefer the E2E bundle identifier and isolated `BIBCODE_HOME` so the packaged
+Prefer the E2E bundle identifier and isolated `CODDY_STUDIO_HOME` so the packaged
 test cannot read a user's normal project store. Resolve the exact bundle
 identifier from `Info.plist`; never target renderer data by display name.
 
@@ -319,10 +319,10 @@ as not verified, with the lock evidence (`ioreg -n Root -d1` shows
   list and environment rail show that alias after reconnecting and restarting
   the app. Blank aliases use the pairing code's server name; failed pairing
   preserves the alias for retry. The remote server's own name remains unchanged;
-- Add a headless web-mode `bibcode serve` server without an alias (pairing code
+- Add a headless web-mode `coddy-studio serve` server without an alias (pairing code
   or **Advanced: manual endpoint and token**) and confirm its name is the
   machine's hostname, with "Local" only if no usable hostname is reported.
-  `bibcode start`, bare `bibcode`, and desktop-owned backends keep "Local".
+  `coddy-studio start`, bare `coddy-studio`, and desktop-owned backends keep "Local".
   Select this server in the rail, then open **Settings → Remote Servers**.
   Choose **Rename…** from its **⋯** menu: the dialog is prefilled, refuses a
   blank name with **Enter a name for this server.**, and Enter in the name field
@@ -340,16 +340,16 @@ as not verified, with the lock evidence (`ioreg -n Root -d1` shows
   the new alias. Repeat with a liveness timeout. Storage-identity errors still
   use the server's reported name;
 - With that renamed test server connected, check a stalled connection on a
-  macOS remote host: use `pgrep -f "bibcode serve"` or the process list to find
+  macOS remote host: use `pgrep -f "coddy-studio serve"` or the process list to find
   the test server's PID, then run `kill -STOP <pid>` on that host. Hover the
   Settings row's status dot and wait for
   `No data from <saved name> for 30 seconds. The connection is too slow or was lost. Reconnecting…`,
   followed by
-  `Remote environment endpoint <base URL>/.well-known/bibcode/environment timed out after 10000ms. Reconnecting…`
+  `Remote environment endpoint <base URL>/.well-known/coddy-studio/environment timed out after 10000ms. Reconnecting…`
   with the test server's endpoint URL. The disconnect reason uses the saved
   name (**Edge box**) and appears 27–33 seconds after the last data from the
   stopped server, when the client's liveness timeout closes the socket with
-  code 4408. Keep BiBCode visible and focused for the whole stall: the
+  code 4408. Keep Coddy Studio visible and focused for the whole stall: the
   disconnect then appears before a health-check message can become visible. If
   the window is restored from hidden or minimized during the stall, the
   application-active health check can report
@@ -396,24 +396,24 @@ as not verified, with the lock evidence (`ioreg -n Root -d1` shows
   suppress unusable, public, or IPv6 candidates. Confirm macOS firewall
   management remains explicitly operator-owned. The local-machine flow still
   has no Host selector; remote targeting is driven by the environment rail;
-- Headless pairing: on a second machine or VM run `bibcode serve --host
+- Headless pairing: on a second machine or VM run `coddy-studio serve --host
   <routable address>`, confirm the startup line contains `pairingCode`, and add it
   through **Add Server → Pairing code**. Confirm the saved server appears
   alongside — not in place of — the app's own **Local** environment, since both
-  hosts declare the environment id `local`. Mint a second offer with `bibcode
+  hosts declare the environment id `local`. Mint a second offer with `coddy-studio
   pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   it by name ("<label> is already saved."): two offers describe one environment.
   Then restart the headless server and confirm the saved server reconnects
   without re-pairing.
-- Headless service: on the second machine run `bibcode service install --host
-  <routable address>`, confirm `bibcode service status` reports `active`,
+- Headless service: on the second machine run `coddy-studio service install --host
+  <routable address>`, confirm `coddy-studio service status` reports `active`,
   reboot that machine, and confirm the desktop's saved server reconnects
   without re-pairing. On Linux confirm `loginctl show-user $USER` reports
   `Linger=yes`; on macOS confirm automatic login is enabled; on Windows confirm
-  the `BiBCode Server` task shows `Running` after logon. Finish with
-  `bibcode service uninstall` and confirm the definition is gone.
-- Remote server updates: with a second BiBCode server saved (headless
-  `bibcode serve` is sufficient), open Remote Servers settings, run **Check for
+  the `Coddy Studio Server` task shows `Running` after logon. Finish with
+  `coddy-studio service uninstall` and confirm the definition is gone.
+- Remote server updates: with a second Coddy Studio server saved (headless
+  `coddy-studio serve` is sufficient), open Remote Servers settings, run **Check for
   Server Updates**, and confirm each saved server row shows an update badge
   (**Manual updates** for a headless server) and a manual-instructions block
   with a copy button. An offline server must not block the rest of the batch and
@@ -450,7 +450,7 @@ as not verified, with the lock evidence (`ioreg -n Root -d1` shows
   Reject a target containing username/password, and confirm legacy `code` query
   parameters are removed from both `/pair` and Remote Servers history after
   being retained for the current attempt;
-- from the OS, opening a well-formed `bibcode://pair?code=...` link while the
+- from the OS, opening a well-formed `coddy-studio://pair?code=...` link while the
   packaged app is running lands on Add Server with the code prefilled. The
   custom scheme is bundle-time-only on macOS and is not an unbundled dev-mode
   check;
@@ -495,13 +495,13 @@ on that `.app`. The symbol store is `target/<triple>/release/symbols`.
 
 - **Executable.** Read `$executable` from the bundle's `Info.plist` as in
   [Application and DMG build inspection](#application-and-dmg-build-inspection),
-  start `BIBCODE_HOME=<root> "/absolute/path/BiBCode.app/Contents/MacOS/$executable"`,
+  start `CODDY_STUDIO_HOME=<root> "/absolute/path/Coddy Studio.app/Contents/MacOS/$executable"`,
   and pass the profiler commands to that same path.
 - **Capabilities.** Expect `nativeDumps: "available"` and
   `osCrashRecords: "available"` (the DiagnosticReports folder). While the
-  profiler is on, `ls -la "$TMPDIR"/bibcode-$(id -u)-*` shows one `drwx------`
+  profiler is on, `ls -la "$TMPDIR"/coddy-studio-$(id -u)-*` shows one `drwx------`
   directory holding a `srw-------` `monitor.sock`.
-- **Crash.** Use `BIBCODE_PROFILER_CRASH_TEST=1`. On macOS the hook catches
+- **Crash.** Use `CODDY_STUDIO_PROFILER_CRASH_TEST=1`. On macOS the hook catches
   hardware faults through Mach exception ports and `SIGABRT` through a signal
   handler, so a `kill -SEGV` from another process tests only the OS crash
   report. After the restart, `~/Library/Logs/DiagnosticReports/` holds the
@@ -529,9 +529,9 @@ ones:
   ```sh
   CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
     CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed \
-    cargo build --release -p bibcode-server --bin bibcode
-  strip -o target/release/bibcode.stripped target/release/bibcode
-  codesign --verify --verbose=2 target/release/bibcode.stripped
+    cargo build --release -p coddy-studio-server --bin coddy-studio
+  strip -o target/release/coddy-studio.stripped target/release/coddy-studio
+  codesign --verify --verbose=2 target/release/coddy-studio.stripped
   ```
 
   The release server job runs the same `codesign --verify`, so a failure here
@@ -560,20 +560,20 @@ simulator, after the shared
 focused and opt-in tests:
 
 ```sh
-BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
+CODDY_STUDIO_IOS_SIM_TESTS=1 cargo test -p coddy-studio-server --test ios_simulator -- --nocapture
 ```
 
 Record `xcodebuild -version`, `xcode-select -p`, the simulator's name, UDID,
 and runtime (`xcrun simctl list devices available`), and every simulator that
-is already `Booted` before the run; BiBCode must leave those alone. Use the
+is already `Booted` before the run; Coddy Studio must leave those alone. Use the
 packaged app from [Application and DMG build inspection](#application-and-dmg-build-inspection)
-with its local environment and a fresh `BIBCODE_HOME`, and turn on the
+with its local environment and a fresh `CODDY_STUDIO_HOME`, and turn on the
 [Profiler](../architecture/overview.md#profiler). After each numbered step
 that ends a device, run:
 
 ```sh
 xcrun simctl list devices | grep <udid>   # Shutdown
-pgrep -fl <udid>                          # no process BiBCode started
+pgrep -fl <udid>                          # no process Coddy Studio started
 ```
 
 1. **Setting.** Turn on **Settings → Mobile emulators → Device previews**. With a
@@ -581,8 +581,8 @@ pgrep -fl <udid>                          # no process BiBCode started
    device preview** from the command palette; neither is offered without an
    active thread. The picker lists the simulator
    under **iOS**, named like `iPhone 17 Pro · iOS 26.5`; a simulator already
-   booted outside BiBCode is listed disabled with "— Running outside
-   BiBCode". If the iOS group says view only, record its message and run the
+   booted outside Coddy Studio is listed disabled with "— Running outside
+   Coddy Studio". If the iOS group says view only, record its message and run the
    view-only checks in step 7 instead of steps 3–5.
 2. **Open.** Pick the simulator and **Start**. The pill reaches **Ready**;
    record the boot time. The screen shows video with no **Still images**
@@ -625,12 +625,12 @@ pgrep -fl <udid>                          # no process BiBCode started
     `platform` `ios` and the phases `start`, `ready`, `stop`, with no
     simulator name or UDID. Optionally start the device and run
     `xcrun simctl shutdown <udid>` from a shell: the pill shows **Failed:
-    Shutdown outside BiBCode** within about 3 s, and
+    Shutdown outside Coddy Studio** within about 3 s, and
     `profiler findings --kind subprocess.crash --json` lists one labelled
     `ios-simulator` with outcome `exit 1`.
 
-A simulator BiBCode booted that stays `Booted`, a simulator booted before the
-run that BiBCode shut down, a stuck touch, or a blank screen without a
+A simulator Coddy Studio booted that stays `Booted`, a simulator booted before the
+run that Coddy Studio shut down, a stuck touch, or a blank screen without a
 fallback fails the run.
 
 ## Process-group cleanup

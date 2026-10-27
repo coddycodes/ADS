@@ -16,7 +16,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { formatProviderDriverKindLabel } from "../providerModels";
 import { providerDriverLabel } from "../providerInstances";
@@ -33,13 +33,13 @@ import type { DraftThreadEnvMode } from "../composerDraftStore";
 import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
-} from "@bibcode/client-runtime/connection";
-import type { AttachmentSource, AttachmentStagingResult } from "@bibcode/client-runtime/operations";
-import { settlePromise, type AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/connection";
+import type { AttachmentSource, AttachmentStagingResult } from "@coddy/client-runtime/operations";
+import { settlePromise, type AtomCommandResult } from "@coddy/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import type { StagedUploadChatAttachment, UploadChatAttachment } from "@bibcode/contracts";
+import type { StagedUploadChatAttachment, UploadChatAttachment } from "@coddy/contracts";
 
-export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "bibcode:last-invoked-script-by-project";
+export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "coddy-studio:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
@@ -797,23 +797,23 @@ export function hasServerAcknowledgedLocalDispatch(input: {
  * Who reported the error shown in the thread error banner.
  *
  * `session.lastError` is mixed-provenance: it carries both a provider's own
- * failure and BiBCode's restart notice, and `localServerError` carries a
- * BiBCode command that could not be completed. Rendering all of them
- * identically made an upstream provider outage read as a BiBCode defect.
+ * failure and Coddy Studio's restart notice, and `localServerError` carries a
+ * Coddy Studio command that could not be completed. Rendering all of them
+ * identically made an upstream provider outage read as a Coddy Studio defect.
  *
  * This states who *reported* the failure, never who is to blame — a provider
- * rejecting a malformed BiBCode request is still provider-reported, and a
- * failed BiBCode command may have failed because the provider refused it.
+ * rejecting a malformed Coddy Studio request is still provider-reported, and a
+ * failed Coddy Studio command may have failed because the provider refused it.
  * Returns `null` when nothing truthful can be said, in which case the banner
  * renders exactly as before.
  */
 export function threadErrorAttribution(input: {
-  readonly isBiBCodeAction: boolean;
+  readonly isCoddyStudioAction: boolean;
   readonly errorClass: string | null | undefined;
   readonly providerName: string | null | undefined;
 }): string | null {
-  if (input.isBiBCodeAction) {
-    return "BiBCode could not complete this action";
+  if (input.isCoddyStudioAction) {
+    return "Coddy Studio could not complete this action";
   }
   const provider =
     input.providerName && isProviderDriverKind(input.providerName)
@@ -825,9 +825,9 @@ export function threadErrorAttribution(input: {
     case "provider_error":
       return `${agent} reported an error`;
     case "transport_error":
-      return `BiBCode lost its connection to ${provider ?? "the agent"}`;
+      return `Coddy Studio lost its connection to ${provider ?? "the agent"}`;
     case "session_stopped":
-      return "BiBCode stopped this session";
+      return "Coddy Studio stopped this session";
     case "permission_error":
       return `${agent} rejected the credentials`;
     case "validation_error":
@@ -853,11 +853,11 @@ export const COMPACT_CONVERSATION_COMMAND = "/compact";
  * disabled with its reason, so it can never queue a second compaction.
  */
 export function threadErrorCompactAction(input: {
-  readonly isBiBCodeAction: boolean;
+  readonly isCoddyStudioAction: boolean;
   readonly errorClass: string | null | undefined;
   readonly busy: boolean;
 }): { readonly disabledReason: string | null } | null {
-  if (input.isBiBCodeAction || input.errorClass !== "context_limit") {
+  if (input.isCoddyStudioAction || input.errorClass !== "context_limit") {
     return null;
   }
   return {

@@ -8,7 +8,7 @@ import {
   ProviderDriverKind,
   type ProviderSessionDefault,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 const controls = vi.hoisted(() => {
   const state = {

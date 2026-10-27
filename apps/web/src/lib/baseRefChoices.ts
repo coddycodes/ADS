@@ -1,4 +1,4 @@
-import type { VcsRef } from "@bibcode/contracts";
+import type { VcsRef } from "@coddy/contracts";
 
 export interface BaseRefChoice {
   readonly id: string;

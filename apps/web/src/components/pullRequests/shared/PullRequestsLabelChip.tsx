@@ -1,4 +1,4 @@
-import type { PullRequestsLabel } from "@bibcode/contracts";
+import type { PullRequestsLabel } from "@coddy/contracts";
 function labelColors(value: string | null) {
   if (!value || !/^#?(?:[\da-f]{3}|[\da-f]{6})$/i.test(value)) return undefined;
   let hex = value.replace(/^#/, "");

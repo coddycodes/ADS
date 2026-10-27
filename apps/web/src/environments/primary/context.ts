@@ -2,8 +2,8 @@ import {
   attachEnvironmentDescriptor,
   createKnownEnvironment,
   type KnownEnvironment,
-} from "@bibcode/client-runtime/environment";
-import type { ExecutionEnvironmentDescriptor } from "@bibcode/contracts";
+} from "@coddy/client-runtime/environment";
+import type { ExecutionEnvironmentDescriptor } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 
 import { PrimaryEnvironmentRequestError, retryTransientBootstrap } from "./auth";

@@ -1,4 +1,4 @@
-import { type TimestampFormat } from "@bibcode/contracts/settings";
+import { type TimestampFormat } from "@coddy/contracts/settings";
 
 export function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,

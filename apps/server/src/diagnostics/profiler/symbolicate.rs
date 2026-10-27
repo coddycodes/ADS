@@ -26,7 +26,7 @@ use super::reader::Reader;
 
 /// The repository that publishes releases: the release workflow's `github.repository`, which
 /// the desktop updater endpoint in `apps/desktop/src-tauri/tauri.release.conf.json` names too.
-const RELEASE_REPOSITORY: &str = "mubeda/BibCode";
+const RELEASE_REPOSITORY: &str = "mubeda/CoddyStudio";
 /// The desktop's `.sym` is about 250 MB unpacked.
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 1024 * 1024 * 1024;
@@ -105,8 +105,8 @@ impl SymbolFamily {
     /// From a panic frame's module: the executable's name, or its PDB's on Windows.
     fn from_module(module: &str) -> Option<Self> {
         match module.trim_end_matches(".exe").trim_end_matches(".pdb") {
-            "bibcode-desktop" | "bibcode_desktop" => Some(Self::Desktop),
-            "bibcode" => Some(Self::Server),
+            "coddy-studio-desktop" | "coddy_studio_desktop" => Some(Self::Desktop),
+            "coddy-studio" => Some(Self::Server),
             _ => None,
         }
     }
@@ -132,7 +132,7 @@ pub fn symbolicate(
         Target::Crash(id) => {
             let (crash, dump) = reader.crash(id).ok_or_else(|| {
                 SymbolicateError::NotFound(format!(
-                    "no crash record {id}; `bibcode profiler crashes` lists them"
+                    "no crash record {id}; `coddy-studio profiler crashes` lists them"
                 ))
             })?;
             let dump = dump.ok_or_else(|| {
@@ -187,7 +187,7 @@ impl Release {
 /// one, why there is nothing to download, and what to do instead.
 fn release_of(record: &Value, family: Option<SymbolFamily>) -> Result<Release, String> {
     let family = family.ok_or(
-        "these frames come from no BiBCode release binary; pass its symbol store with --symbols DIR",
+        "these frames come from no Coddy Studio release binary; pass its symbol store with --symbols DIR",
     )?;
     let field = |key: &str| record.get(key).and_then(Value::as_str).map(str::to_owned);
     match (field("version"), field("os"), field("arch")) {
@@ -412,7 +412,10 @@ fn release_asset(
     if !plain_version || !matches!(arch, "x86_64" | "aarch64") {
         return Err(unknown());
     }
-    let stem = format!("bibcode-{}-symbols-{version}-{os}-{arch}", family.name());
+    let stem = format!(
+        "coddy-studio-{}-symbols-{version}-{os}-{arch}",
+        family.name()
+    );
     let url =
         format!("https://github.com/{RELEASE_REPOSITORY}/releases/download/v{version}/{stem}.zip");
     Ok((stem, url))
@@ -462,7 +465,7 @@ async fn download(url: &str, to: &Path, max_bytes: u64) -> Result<(), Symbolicat
         .https_only(true)
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
-        .user_agent(concat!("bibcode/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("coddy-studio/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(failed)?;
     let response = client.get(url).send().await.map_err(failed)?;
@@ -560,7 +563,7 @@ mod tests {
     use super::*;
 
     /// The `.sym` of the task brief: `my_fn` covers 0x1000 to 0x1020, all of it line 42.
-    const SYM: &str = "MODULE linux x86_64 ABC123 bibcode\nFILE 0 src/lib.rs\nFUNC 1000 20 0 my_fn\n1000 20 42 0\n";
+    const SYM: &str = "MODULE linux x86_64 ABC123 coddy-studio\nFILE 0 src/lib.rs\nFUNC 1000 20 0 my_fn\n1000 20 42 0\n";
 
     fn store_sym(store: &Path, module: &str, id: &str, leaf: &str, text: &str) {
         let dir = store.join(module).join(id);
@@ -575,15 +578,21 @@ mod tests {
     #[test]
     fn panic_frames_are_named_from_the_sym_file_of_their_module_and_debug_id() {
         let symbols = tempfile::tempdir().unwrap();
-        store_sym(symbols.path(), "bibcode", "ABC123", "bibcode.sym", SYM);
+        store_sym(
+            symbols.path(),
+            "coddy-studio",
+            "ABC123",
+            "coddy-studio.sym",
+            SYM,
+        );
         let event = json!({
             "thread": "main", "message": "boom", "location": "src/lib.rs:42",
             "frames": [
-                frame("bibcode", Some("ABC123"), 0x1010),
-                frame("bibcode", Some("ABC123"), 0x9000),
+                frame("coddy-studio", Some("ABC123"), 0x1010),
+                frame("coddy-studio", Some("ABC123"), 0x9000),
                 frame("libc.so.6", None, 0x29d90),
-                frame("bibcode", Some("DEF456"), 0x1010),
-                frame("../bibcode", Some("ABC123"), 0x1010),
+                frame("coddy-studio", Some("DEF456"), 0x1010),
+                frame("../coddy-studio", Some("ABC123"), 0x1010),
             ],
         });
 
@@ -592,7 +601,7 @@ mod tests {
         assert_eq!(
             named["frames"][0],
             json!({
-                "module": "bibcode", "offset": 0x1010, "function": "my_fn",
+                "module": "coddy-studio", "offset": 0x1010, "function": "my_fn",
                 "file": "src/lib.rs", "line": 42,
             })
         );
@@ -615,13 +624,19 @@ mod tests {
     #[test]
     fn a_call_inlined_at_a_panic_frame_is_listed_before_its_function() {
         let symbols = tempfile::tempdir().unwrap();
-        let inlined = "MODULE linux x86_64 ABC123 bibcode\nFILE 0 src/lib.rs\nFILE 1 src/helper.rs\n\
+        let inlined = "MODULE linux x86_64 ABC123 coddy-studio\nFILE 0 src/lib.rs\nFILE 1 src/helper.rs\n\
             INLINE_ORIGIN 0 helper_fn\nFUNC 1000 20 0 my_fn\nINLINE 0 42 0 0 1008 8\n\
             1000 8 41 0\n1008 8 7 1\n1010 10 43 0\n";
-        store_sym(symbols.path(), "bibcode", "ABC123", "bibcode.sym", inlined);
+        store_sym(
+            symbols.path(),
+            "coddy-studio",
+            "ABC123",
+            "coddy-studio.sym",
+            inlined,
+        );
         let event = json!({ "frames": [
-            frame("bibcode", Some("ABC123"), 0x100d),
-            frame("bibcode", Some("ABC123"), 0x1018),
+            frame("coddy-studio", Some("ABC123"), 0x100d),
+            frame("coddy-studio", Some("ABC123"), 0x1018),
         ]});
 
         let named = symbolicate_panic(&event, &[symbols.path().to_path_buf()]);
@@ -671,19 +686,19 @@ mod tests {
     fn a_pdb_module_reads_its_sym_and_a_mismatched_module_record_is_ignored() {
         let symbols = tempfile::tempdir().unwrap();
         let windows = SYM.replace(
-            "linux x86_64 ABC123 bibcode",
-            "windows x86_64 ABC1231 bibcode.pdb",
+            "linux x86_64 ABC123 coddy-studio",
+            "windows x86_64 ABC1231 coddy-studio.pdb",
         );
         store_sym(
             symbols.path(),
-            "bibcode.pdb",
+            "coddy-studio.pdb",
             "ABC1231",
-            "bibcode.sym",
+            "coddy-studio.sym",
             &windows,
         );
         store_sym(symbols.path(), "other", "FFFF", "other.sym", SYM);
         let event = json!({ "frames": [
-            frame("bibcode.pdb", Some("ABC1231"), 0x1010),
+            frame("coddy-studio.pdb", Some("ABC1231"), 0x1010),
             frame("other", Some("FFFF"), 0x1010),
         ]});
 
@@ -708,13 +723,20 @@ mod tests {
         let archive = dir.path().join("symbols.zip");
         fs::write(
             &archive,
-            zip_of(&[("bibcode/ABC123/", ""), ("bibcode/ABC123/bibcode.sym", SYM)]),
+            zip_of(&[
+                ("coddy-studio/ABC123/", ""),
+                ("coddy-studio/ABC123/coddy-studio.sym", SYM),
+            ]),
         )
         .unwrap();
 
         unpack(&archive, &dir.path().join("store"), 1024).unwrap();
         assert_eq!(
-            fs::read_to_string(dir.path().join("store/bibcode/ABC123/bibcode.sym")).unwrap(),
+            fs::read_to_string(
+                dir.path()
+                    .join("store/coddy-studio/ABC123/coddy-studio.sym")
+            )
+            .unwrap(),
             SYM
         );
 
@@ -732,18 +754,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut archives: Vec<(String, Vec<u8>)> = [
             "../escape.sym",
-            "bibcode/../../escape.sym",
+            "coddy-studio/../../escape.sym",
             "/escape.sym",
             "\\escape.sym",
             "C:/escape.sym",
-            "bibcode/./x.sym",
-            "bibcode/..\\..\\escape.sym",
+            "coddy-studio/./x.sym",
+            "coddy-studio/..\\..\\escape.sym",
         ]
         .iter()
         .map(|name| (name.to_string(), zip_of(&[("ok.sym", SYM), (name, SYM)])))
         .collect();
         let mut link = ZipWriter::new(Cursor::new(Vec::new()));
-        link.add_symlink("bibcode", "/etc", SimpleFileOptions::default())
+        link.add_symlink("coddy-studio", "/etc", SimpleFileOptions::default())
             .unwrap();
         archives.push(("a symlink".into(), link.finish().unwrap().into_inner()));
 
@@ -771,14 +793,17 @@ mod tests {
     #[test]
     fn release_assets_use_the_release_workflow_names() {
         let (stem, url) = release_asset(SymbolFamily::Server, "0.9.0", "macos", "aarch64").unwrap();
-        assert_eq!(stem, "bibcode-server-symbols-0.9.0-darwin-aarch64");
+        assert_eq!(stem, "coddy-studio-server-symbols-0.9.0-darwin-aarch64");
         assert_eq!(
             url,
-            "https://github.com/mubeda/BibCode/releases/download/v0.9.0/bibcode-server-symbols-0.9.0-darwin-aarch64.zip"
+            "https://github.com/mubeda/CoddyStudio/releases/download/v0.9.0/coddy-studio-server-symbols-0.9.0-darwin-aarch64.zip"
         );
         let (stem, _) =
             release_asset(SymbolFamily::Desktop, "1.2.3-rc.1", "windows", "x86_64").unwrap();
-        assert_eq!(stem, "bibcode-desktop-symbols-1.2.3-rc.1-windows-x86_64");
+        assert_eq!(
+            stem,
+            "coddy-studio-desktop-symbols-1.2.3-rc.1-windows-x86_64"
+        );
         for (version, platform, arch) in [
             ("../0.9.0", "linux", "x86_64"),
             ("0.9.0/x", "linux", "x86_64"),
@@ -814,10 +839,10 @@ mod tests {
         );
         assert_eq!(SymbolFamily::from_process_kind("crash-smoke"), None);
         for (module, family) in [
-            ("bibcode", Some(SymbolFamily::Server)),
-            ("bibcode.pdb", Some(SymbolFamily::Server)),
-            ("bibcode-desktop", Some(SymbolFamily::Desktop)),
-            ("bibcode_desktop.pdb", Some(SymbolFamily::Desktop)),
+            ("coddy-studio", Some(SymbolFamily::Server)),
+            ("coddy-studio.pdb", Some(SymbolFamily::Server)),
+            ("coddy-studio-desktop", Some(SymbolFamily::Desktop)),
+            ("coddy_studio_desktop.pdb", Some(SymbolFamily::Desktop)),
             ("crash-smoke", None),
         ] {
             assert_eq!(SymbolFamily::from_module(module), family, "{module}");
@@ -865,10 +890,10 @@ mod tests {
     fn release_symbols_fetched_before_are_read_from_the_cache() {
         let state = tempfile::tempdir().unwrap();
         let dir = profiler_dir(state.path());
-        write_panic(&dir, json!([frame("bibcode", Some("ABC123"), 0x1010)]));
+        write_panic(&dir, json!([frame("coddy-studio", Some("ABC123"), 0x1010)]));
         let cache = state.path().join("profiler-symbols");
-        let store = cache.join("bibcode-server-symbols-0.1.0-linux-x86_64");
-        store_sym(&store, "bibcode", "ABC123", "bibcode.sym", SYM);
+        let store = cache.join("coddy-studio-server-symbols-0.1.0-linux-x86_64");
+        store_sym(&store, "coddy-studio", "ABC123", "coddy-studio.sym", SYM);
         let target = Target::Panic {
             sid: "aaaa1111".into(),
             seq: 7,
@@ -914,7 +939,7 @@ mod tests {
         let dir = profiler_dir(state.path());
         let event = json!({
             "v": 1, "seq": 7, "sid": "aaaa1111", "ts": "2026-10-09T10:00:00Z", "kind": "panic",
-            "source": "server", "frames": [frame("bibcode", Some("ABC123"), 0x1010)],
+            "source": "server", "frames": [frame("coddy-studio", Some("ABC123"), 0x1010)],
         });
         fs::write(dir.join("events-000000.ndjson"), format!("{event}\n")).unwrap();
 

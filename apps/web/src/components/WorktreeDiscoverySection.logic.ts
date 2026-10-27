@@ -3,7 +3,7 @@ import type {
   ProjectId,
   VcsWorktreeDescriptor,
   WorktreeDiscoveryVisibility,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { compareSidebarDisplayText } from "../sidebarProjectGrouping";
 
 export interface WorktreeDiscoverySource {
@@ -134,7 +134,7 @@ export function formatWorktreeAddAllSummary(input: {
     return {
       type: "success",
       title: `Added ${formatDiscoveredWorktreeCount(input.successCount)}`,
-      description: "All discovered worktrees were added to BiBCode.",
+      description: "All discovered worktrees were added to Coddy Studio.",
     };
   }
   if (input.successCount === 0) {

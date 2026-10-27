@@ -1,11 +1,11 @@
-import { relayClerkTokenOptions } from "@bibcode/shared/relayAuth";
-import { normalizeSecureRelayUrl } from "@bibcode/shared/relayUrl";
+import { relayClerkTokenOptions } from "@coddy/shared/relayAuth";
+import { normalizeSecureRelayUrl } from "@coddy/shared/relayUrl";
 import * as Schema from "effect/Schema";
 
 export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPublicConfigMissingError>()(
   "CloudPublicConfigMissingError",
   {
-    key: Schema.Literal("BIBCODE_CLERK_JWT_TEMPLATE"),
+    key: Schema.Literal("CODDY_STUDIO_CLERK_JWT_TEMPLATE"),
   },
 ) {
   override get message(): string {
@@ -30,7 +30,7 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
     relayUrl: normalizeSecureRelayUrl(
-      (import.meta.env.VITE_BIBCODE_RELAY_URL as string | undefined) ?? "",
+      (import.meta.env.VITE_CODDY_STUDIO_RELAY_URL as string | undefined) ?? "",
     ),
   };
 }
@@ -43,7 +43,7 @@ export function hasCloudPublicConfig(): boolean {
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {
-    throw new CloudPublicConfigMissingError({ key: "BIBCODE_CLERK_JWT_TEMPLATE" });
+    throw new CloudPublicConfigMissingError({ key: "CODDY_STUDIO_CLERK_JWT_TEMPLATE" });
   }
   return relayClerkTokenOptions(clerkJwtTemplate);
 }

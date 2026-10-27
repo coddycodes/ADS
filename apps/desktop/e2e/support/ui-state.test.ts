@@ -22,14 +22,14 @@ describe("mockDesktopUiFolderPicker", () => {
   };
 
   it("returns the fixture path from the packaged Tauri folder-picker command", async () => {
-    const serviceMock = vi.fn(async () => "/tmp/bibcode-ui-project");
+    const serviceMock = vi.fn(async () => "/tmp/coddy-studio-ui-project");
     const page = { __wdio_mocks__: { desktop_bridge_pick_folder: serviceMock } };
     const { mock, mockReturnValue } = stubPage(page);
 
-    await mockDesktopUiFolderPicker("/tmp/bibcode-ui-project");
+    await mockDesktopUiFolderPicker("/tmp/coddy-studio-ui-project");
 
     expect(mock).toHaveBeenCalledExactlyOnceWith("desktop_bridge_pick_folder");
-    expect(mockReturnValue).toHaveBeenCalledExactlyOnceWith("/tmp/bibcode-ui-project");
+    expect(mockReturnValue).toHaveBeenCalledExactlyOnceWith("/tmp/coddy-studio-ui-project");
     // The service's own mock reached the page, so it is kept.
     expect(page.__wdio_mocks__.desktop_bridge_pick_folder).toBe(serviceMock);
   });
@@ -38,10 +38,10 @@ describe("mockDesktopUiFolderPicker", () => {
     const page: { __wdio_mocks__?: Record<string, unknown> } = {};
     stubPage(page);
 
-    await mockDesktopUiFolderPicker("/tmp/bibcode-ui-project");
+    await mockDesktopUiFolderPicker("/tmp/coddy-studio-ui-project");
 
     const installed = page.__wdio_mocks__?.desktop_bridge_pick_folder as () => Promise<string>;
-    await expect(installed()).resolves.toBe("/tmp/bibcode-ui-project");
+    await expect(installed()).resolves.toBe("/tmp/coddy-studio-ui-project");
   });
 });
 
@@ -138,10 +138,10 @@ describe("desktop UI motion stabilization", () => {
 
     // The guard is one marked stylesheet installed once per document; it never
     // sets inline styles or observes and rewrites portal lifecycle attributes.
-    expect(configuration).toContain("style[data-bibcode-desktop-ui-automation]");
-    expect(configuration).toContain("style.dataset.bibcodeDesktopUiAutomation");
+    expect(configuration).toContain("style[data-coddy-studio-desktop-ui-automation]");
+    expect(configuration).toContain("style.dataset.coddyStudioDesktopUiAutomation");
     expect(configuration).toContain(
-      'document.documentElement.dataset.bibcodeDesktopUiMotion = "disabled"',
+      'document.documentElement.dataset.coddyStudioDesktopUiMotion = "disabled"',
     );
     expect(configuration).not.toMatch(
       /style\.setProperty\("(?:opacity|scale|translate|transform)"/,

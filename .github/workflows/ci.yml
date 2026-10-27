@@ -84,7 +84,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check production server without dev features
-        run: cargo check -p bibcode-server --lib --bins -j 2
+        run: cargo check -p coddy-studio-server --lib --bins -j 2
 
       - name: Build desktop pipeline
         run: vp run build:desktop
@@ -150,13 +150,13 @@ jobs:
       - name: Rust workspace tests
         run: cargo test --workspace -j 2
 
-      # Ignored by default because it needs a fresh `bibcode`, which
-      # `cargo test -p bibcode-desktop` neither builds nor checks. Only the SSH
+      # Ignored by default because it needs a fresh `coddy-studio`, which
+      # `cargo test -p coddy-studio-desktop` neither builds nor checks. Only the SSH
       # hop is faked (tests/fixtures/ssh, Python 3); no host is contacted.
       - name: SSH environment integration
         run: |
-          cargo test -p bibcode-server --test cli_smoke --no-run -j 2
-          cargo test -p bibcode-desktop --test ssh_environment -j 2 -- --ignored
+          cargo test -p coddy-studio-server --test cli_smoke --no-run -j 2
+          cargo test -p coddy-studio-desktop --test ssh_environment -j 2 -- --ignored
 
   release_smoke:
     name: Release Smoke
@@ -277,16 +277,16 @@ jobs:
         run: vp install --frozen-lockfile
 
       - name: Build web application
-        run: vp run --filter @bibcode/web build
+        run: vp run --filter @coddy/web build
 
       - name: Test desktop Rust host
-        run: vp run --filter @bibcode/desktop test
+        run: vp run --filter @coddy/desktop test
 
       - name: Verify macOS release exception recovery
         if: matrix.platform == 'mac'
         run: |
           rust_target="$(rustc -Vv | sed -n 's/^host: //p')"
-          cargo run --release --target "$rust_target" -p bibcode-desktop --example objc_exception_probe
+          cargo run --release --target "$rust_target" -p coddy-studio-desktop --example objc_exception_probe
 
       - name: Test Windows desktop E2E support contracts
         if: matrix.platform == 'win'
@@ -294,7 +294,7 @@ jobs:
 
       - name: Check Windows server test targets compile
         if: matrix.platform == 'win'
-        run: node scripts/run-msvc.mjs cargo check -p bibcode-server --all-targets
+        run: node scripts/run-msvc.mjs cargo check -p coddy-studio-server --all-targets
 
       - name: Build native bundle without publishing
         run: >
@@ -360,7 +360,7 @@ jobs:
             Linux) export RUSTFLAGS="-C link-arg=-Wl,--build-id=sha1" ;;
             macOS) export CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed ;;
           esac
-          node scripts/run-msvc.mjs cargo test -p bibcode-server --test crash_smoke --release
+          node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test crash_smoke --release
 
       - name: Symbolicate the dump
         shell: bash
@@ -385,13 +385,13 @@ jobs:
             Windows) symbols=(--binary target/release/crash-smoke.exe --module-name crash-smoke.exe --pdb target/release/crash_smoke.pdb) ;;
           esac
           node scripts/dump-symbols.ts "${symbols[@]}" --out "$out/symbols"
-          # The smoke test uses CRASH_SMOKE_OUT as a data root, as `bibcode profiler` reads one.
+          # The smoke test uses CRASH_SMOKE_OUT as a data root, as `coddy-studio profiler` reads one.
           dumps=("$out"/userdata/profiler/crashes/*.dmp)
           if (( ${#dumps[@]} != 1 )); then
             printf 'Expected one minidump in %s/userdata/profiler/crashes, found %s.\n' "$out" "${#dumps[@]}" >&2
             exit 1
           fi
-          # The test already ran `bibcode profiler symbolicate` on this dump; minidump-stackwalk
+          # The test already ran `coddy-studio profiler symbolicate` on this dump; minidump-stackwalk
           # also reports each frame's trust, which proves the CFI unwind below.
           minidump-stackwalk --json "${dumps[0]}" "$out/symbols" > "$out/stackwalk.json"
           grep -q crash_here_in_named_function "$out/stackwalk.json"
@@ -411,12 +411,12 @@ jobs:
               process.exit(1);
             }
           ' "$out/stackwalk.json"
-          # BiBCode's own symbolication must name the planted function from the same store
+          # Coddy Studio's own symbolication must name the planted function from the same store
           # (on Windows laid out as crash_smoke.pdb/<debug id>/crash_smoke.sym), with the
-          # bibcode binary the crash step's release build made.
-          bibcode=target/release/bibcode
-          if [[ "$RUNNER_OS" == Windows ]]; then bibcode+=.exe; fi
-          "$bibcode" profiler symbolicate "$(basename "${dumps[0]}" .dmp)" \
+          # coddy-studio binary the crash step's release build made.
+          coddy-studio=target/release/coddy-studio
+          if [[ "$RUNNER_OS" == Windows ]]; then coddy-studio+=.exe; fi
+          "$coddy-studio" profiler symbolicate "$(basename "${dumps[0]}" .dmp)" \
             --symbols "$out/symbols" --json --base-dir "$out" > "$out/symbolicate.json"
           grep -q crash_here_in_named_function "$out/symbolicate.json"
 

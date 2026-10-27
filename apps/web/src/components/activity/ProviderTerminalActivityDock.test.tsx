@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentActivityState } from "@bibcode/client-runtime/state/activity";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentActivityState } from "@coddy/client-runtime/state/activity";
 import {
   type ActivityActorSummary,
   type ActivitySnapshot,
@@ -11,7 +11,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ProviderTerminalActivityLaunch,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -36,7 +36,7 @@ vi.mock("~/state/activity", () => ({
   },
 }));
 
-import { scopedProjectKey, scopeProjectRef } from "@bibcode/client-runtime/environment";
+import { scopedProjectKey, scopeProjectRef } from "@coddy/client-runtime/environment";
 import { useActivityDockStore } from "~/activityDockStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { ProviderTerminalActivityDock } from "./ProviderTerminalActivityDock";

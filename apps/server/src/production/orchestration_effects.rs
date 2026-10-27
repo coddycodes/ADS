@@ -338,9 +338,12 @@ impl ThreadTurnBootstrapEffects for ProductionBootstrapEffects {
             }
             let worktree_path = PathBuf::from(&input.worktree_path);
             let env = BTreeMap::from([
-                ("BIBCODE_PROJECT_ROOT".to_owned(), project.workspace_root),
                 (
-                    "BIBCODE_WORKTREE_PATH".to_owned(),
+                    "CODDY_STUDIO_PROJECT_ROOT".to_owned(),
+                    project.workspace_root,
+                ),
+                (
+                    "CODDY_STUDIO_WORKTREE_PATH".to_owned(),
                     input.worktree_path.clone(),
                 ),
             ]);
@@ -1468,7 +1471,7 @@ async fn append_failure_activity(
 
 pub fn checkpoint_ref(thread_id: &str, turn_count: i64) -> String {
     format!(
-        "refs/bibcode/checkpoints/{}/turn/{turn_count}",
+        "refs/coddy-studio/checkpoints/{}/turn/{turn_count}",
         URL_SAFE_NO_PAD.encode(thread_id)
     )
 }
@@ -1511,7 +1514,8 @@ async fn capture_checkpoint_with_cancellation(
     } else {
         cwd.join(common_dir)
     };
-    let temporary_index = common_dir.join(format!("bibcode-checkpoint-index-{}", Uuid::new_v4()));
+    let temporary_index =
+        common_dir.join(format!("coddy-studio-checkpoint-index-{}", Uuid::new_v4()));
     let reference = checkpoint_ref(thread_id, turn_count);
     let env = checkpoint_environment(&temporary_index);
 
@@ -1548,7 +1552,7 @@ async fn capture_checkpoint_with_cancellation(
         let tree = run_git(cwd, git_command, &["write-tree"], &env, false, cancellation)
             .await?
             .stdout;
-        let message = format!("bibcode checkpoint ref={reference}");
+        let message = format!("coddy-studio checkpoint ref={reference}");
         let commit = run_git(
             cwd,
             git_command,
@@ -1799,10 +1803,13 @@ async fn run_git(
 fn checkpoint_environment(index: &Path) -> Vec<(OsString, OsString)> {
     [
         ("GIT_INDEX_FILE", index.to_string_lossy().as_ref()),
-        ("GIT_AUTHOR_NAME", "BiBCode"),
-        ("GIT_AUTHOR_EMAIL", "bibcode@users.noreply.github.com"),
-        ("GIT_COMMITTER_NAME", "BiBCode"),
-        ("GIT_COMMITTER_EMAIL", "bibcode@users.noreply.github.com"),
+        ("GIT_AUTHOR_NAME", "Coddy Studio"),
+        ("GIT_AUTHOR_EMAIL", "coddy-studio@users.noreply.github.com"),
+        ("GIT_COMMITTER_NAME", "Coddy Studio"),
+        (
+            "GIT_COMMITTER_EMAIL",
+            "coddy-studio@users.noreply.github.com",
+        ),
     ]
     .into_iter()
     .map(|(key, value)| (OsString::from(key), OsString::from(value)))
@@ -2115,7 +2122,7 @@ mod tests {
         run_git(
             repository.root(),
             &git_command,
-            &["config", "user.name", "BiBCode Test"],
+            &["config", "user.name", "Coddy Studio Test"],
             &[],
             false,
             &cancellation,
@@ -2125,7 +2132,7 @@ mod tests {
         run_git(
             repository.root(),
             &git_command,
-            &["config", "user.email", "bibcode@example.test"],
+            &["config", "user.email", "coddy-studio@example.test"],
             &[],
             false,
             &cancellation,
@@ -2229,7 +2236,7 @@ mod tests {
             restore_checkpoint(
                 repository.root(),
                 &git_command,
-                "refs/bibcode/checkpoints/missing",
+                "refs/coddy-studio/checkpoints/missing",
                 true,
                 &cancellation,
             )
@@ -2240,7 +2247,7 @@ mod tests {
             !restore_checkpoint(
                 repository.root(),
                 &git_command,
-                "refs/bibcode/checkpoints/missing",
+                "refs/coddy-studio/checkpoints/missing",
                 false,
                 &cancellation,
             )

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { OrchestrationLatestTurnState } from "@bibcode/contracts";
+import type { OrchestrationLatestTurnState } from "@coddy/contracts";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";

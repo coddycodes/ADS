@@ -2,7 +2,7 @@ import type {
   PullRequestsPermissions,
   PullRequestsTimelineItem,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useState } from "react";
 import { usePullRequestsStore } from "../../../pullRequestsStore";
 import { PermissionButton, constrainPermission } from "../../ui/permission-button";

@@ -5,7 +5,7 @@ import {
   type GitRunStackedActionInput,
   type VcsStatusResult,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";

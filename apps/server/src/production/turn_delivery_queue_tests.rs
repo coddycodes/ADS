@@ -546,7 +546,7 @@ async fn row_stuck_retrying_a_deleted_thread_settles_at_startup() {
         .database()
         .call(|connection| {
             connection.execute(
-                "UPDATE provider_turn_outbox SET attempts = 36598, last_error = 'BiBCode could not update this thread: Thread is deleted.'",
+                "UPDATE provider_turn_outbox SET attempts = 36598, last_error = 'Coddy Studio could not update this thread: Thread is deleted.'",
                 [],
             )?;
             Ok(())
@@ -796,8 +796,8 @@ fn revert_checkout() -> tempfile::TempDir {
     let config = IsolatedGitConfig::new();
     for args in [
         &["init"][..],
-        &["config", "user.name", "BiBCode Test"],
-        &["config", "user.email", "bibcode@example.test"],
+        &["config", "user.name", "Coddy Studio Test"],
+        &["config", "user.email", "coddy-studio@example.test"],
         // The checkpoint commands are production Git, which keeps its inherited settings.
         &["config", "commit.gpgSign", "false"],
     ] {

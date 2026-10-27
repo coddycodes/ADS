@@ -1,4 +1,4 @@
-import { createPreviewEnvironmentAtoms } from "@bibcode/client-runtime/state/preview";
+import { createPreviewEnvironmentAtoms } from "@coddy/client-runtime/state/preview";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

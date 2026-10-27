@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@bibcode/contracts";
-import { createModelSelection } from "@bibcode/shared/model";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/models";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@coddy/contracts";
+import { createModelSelection } from "@coddy/shared/model";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

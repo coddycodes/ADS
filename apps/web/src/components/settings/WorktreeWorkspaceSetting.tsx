@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { EnvironmentId } from "@bibcode/contracts";
-import type { UnifiedSettings } from "@bibcode/contracts/settings";
+import { EnvironmentId } from "@coddy/contracts";
+import type { UnifiedSettings } from "@coddy/contracts/settings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 
 import { desktopLocalBackendId, isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "~/connection/useDesktopLocalBootstraps";

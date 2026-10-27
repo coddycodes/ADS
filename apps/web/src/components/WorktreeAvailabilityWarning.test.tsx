@@ -1,4 +1,4 @@
-import { type VcsAdoptedWorktreeStatus } from "@bibcode/contracts";
+import { type VcsAdoptedWorktreeStatus } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -27,7 +27,7 @@ describe("WorktreeAvailabilityWarning", () => {
     expect(markup).toContain("Git registration:");
     expect(markup).toContain("Prunable (stale)");
     expect(markup).toContain("Retry detection");
-    expect(markup).toContain("Remove from BiBCode");
+    expect(markup).toContain("Remove from Coddy Studio");
   });
 
   it("shows lock and missing-unregistered state without inventing cleanup", () => {

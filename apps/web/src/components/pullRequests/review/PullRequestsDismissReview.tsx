@@ -1,4 +1,4 @@
-import type { PullRequestsPermission, PullRequestsTimelineItem } from "@bibcode/contracts";
+import type { PullRequestsPermission, PullRequestsTimelineItem } from "@coddy/contracts";
 import { useId, useRef, useState } from "react";
 import {
   AlertDialog,

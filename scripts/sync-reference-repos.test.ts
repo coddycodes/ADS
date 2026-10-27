@@ -33,7 +33,7 @@ import {
 const encoder = new TextEncoder();
 const effectSmol = referenceRepos[0]!;
 const alchemyEffect = referenceRepos[1]!;
-const REFERENCE_REPO_SYNC_LOCK_NAME = "bibcode-reference-repos-sync.lock";
+const REFERENCE_REPO_SYNC_LOCK_NAME = "coddy-studio-reference-repos-sync.lock";
 
 const collectText = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(

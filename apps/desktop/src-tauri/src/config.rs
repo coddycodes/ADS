@@ -1,4 +1,4 @@
-use bibcode_server::{DataRootRequest, DataRootSource, ResolvedDataRoot, resolve_data_root};
+use coddy_studio_server::{DataRootRequest, DataRootSource, ResolvedDataRoot, resolve_data_root};
 use serde_json::{Value, json};
 use std::{
     fs, io,
@@ -7,7 +7,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager, Runtime};
 
-const APP_BASE_NAME: &str = "BiBCode";
+const APP_BASE_NAME: &str = "Coddy Studio";
 
 #[cfg(test)]
 #[derive(Clone, Debug)]
@@ -20,7 +20,7 @@ impl IsolatedTestDataRoot {
     }
 }
 
-pub(crate) fn bibcode_env_var(name: &str) -> Option<std::ffi::OsString> {
+pub(crate) fn coddy_studio_env_var(name: &str) -> Option<std::ffi::OsString> {
     std::env::var_os(name)
 }
 
@@ -141,7 +141,20 @@ fn resolve_data_root_from_home(
         None => DataRootRequest::default(home_dir),
     };
     resolve_data_root(request)
-        .map_err(|error| config_error("Could not resolve the BiBCode data root", error))
+        .map_err(|error| config_error("Could not resolve the Coddy Studio data root", error))
+}
+
+/// The environment-provided data-root override. A Studio-specific name wins
+/// over the legacy prefix, and `CODDY_HOME` selects its `studio` child so the
+/// rest of `~/.coddy` keeps its own owners.
+#[cfg(not(test))]
+fn studio_data_root_override() -> Option<PathBuf> {
+    for name in ["CODDY_STUDIO_HOME", "BIBCODE_HOME"] {
+        if let Some(value) = coddy_studio_env_var(name) {
+            return Some(PathBuf::from(value));
+        }
+    }
+    coddy_studio_env_var("CODDY_HOME").map(|home| PathBuf::from(home).join("studio"))
 }
 
 pub(crate) fn data_root<R: Runtime>(app: &AppHandle<R>) -> Result<ResolvedDataRoot, String> {
@@ -160,7 +173,7 @@ pub(crate) fn data_root<R: Runtime>(app: &AppHandle<R>) -> Result<ResolvedDataRo
     return resolve_data_root_from_home(home, Some(requested));
 
     #[cfg(not(test))]
-    resolve_data_root_from_home(home, bibcode_env_var("BIBCODE_HOME").map(PathBuf::from))
+    resolve_data_root_from_home(home, studio_data_root_override())
 }
 
 pub(crate) fn base_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
@@ -268,7 +281,7 @@ mod tests {
 
         let error = resolve_data_root_from_home(
             temp.path().to_path_buf(),
-            Some(PathBuf::from("relative/.bibcode")),
+            Some(PathBuf::from("relative/.coddy/studio")),
         )
         .expect_err("relative environment root must fail");
 
@@ -298,17 +311,17 @@ mod tests {
         assert_eq!(
             app_branding_value(false, "0.2.0"),
             json!({
-                "baseName": "BiBCode",
+                "baseName": "Coddy Studio",
                 "stageLabel": "Latest",
-                "displayName": "BiBCode",
+                "displayName": "Coddy Studio",
             })
         );
         assert_eq!(
             app_branding_value(true, "0.2.0"),
             json!({
-                "baseName": "BiBCode",
+                "baseName": "Coddy Studio",
                 "stageLabel": "Dev",
-                "displayName": "BiBCode (Dev)",
+                "displayName": "Coddy Studio (Dev)",
             })
         );
     }

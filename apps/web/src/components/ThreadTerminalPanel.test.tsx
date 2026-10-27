@@ -5,8 +5,8 @@ import {
   ThreadId,
   type ResolvedKeybindingsConfig,
   type TerminalLaunchCommand,
-} from "@bibcode/contracts";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+} from "@coddy/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import { Window } from "happy-dom";
 import { type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";

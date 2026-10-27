@@ -87,7 +87,7 @@ function timestampedFilename(now: Date): string {
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z");
-  return `bibcode-diagnostics-${timestamp}.zip`;
+  return `coddy-studio-diagnostics-${timestamp}.zip`;
 }
 
 function safeResponseFilename(contentDisposition: string | null, now: Date): string {

@@ -61,17 +61,17 @@ const CORE_TABLES: &[(u32, &str)] = &[
 pub(crate) enum ExistingStoreValidationError {
     #[error("SQLite integrity validation failed for {path}: {detail}")]
     Corrupt { path: PathBuf, detail: String },
-    #[error("SQLite store at {path} is not a recognized BiBCode store: {detail}")]
+    #[error("SQLite store at {path} is not a recognized Coddy Studio store: {detail}")]
     Unrecognized { path: PathBuf, detail: String },
     #[error("SQLite store at {path} cannot be inspected without side effects: {detail}")]
     Unsafe { path: PathBuf, detail: String },
 }
 
-pub(crate) fn validate_existing_bibcode_store(
+pub(crate) fn validate_existing_coddy_studio_store(
     path: &Path,
     cancellation: &CancellationToken,
 ) -> std::result::Result<(), ExistingStoreValidationError> {
-    validate_existing_bibcode_store_inner(
+    validate_existing_coddy_studio_store_inner(
         path,
         cancellation,
         VALIDATION_TIMEOUT,
@@ -82,7 +82,7 @@ pub(crate) fn validate_existing_bibcode_store(
     )
 }
 
-pub(crate) fn validate_existing_bibcode_store_immutable(
+pub(crate) fn validate_existing_coddy_studio_store_immutable(
     path: &Path,
     cancellation: &CancellationToken,
 ) -> std::result::Result<(), ExistingStoreValidationError> {
@@ -182,7 +182,7 @@ pub(crate) fn validate_existing_bibcode_store_immutable(
 }
 
 #[cfg(test)]
-fn validate_existing_bibcode_store_with_barrier<F>(
+fn validate_existing_coddy_studio_store_with_barrier<F>(
     path: &Path,
     cancellation: &CancellationToken,
     barrier: F,
@@ -190,7 +190,7 @@ fn validate_existing_bibcode_store_with_barrier<F>(
 where
     F: FnOnce() -> std::result::Result<(), ExistingStoreValidationError>,
 {
-    validate_existing_bibcode_store_inner(
+    validate_existing_coddy_studio_store_inner(
         path,
         cancellation,
         VALIDATION_TIMEOUT,
@@ -202,7 +202,7 @@ where
 }
 
 #[cfg(test)]
-pub(super) fn validate_existing_bibcode_store_with_control<F, G>(
+pub(super) fn validate_existing_coddy_studio_store_with_control<F, G>(
     path: &Path,
     cancellation: &CancellationToken,
     timeout: Duration,
@@ -216,7 +216,7 @@ where
         rusqlite::backup::Progress,
     ) -> std::result::Result<(), ExistingStoreValidationError>,
 {
-    validate_existing_bibcode_store_inner(
+    validate_existing_coddy_studio_store_inner(
         path,
         cancellation,
         timeout,
@@ -228,7 +228,7 @@ where
 }
 
 #[cfg(test)]
-pub(super) fn validate_existing_bibcode_store_with_inspection_control<F, G, H>(
+pub(super) fn validate_existing_coddy_studio_store_with_inspection_control<F, G, H>(
     path: &Path,
     cancellation: &CancellationToken,
     timeout: Duration,
@@ -244,7 +244,7 @@ where
     ) -> std::result::Result<(), ExistingStoreValidationError>,
     H: FnMut() + Send + 'static,
 {
-    validate_existing_bibcode_store_inner(
+    validate_existing_coddy_studio_store_inner(
         path,
         cancellation,
         timeout,
@@ -255,7 +255,7 @@ where
     )
 }
 
-fn validate_existing_bibcode_store_inner<F, G, H>(
+fn validate_existing_coddy_studio_store_inner<F, G, H>(
     path: &Path,
     cancellation: &CancellationToken,
     timeout: Duration,
@@ -2357,7 +2357,7 @@ fn migration_043(transaction: &Transaction<'_>) -> Result<()> {
 
 fn migration_044(transaction: &Transaction<'_>) -> Result<()> {
     // `last_error` alone cannot say who reported the failure: it carries both a
-    // provider's own message and BiBCode's restart notice. The class travels
+    // provider's own message and Coddy Studio's restart notice. The class travels
     // beside it so the UI can attribute the error instead of guessing.
     // Guarded the same way as migration 028: a database restored from a
     // trusted-ledger path may not carry this rebuildable projection table, and
@@ -2576,9 +2576,9 @@ fn migration_054(transaction: &Transaction<'_>) -> Result<()> {
 mod tests {
     use super::{
         MIGRATIONS, Migration, migration_001, run_migrations, sqlite_sidecar, table_exists,
-        validate_existing_bibcode_store, validate_existing_bibcode_store_with_barrier,
-        validate_existing_bibcode_store_with_control,
-        validate_existing_bibcode_store_with_inspection_control,
+        validate_existing_coddy_studio_store, validate_existing_coddy_studio_store_with_barrier,
+        validate_existing_coddy_studio_store_with_control,
+        validate_existing_coddy_studio_store_with_inspection_control,
     };
     use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
@@ -2764,7 +2764,7 @@ mod tests {
             .expect("uncheckpointed fixture write");
         let before = persistent_directory_snapshot(root.path());
 
-        validate_existing_bibcode_store(&database, &CancellationToken::new())
+        validate_existing_coddy_studio_store(&database, &CancellationToken::new())
             .expect("valid WAL store");
 
         assert_eq!(persistent_directory_snapshot(root.path()), before);
@@ -2779,7 +2779,7 @@ mod tests {
         .expect("copy stable WAL fixture");
         let without_shared_memory = persistent_directory_snapshot(crash_root.path());
 
-        validate_existing_bibcode_store(&crash_database, &CancellationToken::new())
+        validate_existing_coddy_studio_store(&crash_database, &CancellationToken::new())
             .expect("valid crash-left WAL store without source SHM");
 
         assert_eq!(
@@ -2819,19 +2819,23 @@ mod tests {
                 > 0
         );
 
-        validate_existing_bibcode_store_with_barrier(&database, &CancellationToken::new(), || {
-            let checkpoint = writer
-                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                })
-                .expect("checkpoint fixture WAL");
-            assert_eq!(checkpoint.0, 0, "checkpoint was not blocked");
-            Ok(())
-        })
+        validate_existing_coddy_studio_store_with_barrier(
+            &database,
+            &CancellationToken::new(),
+            || {
+                let checkpoint = writer
+                    .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    })
+                    .expect("checkpoint fixture WAL");
+                assert_eq!(checkpoint.0, 0, "checkpoint was not blocked");
+                Ok(())
+            },
+        )
         .expect("valid store must remain recognizable across checkpoint reset");
     }
 
@@ -2860,7 +2864,7 @@ mod tests {
 
         let mut steps = Vec::new();
         let mut checkpoint_between_batches = false;
-        validate_existing_bibcode_store_with_control(
+        validate_existing_coddy_studio_store_with_control(
             &database,
             &CancellationToken::new(),
             std::time::Duration::from_secs(1),
@@ -2913,7 +2917,7 @@ mod tests {
         let marker = root.path().join("environment-id");
 
         let started = std::time::Instant::now();
-        let error = validate_existing_bibcode_store_with_control(
+        let error = validate_existing_coddy_studio_store_with_control(
             &database,
             &CancellationToken::new(),
             std::time::Duration::from_millis(15),
@@ -2956,7 +2960,7 @@ mod tests {
         let progress_entered = entered_inspection.clone();
 
         let started = std::time::Instant::now();
-        let error = validate_existing_bibcode_store_with_inspection_control(
+        let error = validate_existing_coddy_studio_store_with_inspection_control(
             &database,
             &CancellationToken::new(),
             std::time::Duration::from_millis(250),
@@ -2993,7 +2997,7 @@ mod tests {
         drop(connection);
         let artifacts_before = validation_artifacts();
 
-        let error = validate_existing_bibcode_store_with_barrier(
+        let error = validate_existing_coddy_studio_store_with_barrier(
             &database,
             &CancellationToken::new(),
             || {
@@ -3054,7 +3058,7 @@ mod tests {
             .filter_map(|entry| {
                 let name = entry.ok()?.file_name();
                 name.to_string_lossy()
-                    .starts_with("bibcode-store-validation-")
+                    .starts_with("coddy-studio-store-validation-")
                     .then_some(name)
             })
             .collect::<Vec<_>>();

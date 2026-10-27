@@ -11,7 +11,7 @@ import { ManagedEndpointZone, RelayApiZone } from "./src/zone.ts";
 import ApiLive, { Api } from "./src/worker.ts";
 
 export default Alchemy.Stack(
-  "BiBCodeRelay",
+  "CoddyStudioRelay",
   {
     providers: Layer.mergeAll(Cloudflare.providers(), Drizzle.providers(), Planetscale.providers()),
     state: Cloudflare.state(),

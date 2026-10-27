@@ -1,4 +1,4 @@
-import { RelayEnvironmentConnectScope } from "@bibcode/contracts/relay";
+import { RelayEnvironmentConnectScope } from "@coddy/contracts/relay";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -49,7 +49,7 @@ export class ConnectionResolver extends Context.Service<
       entry: ConnectionCatalogEntry,
     ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
   }
->()("@bibcode/client-runtime/connection/resolver/ConnectionResolver") {}
+>()("@coddy/client-runtime/connection/resolver/ConnectionResolver") {}
 
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);

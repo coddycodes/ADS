@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { useCallback, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";

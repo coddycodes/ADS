@@ -17,12 +17,12 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ProviderSessionDefault,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   DEFAULT_DEFAULT_AGENT_SELECTION,
   DEFAULT_UNIFIED_SETTINGS,
   type UnifiedSettings,
-} from "@bibcode/contracts/settings";
+} from "@coddy/contracts/settings";
 import * as settingsPanelsLogic from "./SettingsPanels.logic";
 
 type AnyProps = Record<string, unknown>;
@@ -227,15 +227,15 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigate,
 }));
 
-vi.mock("@bibcode/client-runtime/environment", () => ({
+vi.mock("@coddy/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: unknown, threadId: unknown) => ({ environmentId, threadId }),
 }));
 
-vi.mock("@bibcode/client-runtime/errors", () => ({
+vi.mock("@coddy/client-runtime/errors", () => ({
   safeErrorLogAttributes: (error: unknown) => ({ error: String(error) }),
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: unknown) =>
     (result as { interrupted?: boolean }).interrupted === true,
   squashAtomCommandFailure: (result: unknown) =>
@@ -848,7 +848,7 @@ describe("GeneralSettingsPanel", () => {
     const markup = renderedText();
 
     expect(markup).toContain("Open links in");
-    expect(markup).toContain("BiBCode browser");
+    expect(markup).toContain("Coddy Studio browser");
     expect(markup).toContain("System browser");
     expect(findControls("button", "Reset link target")).toHaveLength(0);
 
@@ -864,7 +864,7 @@ describe("GeneralSettingsPanel", () => {
     expect(h.updateSettings).toHaveBeenCalledWith({ browserLinkTarget: "app" });
   });
 
-  it("hides the link target where the BiBCode browser is unavailable", () => {
+  it("hides the link target where the Coddy Studio browser is unavailable", () => {
     h.previewSupported = false;
     h.settings = { ...DEFAULT_UNIFIED_SETTINGS, browserLinkTarget: "system" };
 
@@ -1417,6 +1417,7 @@ describe("ProviderSettingsPanel", () => {
       "codex",
       "codex_personal",
       "claudeAgent",
+      "coddy",
       "cursor",
       "cursor_alt",
       "opencode",

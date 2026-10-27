@@ -11,7 +11,7 @@ export function readNativePageLoad(log: string): { phase: string; id: string } |
 }
 
 export async function refreshDesktopUiDocument(
-  stateRoot = process.env.BIBCODE_HOME,
+  stateRoot = process.env.CODDY_STUDIO_HOME,
 ): Promise<void> {
   if (!stateRoot) throw new Error("The desktop UI fixture state root was not configured.");
   const path = NodePath.join(stateRoot, "userdata", "logs", "server.log");

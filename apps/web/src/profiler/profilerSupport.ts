@@ -1,4 +1,4 @@
-import { type ServerConfig, WS_METHODS } from "@bibcode/contracts";
+import { type ServerConfig, WS_METHODS } from "@coddy/contracts";
 
 /**
  * What an older server answers a profiler RPC with. It is a connection-level defect: it fails
@@ -11,7 +11,7 @@ const UNSUPPORTED_DEFECTS: ReadonlySet<string> = new Set([
 ]);
 
 export const PROFILER_UNSUPPORTED_MESSAGE =
-  "This server's BiBCode version has no profiler. Update the server to record.";
+  "This server's Coddy Studio version has no profiler. Update the server to record.";
 
 /** Whether the server has the profiler RPCs. Only one that says so is ever sent them. */
 export function serverHasProfiler(serverConfig: ServerConfig | null | undefined): boolean {

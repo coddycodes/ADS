@@ -1,4 +1,4 @@
-extern crate self as bibcode_server;
+extern crate self as coddy_studio_server;
 
 pub mod checkpointing;
 pub mod orchestration;

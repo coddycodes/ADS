@@ -1,7 +1,7 @@
 //! Detects workspace changes made outside the application.
 //!
 //! The workspace index is a set of paths, not file contents, so only path-set changes can
-//! invalidate it. On every filesystem BiBCode targets, adding, renaming, or removing an entry
+//! invalidate it. On every filesystem Coddy Studio targets, adding, renaming, or removing an entry
 //! updates the containing directory's mtime, while editing a file in place does not. The sweep
 //! therefore stats the directories the index already knows about instead of walking the tree, which
 //! keeps the cost proportional to the directory count rather than the file count.

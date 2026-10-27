@@ -1,5 +1,5 @@
-import { ManagedRelay } from "@bibcode/client-runtime/relay";
-import { RelayWebClientId } from "@bibcode/contracts/relay";
+import { ManagedRelay } from "@coddy/client-runtime/relay";
+import { RelayWebClientId } from "@coddy/contracts/relay";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

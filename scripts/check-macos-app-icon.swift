@@ -166,7 +166,7 @@ if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--self-test"
 }
 
 guard CommandLine.arguments.count == 2 else {
-  fputs("Usage: check-macos-app-icon.swift /path/to/BiBCode.app\n", stderr)
+  fputs("Usage: check-macos-app-icon.swift /path/to/Coddy Studio.app\n", stderr)
   exit(2)
 }
 
@@ -211,8 +211,8 @@ print(
 )
 if counts.exitStatus == 1 {
   observeIconStage(.verdictRejected)
-  fputs("FAIL: macOS adds a large pale surround to the BiBCode icon\n", stderr)
+  fputs("FAIL: macOS adds a large pale surround to the Coddy Studio icon\n", stderr)
   exit(1)
 }
 observeIconStage(.verdictAccepted)
-print("PASS: BiBCode renders as a predominantly black macOS icon")
+print("PASS: Coddy Studio renders as a predominantly black macOS icon")

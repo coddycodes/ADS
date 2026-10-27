@@ -1,4 +1,4 @@
-import { createSourceControlEnvironmentAtoms } from "@bibcode/client-runtime/state/source-control";
+import { createSourceControlEnvironmentAtoms } from "@coddy/client-runtime/state/source-control";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

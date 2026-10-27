@@ -1,14 +1,14 @@
 {
-  "name": "@bibcode/desktop",
+  "name": "@coddy/desktop",
   "version": "0.11.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ../../scripts/run-msvc.mjs pnpm exec tauri dev -- -p bibcode-desktop",
+    "dev": "node ../../scripts/run-msvc.mjs pnpm exec tauri dev -- -p coddy-studio-desktop",
     "build": "node ../../scripts/run-tauri-build.mjs",
     "bundle": "node ../../scripts/run-tauri-build.mjs bundle",
-    "typecheck": "node ../../scripts/run-msvc.mjs cargo check -p bibcode-desktop && tsc --noEmit -p e2e/tsconfig.json",
-    "test": "node ../../scripts/run-msvc.mjs cargo test -p bibcode-desktop -j 2",
+    "typecheck": "node ../../scripts/run-msvc.mjs cargo check -p coddy-studio-desktop && tsc --noEmit -p e2e/tsconfig.json",
+    "test": "node ../../scripts/run-msvc.mjs cargo test -p coddy-studio-desktop -j 2",
     "test:ui": "wdio run ./e2e/wdio.conf.ts",
     "test:ui:build": "node ./e2e/support/build-packaged-app.ts"
   },
@@ -23,5 +23,5 @@
     "@wdio/tauri-service": "1.2.0",
     "webdriverio": "9.29.1"
   },
-  "productName": "BiBCode"
+  "productName": "Coddy Studio"
 }

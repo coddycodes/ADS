@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Window } from "happy-dom";
@@ -31,7 +31,7 @@ interface MountedTree {
 const mountedTrees: MountedTree[] = [];
 
 beforeEach(async () => {
-  domWindow = new Window({ url: "https://bibcode.test/" });
+  domWindow = new Window({ url: "https://coddy.test/" });
   vi.stubGlobal("window", domWindow);
   vi.stubGlobal("document", domWindow.document);
   vi.stubGlobal("navigator", domWindow.navigator);

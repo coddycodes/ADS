@@ -3,7 +3,7 @@ import {
   executeAtomQuery,
   type AtomCommandOptions,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { useCallback, useContext } from "react";
 

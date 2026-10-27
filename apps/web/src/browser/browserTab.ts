@@ -13,7 +13,7 @@ export function openPendingTab(): PendingTab | null {
   // No "noopener" here: it would make window.open return null and lose the handle.
   const tab = window.open("about:blank", "_blank");
   if (!tab) return null;
-  // The previewed page must not script BiBCode through window.opener.
+  // The previewed page must not script Coddy Studio through window.opener.
   tab.opener = null;
   return {
     // Only web addresses: a javascript: or file: URL must never run in the new tab.

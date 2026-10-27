@@ -264,9 +264,9 @@ impl ManagedEndpointRuntime {
         }
         let executable = self.executable_override.clone().or_else(|| {
             executable_on_path(if cfg!(windows) {
-                "bibcode-connect.exe"
+                "coddy-connect.exe"
             } else {
-                "bibcode-connect"
+                "coddy-connect"
             })
         });
         let Some(executable) = executable else {
@@ -415,7 +415,7 @@ fn report_connector_exit(active: &ActiveConnector, status: &std::process::ExitSt
     tracing::warn!(
         %status,
         tunnel_id = active.config.tunnel_id.as_deref().unwrap_or_default(),
-        "BiBCode Connect tunnel connector exited"
+        "Coddy Connect tunnel connector exited"
     );
     if exits::watching() {
         let label = std::path::Path::new(&active.exe).file_name().map_or_else(
@@ -546,7 +546,7 @@ mod tests {
         });
 
         let sandbox = TestSandbox::new("managed-endpoint-exit");
-        let dying = sandbox.executable_script("bibcode-connect", "sleep 0.3; exit 3", "");
+        let dying = sandbox.executable_script("coddy-connect", "sleep 0.3; exit 3", "");
         let mut runtime =
             ManagedEndpointRuntime::with_fixture(dying, ProcessAttributionRegistry::new(), None);
         runtime.watch_interval = std::time::Duration::from_millis(50);
@@ -568,12 +568,12 @@ mod tests {
         assert!(
             findings[0]
                 .iter()
-                .any(|field| field.starts_with("bibcode-connect")),
+                .any(|field| field.starts_with("coddy-connect")),
             "{findings:?}"
         );
 
         // A connector stopped on request is never reported.
-        let steady = sandbox.executable_script("bibcode-connect-steady", "exec sleep 30", "");
+        let steady = sandbox.executable_script("coddy-connect-steady", "exec sleep 30", "");
         let mut runtime =
             ManagedEndpointRuntime::with_fixture(steady, ProcessAttributionRegistry::new(), None);
         runtime.watch_interval = std::time::Duration::from_millis(50);
@@ -621,7 +621,7 @@ mod tests {
         let child_pid = sandbox.path("child.pid");
         // The leader leaves a child behind in its process group, then dies on its own.
         let dying = sandbox.executable_script(
-            "bibcode-connect",
+            "coddy-connect",
             &format!(
                 "sleep 30 & echo $! > '{}'; sleep 0.3; exit 3",
                 child_pid.display()
@@ -651,7 +651,7 @@ mod tests {
         let sandbox = TestSandbox::new("managed-endpoint-group");
         let child_pid = sandbox.path("child.pid");
         let dying = sandbox.executable_script(
-            "bibcode-connect",
+            "coddy-connect",
             &format!(
                 "sleep 30 & echo $! > '{}'; sleep 0.3; exit 3",
                 child_pid.display()
@@ -672,7 +672,7 @@ mod tests {
         let sandbox = TestSandbox::new("managed-endpoint-drop");
         let pid_path = sandbox.path("connector.pid");
         let steady = sandbox.executable_script(
-            "bibcode-connect",
+            "coddy-connect",
             &format!("echo $$ > '{}'; exec sleep 30", pid_path.display()),
             "",
         );
@@ -691,7 +691,7 @@ mod tests {
         let sandbox = TestSandbox::new("managed-endpoint-freeze");
         let pid_path = sandbox.path("tunnel.pid");
         let executable = sandbox.executable_script(
-            "bibcode-connect",
+            "coddy-connect",
             &format!("echo $$ > '{}'; exec sleep 30", pid_path.display()),
             "",
         );
@@ -726,8 +726,8 @@ mod tests {
     async fn shutting_down_one_tunnel_runtime_preserves_its_live_peer() {
         let sandbox_a = TestSandbox::new("managed-endpoint-peer-a");
         let sandbox_b = TestSandbox::new("managed-endpoint-peer-b");
-        let executable_a = sandbox_a.executable_script("bibcode-connect", "exec sleep 30", "");
-        let executable_b = sandbox_b.executable_script("bibcode-connect", "exec sleep 30", "");
+        let executable_a = sandbox_a.executable_script("coddy-connect", "exec sleep 30", "");
+        let executable_b = sandbox_b.executable_script("coddy-connect", "exec sleep 30", "");
         let registry_a = ProcessAttributionRegistry::new();
         let registry_b = ProcessAttributionRegistry::new();
         let runtime_a =
@@ -765,7 +765,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn capacity_rejection_reaps_the_spawned_tunnel_and_shutdown_is_idempotent() {
         let sandbox = TestSandbox::new("managed-endpoint-capacity");
-        let executable = sandbox.executable_script("bibcode-connect", "exec sleep 30", "");
+        let executable = sandbox.executable_script("coddy-connect", "exec sleep 30", "");
         let registry = ProcessAttributionRegistry::new();
         let registrations = (0..512_u32)
             .map(|index| {

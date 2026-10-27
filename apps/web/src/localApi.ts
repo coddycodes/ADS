@@ -1,4 +1,4 @@
-import type { ContextMenuEntry, LocalApi } from "@bibcode/contracts";
+import type { ContextMenuEntry, LocalApi } from "@coddy/contracts";
 
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { showContextMenuFallback } from "./contextMenuFallback";

@@ -1,4 +1,4 @@
-import type { PullRequestsDetail, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsDetail, ScopedProjectRef } from "@coddy/contracts";
 import { PencilIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { usePullRequestsStore } from "../../../pullRequestsStore";

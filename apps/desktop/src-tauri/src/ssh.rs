@@ -1,4 +1,4 @@
-use bibcode_server::process::{configure_background_command, isolate_appimage_environment};
+use coddy_studio_server::process::{configure_background_command, isolate_appimage_environment};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -27,7 +27,7 @@ const KNOWN_HOSTS_FILE_NAME: &str = "known_hosts";
 pub const SSH_PASSWORD_PROMPT_EVENT: &str = "desktop:ssh-password-prompt";
 const DEFAULT_SSH_PASSWORD_PROMPT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 const DEFAULT_REMOTE_PORT: u16 = 3773;
-const SSH_READY_PATH: &str = "/.well-known/bibcode/environment";
+const SSH_READY_PATH: &str = "/.well-known/coddy-studio/environment";
 const SSH_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const SSH_READY_INTERVAL: Duration = Duration::from_millis(250);
 const SSH_READY_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -92,7 +92,7 @@ const SSH_PAIRING_WATCHDOG_MARGIN: Duration = Duration::from_secs(5);
 /// Script identity prefix, also used by test fixtures.
 macro_rules! remote_script_header_prefix {
     () => {
-        "# bibcode-ssh:"
+        "# coddy-studio-ssh:"
     };
 }
 
@@ -164,7 +164,7 @@ macro_rules! remote_run_bounded_function {
 /// scripts. `$1` is the environment's state key.
 ///
 /// `is_state_server PID PORT` succeeds only while PID runs this state's
-/// `bibcode serve --host 127.0.0.1 --port PORT --base-dir ~/.bibcode`, read
+/// `coddy-studio serve --host 127.0.0.1 --port PORT --base-dir ~/.coddy/studio`, read
 /// from `/proc/PID/cmdline` (Linux, BusyBox included) or `ps -p PID -o
 /// command=` (macOS). A pid file can outlive its server and the pid can then
 /// belong to anything, so no recorded pid is trusted, stopped, or reused
@@ -175,8 +175,8 @@ macro_rules! remote_run_bounded_function {
 macro_rules! remote_launch_state {
     () => {
         r#"STATE_KEY="$1"
-STATE_DIR="$HOME/.bibcode-ssh-launch/$STATE_KEY"
-SERVER_HOME="$HOME/.bibcode"
+STATE_DIR="$HOME/.coddy/studio/ssh-launch/$STATE_KEY"
+SERVER_HOME="$HOME/.coddy/studio"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -212,7 +212,7 @@ write_state_file() {
 /// remote login shell only ever parses `sh -s --` (OpenSSH joins the remote
 /// argv with spaces and hands the result to the login shell). It runs under
 /// the same non-login `sh` and `PATH` as the launch script, so it uses the
-/// `bibcode` that serves the environment. It must target the same
+/// `coddy-studio` that serves the environment. It must target the same
 /// `--base-dir` the launch script passes to `serve` (`SERVER_HOME`), and must
 /// print a JSON line with a `credential` field — see
 /// `parse_remote_pairing_credential`.
@@ -228,32 +228,32 @@ pub const REMOTE_PAIRING_SCRIPT: &str = concat!(
     "set -eu\n",
     remote_wait_functions!(),
     remote_run_bounded_function!(),
-    r#"if ! command -v bibcode >/dev/null 2>&1; then
-  printf 'Remote host is missing the native BiBCode CLI. Install the Rust bibcode binary before connecting.\n' >&2
+    r#"if ! command -v coddy-studio >/dev/null 2>&1; then
+  printf 'Remote host is missing the native Coddy Studio CLI. Install the Rust coddy-studio binary before connecting.\n' >&2
   exit 1
 fi
-run_bounded "$1" bibcode pairing issue --base-dir "$HOME/.bibcode" --json
+run_bounded "$1" coddy-studio pairing issue --base-dir "$HOME/.coddy/studio" --json
 "#
 );
 const ASKPASS_POSIX_SCRIPT: &str = r#"#!/bin/sh
-if [ "${BIBCODE_SSH_AUTH_SECRET+x}" = "x" ]; then
-  printf "%s\n" "$BIBCODE_SSH_AUTH_SECRET"
+if [ "${CODDY_STUDIO_SSH_AUTH_SECRET+x}" = "x" ]; then
+  printf "%s\n" "$CODDY_STUDIO_SSH_AUTH_SECRET"
   exit 0
 fi
-printf 'BiBCode ssh-askpass invoked without BIBCODE_SSH_AUTH_SECRET.\n' >&2
+printf 'Coddy Studio ssh-askpass invoked without CODDY_STUDIO_SSH_AUTH_SECRET.\n' >&2
 exit 1
 "#;
 const ASKPASS_WINDOWS_LAUNCHER_SCRIPT: &str = "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0ssh-askpass.ps1\" %*\r\n";
-const ASKPASS_WINDOWS_SCRIPT: &str = r#"# Invoked by ssh via SSH_ASKPASS when BiBCode re-runs ssh with a cached password.
-if ($null -ne $env:BIBCODE_SSH_AUTH_SECRET) {
-  [Console]::Out.WriteLine($env:BIBCODE_SSH_AUTH_SECRET)
+const ASKPASS_WINDOWS_SCRIPT: &str = r#"# Invoked by ssh via SSH_ASKPASS when Coddy Studio re-runs ssh with a cached password.
+if ($null -ne $env:CODDY_STUDIO_SSH_AUTH_SECRET) {
+  [Console]::Out.WriteLine($env:CODDY_STUDIO_SSH_AUTH_SECRET)
   exit 0
 }
-[Console]::Error.WriteLine("BiBCode ssh-askpass invoked without BIBCODE_SSH_AUTH_SECRET.")
+[Console]::Error.WriteLine("Coddy Studio ssh-askpass invoked without CODDY_STUDIO_SSH_AUTH_SECRET.")
 exit 1
 "#;
 
-/// Starts or reuses this environment's managed `bibcode serve`, as
+/// Starts or reuses this environment's managed `coddy-studio serve`, as
 /// `sh -s -- <state key>`, and prints `{"remotePort":…,"serverKind":"managed"}`.
 ///
 /// Every wait is bounded on the host's clock: a recorded server gets
@@ -272,7 +272,7 @@ const REMOTE_LAUNCH_SCRIPT: &str = concat!(
     remote_launch_state!(),
     remote_run_bounded_function!(),
     r#"LOG_FILE="$STATE_DIR/server.log"
-RUNNER_FILE="$STATE_DIR/run-bibcode.sh"
+RUNNER_FILE="$STATE_DIR/run-coddy-studio.sh"
 if command -v curl >/dev/null 2>&1; then
   READY_PROBE=curl
 elif command -v wget >/dev/null 2>&1; then
@@ -284,21 +284,21 @@ fi
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 #!/bin/sh
-if command -v bibcode >/dev/null 2>&1; then
-  exec bibcode "$@"
+if command -v coddy-studio >/dev/null 2>&1; then
+  exec coddy-studio "$@"
 fi
-printf 'Remote host is missing the native BiBCode CLI. Install the Rust bibcode binary before connecting.\n' >&2
+printf 'Remote host is missing the native Coddy Studio CLI. Install the Rust coddy-studio binary before connecting.\n' >&2
 exit 1
 SH
 chmod 700 "$RUNNER_FILE"
 probe_ready() {
   if [ "$READY_PROBE" = curl ]; then
     curl --fail --silent --show-error --max-time 1 \
-      "http://127.0.0.1:$1/.well-known/bibcode/environment" >/dev/null 2>&1
+      "http://127.0.0.1:$1/.well-known/coddy-studio/environment" >/dev/null 2>&1
   else
     # wget retries a timed-out read many times; the watchdog caps the probe.
     run_bounded 2 wget --quiet --timeout=1 --output-document=/dev/null \
-      "http://127.0.0.1:$1/.well-known/bibcode/environment" >/dev/null 2>&1
+      "http://127.0.0.1:$1/.well-known/coddy-studio/environment" >/dev/null 2>&1
   fi
 }
 # Succeeds once port $1 answers. Gives up after at least $2 and at most $2 + 1
@@ -355,7 +355,7 @@ if is_state_server "$REMOTE_PID" "$REMOTE_PORT"; then
     exit 0
   fi
   if ! stop_state_server "$REMOTE_PID" "$REMOTE_PORT"; then
-    printf 'Remote BiBCode server %s does not answer and did not stop; not starting another beside it.\n' "$REMOTE_PID" >&2 || true
+    printf 'Remote Coddy Studio server %s does not answer and did not stop; not starting another beside it.\n' "$REMOTE_PID" >&2 || true
     exit 1
   fi
 fi
@@ -366,18 +366,18 @@ if [ -z "$REMOTE_PORT" ]; then
   exit 1
 fi
 # The port is recorded before the server starts, and the server records its
-# own pid before it becomes `bibcode serve`, so no running server is ever
+# own pid before it becomes `coddy-studio serve`, so no running server is ever
 # unrecorded or recorded with another port, however this script is cut short.
 write_state_file "$PORT_FILE" "$REMOTE_PORT"
 nohup sh -c 'printf "%s\n" "$$" >"$1.tmp" && mv -f "$1.tmp" "$1" && shift && exec "$@"' \
-  bibcode-launch "$PID_FILE" "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  coddy-studio-launch "$PID_FILE" "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
 REMOTE_PID="$!"
 write_state_file "$MANAGED_FILE" managed
 if ! wait_ready "$REMOTE_PORT" "@@REMOTE_READY_TIMEOUT@@"; then
   if stop_state_server "$REMOTE_PID" "$REMOTE_PORT"; then
     clear_state_files "$REMOTE_PID"
   fi
-  printf 'Remote BiBCode server did not become ready on 127.0.0.1:%s.\n' "$REMOTE_PORT" >&2 || true
+  printf 'Remote Coddy Studio server did not become ready on 127.0.0.1:%s.\n' "$REMOTE_PORT" >&2 || true
   tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
   exit 1
 fi
@@ -644,7 +644,7 @@ pub struct SshOperationDeadlines {
 impl SshOperationDeadlines {
     /// The remote pairing watchdog's bound for these deadlines: the pairing
     /// deadline plus 5 s, rounded up to whole seconds. A host-side
-    /// `bibcode pairing issue` gets TERM at this bound and KILL 2 s later
+    /// `coddy-studio pairing issue` gets TERM at this bound and KILL 2 s later
     /// (see `REMOTE_PAIRING_SCRIPT`).
     pub fn pairing_watchdog_bound(&self) -> Duration {
         Duration::from_secs(pairing_watchdog_bound(self.pairing))
@@ -1572,10 +1572,10 @@ fn build_ssh_child_environment(
     );
     environment.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
     if let Some(secret) = &auth.auth_secret {
-        environment.insert("BIBCODE_SSH_AUTH_SECRET".to_string(), secret.clone());
+        environment.insert("CODDY_STUDIO_SSH_AUTH_SECRET".to_string(), secret.clone());
     }
     if !cfg!(windows) && env::var_os("DISPLAY").is_none() {
-        environment.insert("DISPLAY".to_string(), "bibcode".to_string());
+        environment.insert("DISPLAY".to_string(), "coddy-studio".to_string());
     }
     environment
 }
@@ -1609,13 +1609,13 @@ struct SshAskpassLauncherInner {
 impl SshAskpassLauncher {
     fn create_in(temporary_base: &Path, child_reaper: SshChildReaper) -> Result<Self, String> {
         let root = temporary_base.join(format!(
-            "bibcode-ssh-runtime-{}-{}",
+            "coddy-studio-ssh-runtime-{}-{}",
             std::process::id(),
             Uuid::new_v4().simple()
         ));
         fs::create_dir(&root)
             .map_err(|error| format!("Failed to create SSH askpass root: {error}"))?;
-        let directory = root.join("bibcode-ssh-askpass");
+        let directory = root.join("coddy-studio-ssh-askpass");
         let launcher = if cfg!(windows) {
             directory.join("ssh-askpass.cmd")
         } else {
@@ -2151,8 +2151,8 @@ fn remote_script_timeout_error(operation: &str, deadline: Duration) -> String {
     };
     let what = match operation {
         "pairing" => "issue a pairing credential",
-        "launch" => "start BiBCode",
-        "stop" => "stop BiBCode",
+        "launch" => "start Coddy Studio",
+        "stop" => "stop Coddy Studio",
         _ => "finish the SSH command",
     };
     format!("[ssh_timeout:{operation}] The remote host did not {what} within {limit}.")
@@ -2410,12 +2410,12 @@ async fn stop_remote_server(
         Ok(true) => {}
         Ok(false) => tracing::warn!(
             environment = %target.alias,
-            "The remote BiBCode server is still running; its record was kept for the next launch."
+            "The remote Coddy Studio server is still running; its record was kept for the next launch."
         ),
         Err(error) => tracing::warn!(
             environment = %target.alias,
             error,
-            "Could not confirm whether the remote BiBCode server stopped."
+            "Could not confirm whether the remote Coddy Studio server stopped."
         ),
     }
     Ok(())
@@ -2932,7 +2932,7 @@ impl SshIoRuntime {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .max_blocking_threads(self.max_blocking_threads)
-                .thread_name("bibcode-ssh-io")
+                .thread_name("coddy-studio-ssh-io")
                 .enable_all()
                 .build()
                 .map_err(|error| format!("Could not start the SSH I/O runtime: {error}"))?;
@@ -3601,7 +3601,7 @@ mod tests {
                     .args(["-0"])
                     .envs(build_ssh_child_environment(&auth, launcher.path()))
                     .env("PYTHONHOME", "/opt/host/python")
-                    .env_remove("BIBCODE_FUTURE_PATH")
+                    .env_remove("CODDY_STUDIO_FUTURE_PATH")
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
@@ -3631,7 +3631,7 @@ mod tests {
                     "GTK_THEME",
                     "GDK_BACKEND",
                     "PYTHONDONTWRITEBYTECODE",
-                    "BIBCODE_FUTURE_PATH",
+                    "CODDY_STUDIO_FUTURE_PATH",
                 ] {
                     assert!(
                         !environment.contains_key(name.as_bytes()),
@@ -3641,10 +3641,13 @@ mod tests {
                 for (name, expected) in [
                     ("LD_LIBRARY_PATH", "/usr/lib"),
                     ("PYTHONHOME", "/opt/host/python"),
-                    ("SSH_AUTH_SOCK", "/run/user/1000/bibcode-test-agent.sock"),
+                    (
+                        "SSH_AUTH_SOCK",
+                        "/run/user/1000/coddy-studio-test-agent.sock",
+                    ),
                     ("SSH_ASKPASS", askpass_path.as_str()),
                     ("SSH_ASKPASS_REQUIRE", "force"),
-                    ("BIBCODE_SSH_AUTH_SECRET", "fixture-password"),
+                    ("CODDY_STUDIO_SSH_AUTH_SECRET", "fixture-password"),
                 ] {
                     assert_eq!(
                         environment.get(name.as_bytes()).copied(),
@@ -3660,7 +3663,7 @@ mod tests {
 
     fn unique_temp_home() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "bibcode-tauri-ssh-test-{}-{}",
+            "coddy-studio-tauri-ssh-test-{}-{}",
             std::process::id(),
             Uuid::new_v4().simple()
         ))
@@ -4724,12 +4727,12 @@ mod tests {
     fn builds_askpass_environment_for_cached_password() {
         let environment = build_ssh_child_environment(
             &SshAuthOptions::with_secret("hunter2".to_string()),
-            Path::new("C:/tmp/bibcode-ssh/ssh-askpass.cmd"),
+            Path::new("C:/tmp/coddy-studio-ssh/ssh-askpass.cmd"),
         );
 
         assert_eq!(
             environment
-                .get("BIBCODE_SSH_AUTH_SECRET")
+                .get("CODDY_STUDIO_SSH_AUTH_SECRET")
                 .map(String::as_str),
             Some("hunter2")
         );
@@ -4739,7 +4742,7 @@ mod tests {
         );
         assert_eq!(
             environment.get("SSH_ASKPASS").map(String::as_str),
-            Some("C:/tmp/bibcode-ssh/ssh-askpass.cmd")
+            Some("C:/tmp/coddy-studio-ssh/ssh-askpass.cmd")
         );
     }
 
@@ -4756,21 +4759,21 @@ mod tests {
     }
 
     #[test]
-    fn remote_launch_requires_the_native_bibcode_runtime() {
+    fn remote_launch_requires_the_native_coddy_studio_runtime() {
         for forbidden in [
             "node -",
             "command -v node",
             "command -v npm",
             "command -v npx",
-            "bibcode@latest",
+            "coddy-studio@latest",
         ] {
             assert!(
                 !REMOTE_LAUNCH_SCRIPT.contains(forbidden),
                 "remote launch script must not contain {forbidden}"
             );
         }
-        assert!(REMOTE_LAUNCH_SCRIPT.contains("command -v bibcode"));
-        assert!(REMOTE_LAUNCH_SCRIPT.contains("native BiBCode CLI"));
+        assert!(REMOTE_LAUNCH_SCRIPT.contains("command -v coddy-studio"));
+        assert!(REMOTE_LAUNCH_SCRIPT.contains("native Coddy Studio CLI"));
     }
 
     #[test]
@@ -4827,15 +4830,15 @@ mod tests {
         assert!(launch.starts_with("nohup sh -c "), "{launch}");
         assert!(
             launch.contains(
-                r#"bibcode-launch "$PID_FILE" "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$SERVER_HOME" >>"#
+                r#"coddy-studio-launch "$PID_FILE" "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$SERVER_HOME" >>"#
             ),
             "serve must start without environment assignments: {launch}"
         );
-        assert!(!script.contains("BIBCODE_NO_BROWSER"));
+        assert!(!script.contains("CODDY_STUDIO_NO_BROWSER"));
     }
 
     /// The remote scripts run directly, without SSH, under every POSIX shell
-    /// a host may use for `sh -s`, with a stand-in `bibcode` first on `PATH`
+    /// a host may use for `sh -s`, with a stand-in `coddy-studio` first on `PATH`
     /// and a private `HOME`. These pin the scripts' own process handling.
     #[cfg(unix)]
     mod remote_scripts {
@@ -4846,10 +4849,10 @@ mod tests {
         const STATE_KEY: &str = "0123456789abcdef";
         const CREDENTIAL_LINE: &str = r#"{"credential":"fixture-credential"}"#;
 
-        /// A stand-in `bibcode`. `serve` records its pid and runs
+        /// A stand-in `coddy-studio`. `serve` records its pid and runs
         /// `serve.py`; `pairing` records its pid and behaves as
         /// `FIXTURE_PAIRING` says.
-        const FAKE_BIBCODE: &str = r#"#!/bin/sh
+        const FAKE_CODDY_STUDIO: &str = r#"#!/bin/sh
 dir='@@DIR@@'
 case "$1" in
   serve)
@@ -4879,11 +4882,11 @@ case "$1" in
     esac
     ;;
 esac
-printf 'fixture: unexpected bibcode %s\n' "$*" >&2
+printf 'fixture: unexpected coddy-studio %s\n' "$*" >&2
 exit 97
 "#;
 
-        /// A stand-in `bibcode serve`: it listens on `--port` and answers
+        /// A stand-in `coddy-studio serve`: it listens on `--port` and answers
         /// every request with `200 {}`, or with `FIXTURE_SERVE_MODE=silent`
         /// accepts connections and never answers.
         /// `FIXTURE_IGNORE_TERM=1` makes it ignore SIGTERM, and
@@ -5025,13 +5028,13 @@ while True:
         }
 
         /// A private "remote host": a HOME, a `bin` holding the stand-in
-        /// `bibcode`, and the files the stand-ins record.
+        /// `coddy-studio`, and the files the stand-ins record.
         struct ScriptHost {
             dir: tempfile::TempDir,
             /// How long a script may run before the test kills it.
             limit: Duration,
             /// Where the launch script's port scan starts when no port is
-            /// recorded: a free port, never the 3773 a local BiBCode uses.
+            /// recorded: a free port, never the 3773 a local Coddy Studio uses.
             default_port: u16,
         }
 
@@ -5042,8 +5045,8 @@ while True:
                 fs::create_dir_all(dir.path().join("home")).expect("fixture home");
                 fs::create_dir_all(dir.path().join("bin")).expect("fixture bin");
                 write_executable(
-                    &dir.path().join("bin/bibcode"),
-                    &FAKE_BIBCODE.replace("@@DIR@@", &root),
+                    &dir.path().join("bin/coddy-studio"),
+                    &FAKE_CODDY_STUDIO.replace("@@DIR@@", &root),
                 );
                 fs::write(dir.path().join("serve.py"), SERVE_PY).expect("fixture server");
                 Self {
@@ -5092,11 +5095,11 @@ while True:
             }
 
             fn server_home(&self) -> String {
-                self.home().join(".bibcode").display().to_string()
+                self.home().join(".coddy/studio").display().to_string()
             }
 
             fn state_dir(&self) -> PathBuf {
-                self.home().join(".bibcode-ssh-launch").join(STATE_KEY)
+                self.home().join(".coddy/studio/ssh-launch").join(STATE_KEY)
             }
 
             fn state_file(&self, name: &str) -> Option<String> {
@@ -5149,7 +5152,7 @@ while True:
                 ]
             }
 
-            /// Starts a `bibcode serve` stand-in outside the script, with
+            /// Starts a `coddy-studio serve` stand-in outside the script, with
             /// the command line the launch script gives its server.
             fn spawn_recorded_server(&self, port: u16, env: &[(&str, &str)]) -> RecordedServer {
                 let mut command = StdCommand::new("python3");
@@ -5344,9 +5347,9 @@ while True:
             for shell in shells() {
                 let host = ScriptHost::new();
                 write_executable(
-                    &host.dir.path().join("bin/bibcode"),
+                    &host.dir.path().join("bin/coddy-studio"),
                     r#"#!/bin/sh
-exec "$BIBCODE_FIXTURE_PYTHON" -c 'import signal
+exec "$CODDY_STUDIO_FIXTURE_PYTHON" -c 'import signal
 print("ignored" if signal.getsignal(signal.SIGTERM) == signal.SIG_IGN else "default")'
 "#,
                 );
@@ -5355,7 +5358,7 @@ print("ignored" if signal.getsignal(signal.SIGTERM) == signal.SIG_IGN else "defa
                     &shell,
                     &script,
                     &["35"],
-                    &[("BIBCODE_FIXTURE_PYTHON", python.display().to_string())],
+                    &[("CODDY_STUDIO_FIXTURE_PYTHON", python.display().to_string())],
                     ScriptOutput::Files,
                 );
                 assert_eq!(run.code(), Some(0), "{run:?}");
@@ -5379,9 +5382,9 @@ print("ignored" if signal.getsignal(signal.SIGTERM) == signal.SIG_IGN else "defa
                 write_executable(
                     &host.dir.path().join("bin/python3"),
                     r#"#!/bin/sh
-exec "$BIBCODE_FIXTURE_PYTHON" -c 'import os, sys, time
+exec "$CODDY_STUDIO_FIXTURE_PYTHON" -c 'import os, sys, time
 time.sleep(1.2)
-os.execv(sys.argv[1], sys.argv[1:])' "$BIBCODE_FIXTURE_PYTHON" "$@"
+os.execv(sys.argv[1], sys.argv[1:])' "$CODDY_STUDIO_FIXTURE_PYTHON" "$@"
 "#,
                 );
                 let script = delayed_interpreter_pairing_script();
@@ -5391,7 +5394,7 @@ os.execv(sys.argv[1], sys.argv[1:])' "$BIBCODE_FIXTURE_PYTHON" "$@"
                     &["1"],
                     &[
                         ("FIXTURE_PAIRING", "ignore-term".to_string()),
-                        ("BIBCODE_FIXTURE_PYTHON", python.display().to_string()),
+                        ("CODDY_STUDIO_FIXTURE_PYTHON", python.display().to_string()),
                     ],
                     ScriptOutput::Files,
                 );
@@ -5473,7 +5476,7 @@ os.execv(sys.argv[1], sys.argv[1:])' "$BIBCODE_FIXTURE_PYTHON" "$@"
                 let host = ScriptHost::new();
                 let script = host.launch_script(limits);
                 let _cleanup = host.cleanup();
-                // A PATH with the stand-in `bibcode` and the tools the
+                // A PATH with the stand-in `coddy-studio` and the tools the
                 // scripts use, but no curl.
                 let tools = host.dir.path().join("tools");
                 fs::create_dir_all(&tools).expect("tools directory");
@@ -5890,7 +5893,7 @@ os.execv(sys.argv[1], sys.argv[1:])' "$BIBCODE_FIXTURE_PYTHON" "$@"
                     if case == "state directory" {
                         // Files the launch rewrites in place stay writable;
                         // creating any new file in the directory fails.
-                        fs::write(state_dir.join("run-bibcode.sh"), "").expect("runner file");
+                        fs::write(state_dir.join("run-coddy-studio.sh"), "").expect("runner file");
                         fs::write(state_dir.join("server.log"), "").expect("log file");
                         fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555))
                             .expect("read-only state directory");
@@ -5952,21 +5955,21 @@ printf '%s\n' "$*" >>"$dir/invocations.log"
 
         /// `sshd(8)` semantics: the joined command runs under `/bin/sh -c`
         /// with the fixture's remote HOME and a PATH holding only the
-        /// recording `bibcode`.
+        /// recording `coddy-studio`.
         const JOINING_BODY: &str = r#"exec env -i HOME="$dir/remote-home" PATH="$dir/remote-bin:/usr/bin:/bin" /bin/sh -c "$*"
 "#;
 
-        const RECORDING_BIBCODE: &str = r#"#!/bin/sh
+        const RECORDING_CODDY_STUDIO: &str = r#"#!/bin/sh
 dir='@@DIR@@'
 if [ "$#" -eq 0 ]; then
-  printf 'fixture: bare bibcode would start a foreground server\n' >&2
+  printf 'fixture: bare coddy-studio would start a foreground server\n' >&2
   exit 97
 fi
 {
   for arg in "$@"; do printf '[%s] ' "$arg"; done
   printf '\n'
-} >>"$dir/bibcode-argv.log"
-count=$(wc -l <"$dir/bibcode-argv.log" | tr -d ' ')
+} >>"$dir/coddy-studio-argv.log"
+count=$(wc -l <"$dir/coddy-studio-argv.log" | tr -d ' ')
 printf '{"credential":"fixture-credential-%s"}\n' "$count"
 "#;
 
@@ -5991,8 +5994,8 @@ printf '{"credential":"fixture-credential-%s"}\n' "$count"
                     &format!("{PRELUDE}{body}").replace("@@DIR@@", &root),
                 );
                 write_executable(
-                    &dir.path().join("remote-bin/bibcode"),
-                    &RECORDING_BIBCODE.replace("@@DIR@@", &root),
+                    &dir.path().join("remote-bin/coddy-studio"),
+                    &RECORDING_CODDY_STUDIO.replace("@@DIR@@", &root),
                 );
                 Self { dir, program }
             }
@@ -6012,8 +6015,8 @@ printf '{"credential":"fixture-credential-%s"}\n' "$count"
                 read_lines(&self.dir.path().join("invocations.log"))
             }
 
-            pub(super) fn bibcode_argv(&self) -> Vec<String> {
-                read_lines(&self.dir.path().join("bibcode-argv.log"))
+            pub(super) fn coddy_studio_argv(&self) -> Vec<String> {
+                read_lines(&self.dir.path().join("coddy-studio-argv.log"))
             }
 
             pub(super) fn remote_home(&self) -> PathBuf {
@@ -6335,9 +6338,9 @@ printf '{"credential":"fixture-credential-%s"}\n' "$count"
         .expect("pairing must finish");
 
         assert_eq!(
-            fake.bibcode_argv(),
+            fake.coddy_studio_argv(),
             vec![format!(
-                "[pairing] [issue] [--base-dir] [{}/.bibcode] [--json]",
+                "[pairing] [issue] [--base-dir] [{}/.coddy/studio] [--json]",
                 fake.remote_home().display()
             )],
             "the remote login shell must run the full pairing command (invocations: {:?})",
@@ -6487,7 +6490,7 @@ printf '{"credential":"fixture-credential-%s"}\n' "$count"
             Ok(std::thread::current().name().map(str::to_owned))
         })
         .await;
-        assert_eq!(worker, Ok(Some("bibcode-ssh-io".to_string())));
+        assert_eq!(worker, Ok(Some("coddy-studio-ssh-io".to_string())));
         let credential = issue_remote_pairing_token(
             &runner,
             &fixture_target(),

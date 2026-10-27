@@ -1,4 +1,4 @@
-import { ORCHESTRATION_WS_METHODS } from "@bibcode/contracts";
+import { ORCHESTRATION_WS_METHODS } from "@coddy/contracts";
 import { Atom } from "effect/reactivity";
 
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";

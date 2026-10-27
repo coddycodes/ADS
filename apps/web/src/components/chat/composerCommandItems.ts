@@ -4,15 +4,15 @@ import type {
   ServerProviderAgent,
   ServerProviderSkill,
   ServerProviderSlashCommand,
-} from "@bibcode/contracts";
-import { serializeComposerReference } from "@bibcode/shared/composerReferences";
-import type { ComposerBiBCodeAction, ComposerTrigger } from "@bibcode/shared/composerTrigger";
+} from "@coddy/contracts";
+import { serializeComposerReference } from "@coddy/shared/composerReferences";
+import type { ComposerCoddyStudioAction, ComposerTrigger } from "@coddy/shared/composerTrigger";
 
 import { searchProviderSkills } from "../../providerSkillSearch";
 import type { ComposerCapabilityProfile } from "./composerCapabilities";
 import { searchComposerCommandCandidates } from "./composerCommandSearch";
 
-export type ComposerCommandGroupId = "bibcode" | "commands" | "skills" | "files" | "agents";
+export type ComposerCommandGroupId = "coddy-studio" | "commands" | "skills" | "files" | "agents";
 
 interface ComposerCommandItemBase {
   readonly id: string;
@@ -21,10 +21,10 @@ interface ComposerCommandItemBase {
   readonly description: string;
 }
 
-export interface BiBCodeActionItem extends ComposerCommandItemBase {
-  readonly type: "bibcode-action";
-  readonly group: "bibcode";
-  readonly action: ComposerBiBCodeAction;
+export interface CoddyStudioActionItem extends ComposerCommandItemBase {
+  readonly type: "coddy-studio-action";
+  readonly group: "coddy-studio";
+  readonly action: ComposerCoddyStudioAction;
   readonly replacement: null;
 }
 
@@ -61,7 +61,7 @@ export interface AgentReferenceItem extends ComposerCommandItemBase {
 }
 
 export type ComposerCommandItem =
-  | BiBCodeActionItem
+  | CoddyStudioActionItem
   | ProviderCommandItem
   | ProviderSkillItem
   | FileReferenceItem
@@ -84,8 +84,8 @@ export interface ComposerCommandItemsResult {
   readonly emptyStateText: string;
 }
 
-const BIBCODE_ACTIONS: ReadonlyArray<{
-  readonly action: ComposerBiBCodeAction;
+const CODDY_STUDIO_ACTIONS: ReadonlyArray<{
+  readonly action: ComposerCoddyStudioAction;
   readonly description: string;
 }> = [
   { action: "model", description: "Switch response model for this thread" },
@@ -127,13 +127,13 @@ function compareSkills(left: ServerProviderSkill, right: ServerProviderSkill): n
   );
 }
 
-function buildBiBCodeActionItems(query: string): BiBCodeActionItem[] {
+function buildCoddyStudioActionItems(query: string): CoddyStudioActionItem[] {
   const normalized = normalizedQuery(query);
-  return BIBCODE_ACTIONS.filter(({ action }) => !normalized || action.includes(normalized)).map(
+  return CODDY_STUDIO_ACTIONS.filter(({ action }) => !normalized || action.includes(normalized)).map(
     ({ action, description }) => ({
-      id: `bibcode-action:${action}`,
-      type: "bibcode-action",
-      group: "bibcode",
+      id: `coddy-studio-action:${action}`,
+      type: "coddy-studio-action",
+      group: "coddy-studio",
       action,
       label: `:${action}`,
       description,
@@ -313,11 +313,11 @@ export function buildComposerCommandItems(
     };
   }
 
-  if (input.trigger.kind === "bibcode-action") {
+  if (input.trigger.kind === "coddy-studio-action") {
     return {
-      items: buildBiBCodeActionItems(input.trigger.query),
+      items: buildCoddyStudioActionItems(input.trigger.query),
       preferredItemId: null,
-      emptyStateText: "No matching BiBCode action.",
+      emptyStateText: "No matching Coddy Studio action.",
     };
   }
   if (input.trigger.kind === "provider-slash") {

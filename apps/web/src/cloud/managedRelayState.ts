@@ -4,8 +4,8 @@ import {
   ManagedRelay,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
-} from "@bibcode/client-runtime/relay";
-import type { RelayClientEnvironmentRecord } from "@bibcode/contracts/relay";
+} from "@coddy/client-runtime/relay";
+import type { RelayClientEnvironmentRecord } from "@coddy/contracts/relay";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -40,7 +40,7 @@ export function useManagedRelayEnvironments() {
   const snapshot = readManagedRelaySnapshotState(result);
   useEffect(() => {
     if (snapshot.error) {
-      console.error("[bibcode-cloud] Relay environment listing failed", {
+      console.error("[coddy-studio-cloud] Relay environment listing failed", {
         message: snapshot.error,
         traceId: snapshot.errorTraceId,
       });

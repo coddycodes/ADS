@@ -1,5 +1,5 @@
-import type { ContextMenuItem } from "@bibcode/contracts";
-import { getTerminalLabel } from "@bibcode/shared/terminalLabels";
+import type { ContextMenuItem } from "@coddy/contracts";
+import { getTerminalLabel } from "@coddy/shared/terminalLabels";
 import { useSortable } from "@dnd-kit/sortable";
 import {
   Bot,

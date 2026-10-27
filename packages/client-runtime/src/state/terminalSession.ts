@@ -5,7 +5,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalSummary,
   ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import type { TerminalMetadataSnapshot } from "./terminalTranscriptRuntime.ts";
 

@@ -20,11 +20,11 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
-use bibcode_server::production::server_terminal::{
+use coddy_studio_server::production::server_terminal::{
     JsonFuture, JsonStream, ProductionServerControl, ServerTerminalServices,
     register_server_terminal_rpc,
 };
-use bibcode_server::{
+use coddy_studio_server::{
     CauseItem, RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime, cloud,
     diagnostics, provider_usage,
     terminal::{self, PtyBackend, PtyExit, PtyProcess, PtySpawnInput},
@@ -1482,7 +1482,7 @@ async fn terminal_rpc_clear_resize_restart_exit_and_restart_if_not_running_round
         assert_eq!(attached[0]["snapshot"]["pid"].as_u64(), Some(first_pid));
 
         maybe_prime_terminal(control, "thread-restart", "term-restart").await;
-        let token = "BIBCODE_RPC_CLEAR_RESTART";
+        let token = "CODDY_STUDIO_RPC_CLEAR_RESTART";
         assert_success(
             request(
                 control,
@@ -2498,9 +2498,9 @@ fn shell_echo_command(token: &str) -> String {
 
 fn long_running_command() -> &'static str {
     if cfg!(windows) {
-        "echo BIBCODE_RPC_LONG_RUNNING_READY & ping 127.0.0.1 -n 31\r\n"
+        "echo CODDY_STUDIO_RPC_LONG_RUNNING_READY & ping 127.0.0.1 -n 31\r\n"
     } else {
-        "printf 'BIBCODE_RPC_%s\\n' 'LONG_RUNNING_READY'; sleep 30\n"
+        "printf 'CODDY_STUDIO_RPC_%s\\n' 'LONG_RUNNING_READY'; sleep 30\n"
     }
 }
 
@@ -2548,7 +2548,7 @@ async fn read_file_with_retry(path: &std::path::Path) -> String {
 }
 
 fn long_running_output_marker() -> &'static str {
-    "BIBCODE_RPC_LONG_RUNNING_READY"
+    "CODDY_STUDIO_RPC_LONG_RUNNING_READY"
 }
 
 fn long_running_label() -> &'static str {

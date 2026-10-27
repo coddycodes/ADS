@@ -1,7 +1,7 @@
-use bibcode_server::orchestration::engine::{
+use coddy_studio_server::orchestration::engine::{
     EngineOptions, OrchestrationCommand, OrchestrationEngine, TestHooks,
 };
-use bibcode_server::persistence::{Database, Repositories, run_migrations};
+use coddy_studio_server::persistence::{Database, Repositories, run_migrations};
 use serde_json::{Value, json};
 const CREATED_AT: &str = "2026-07-10T10:00:00.000Z";
 fn decode(value: Value) -> OrchestrationCommand {

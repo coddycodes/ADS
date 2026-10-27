@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { EnvironmentAuthInvalidError } from "@bibcode/contracts";
+import { EnvironmentAuthInvalidError } from "@coddy/contracts";
 import { executeEnvironmentHttpRequest, RemoteEnvironmentAuthFetchError } from "./http.ts";
 import { mapRemoteEnvironmentError } from "../connection/errors.ts";
 import { connectionStatusText } from "../connection/presentation.ts";
@@ -11,7 +11,7 @@ it.effect(
     Effect.gen(function* () {
       const cause = new Error("Inert transport implementation diagnostic.");
       const error = yield* executeEnvironmentHttpRequest(
-        "https://owned.example.test/.well-known/bibcode/environment?private-test=value",
+        "https://owned.example.test/.well-known/coddy-studio/environment?private-test=value",
         1000,
         Effect.fail(cause),
       ).pipe(Effect.flip);
@@ -45,7 +45,7 @@ it.effect(
         traceId: "owned-trace",
       });
       const error = yield* executeEnvironmentHttpRequest(
-        "https://owned.example.test/.well-known/bibcode/environment",
+        "https://owned.example.test/.well-known/coddy-studio/environment",
         1000,
         Effect.fail(cause),
       ).pipe(Effect.flip);

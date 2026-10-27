@@ -4,7 +4,7 @@ import type {
   DesktopPreviewTabState,
   PreviewSessionSnapshot,
   ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { createElement, StrictMode, type ComponentType, type ReactElement } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

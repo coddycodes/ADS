@@ -1,7 +1,7 @@
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessDiagnosticsResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
@@ -40,8 +40,8 @@ const resourceProcesses: ReadonlyArray<ServerProcessDiagnosticsEntry> = [
     pid: 100,
     scope: "core",
     kind: "server",
-    label: "BiBCode Server",
-    command: "bibcode server",
+    label: "Coddy Studio Server",
+    command: "coddy-studio server",
     rssBytes: mebibytes(250),
     cpuPercent: 2,
   }),
@@ -50,8 +50,8 @@ const resourceProcesses: ReadonlyArray<ServerProcessDiagnosticsEntry> = [
     pid: 101,
     scope: "core",
     kind: "ui",
-    label: "BiBCode UI",
-    command: "BiBCode WebContent",
+    label: "Coddy Studio UI",
+    command: "Coddy Studio WebContent",
     rssBytes: mebibytes(150),
     cpuPercent: 1,
   }),
@@ -185,8 +185,8 @@ describe("statusBarPresentation", () => {
     const vm = buildResourcePresentation(diagnosticsFixture());
 
     expect(vm.consumers.map((consumer) => consumer.label)).toEqual([
-      "BiBCode Server",
-      "BiBCode UI",
+      "Coddy Studio Server",
+      "Coddy Studio UI",
       "Codex",
       "Build terminal",
       "Unattributed process",

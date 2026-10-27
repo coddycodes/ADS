@@ -1,6 +1,6 @@
 # Encyclopedia
 
-This is a living glossary for BiBCode. It explains common terms used in the
+This is a living glossary for Coddy Studio. It explains common terms used in the
 codebase and UI.
 
 ## Project And Workspace
@@ -155,8 +155,8 @@ settled far enough for tests and orchestration to continue deterministically.
 ### Provider Driver
 
 The implementation that probes, launches, and translates one backend agent
-protocol. BiBCode supports four built-in drivers: Codex, Claude, Cursor, and
-OpenCode.
+protocol. Coddy Studio ships six built-in drivers: Coddy, Codex, Claude, Cursor,
+Grok, and OpenCode; Grok is hidden from the supported list.
 
 ### Provider Instance
 

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { ProjectScript, ResolvedKeybindingsConfig } from "@bibcode/contracts";
+import type { ProjectScript, ResolvedKeybindingsConfig } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act, type FormEvent, Suspense } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -37,7 +37,7 @@ const failure = {
   _tag: "Failure",
   cause: Cause.fail(new Error("late save failure")),
 } as unknown as ProjectScriptActionResult;
-const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
 
 describe("ProjectScriptsControl availability transitions", () => {
   let container: HTMLDivElement;

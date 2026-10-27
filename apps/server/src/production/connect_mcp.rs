@@ -24,11 +24,11 @@ mod device_tools;
 pub use device_tools::DeviceTools;
 use device_tools::device_tool_descriptors;
 
-const RELAY_LINK_PROOF_TYP: &str = "bibcode-env-link+jwt";
-const RELAY_MINT_REQUEST_TYP: &str = "bibcode-cloud-mint+jwt";
-const RELAY_HEALTH_REQUEST_TYP: &str = "bibcode-cloud-health+jwt";
-const RELAY_MINT_RESPONSE_TYP: &str = "bibcode-env-mint+jwt";
-const RELAY_HEALTH_RESPONSE_TYP: &str = "bibcode-env-health+jwt";
+const RELAY_LINK_PROOF_TYP: &str = "coddy-studio-env-link+jwt";
+const RELAY_MINT_REQUEST_TYP: &str = "coddy-studio-cloud-mint+jwt";
+const RELAY_HEALTH_REQUEST_TYP: &str = "coddy-studio-cloud-health+jwt";
+const RELAY_MINT_RESPONSE_TYP: &str = "coddy-studio-env-mint+jwt";
+const RELAY_HEALTH_RESPONSE_TYP: &str = "coddy-studio-env-health+jwt";
 const PROOF_MAX_LIFETIME_SECONDS: i64 = 5 * 60;
 const PROOF_CLOCK_SKEW_SECONDS: i64 = 60;
 const MCP_IDLE_SECONDS: i64 = 30 * 60;
@@ -629,7 +629,7 @@ impl ConnectMcpService {
             .await
             .map_err(|_| ConnectMcpError::internal("Could not generate environment link proof."))?;
         let signed_payload = json!({
-            "iss": format!("bibcode-env:{}", self.config.environment_id),
+            "iss": format!("coddy-studio-env:{}", self.config.environment_id),
             "aud": relay_issuer,
             "sub": self.config.environment_id,
             "jti": Uuid::new_v4().to_string(),
@@ -679,7 +679,7 @@ impl ConnectMcpService {
             && self.link_generation().await?.as_deref() != Some(required)
         {
             return Err(ConnectMcpError::conflict(
-                "This environment's BiBCode Connect link changed. Link it again from Settings.",
+                "This environment's Coddy Connect link changed. Link it again from Settings.",
             ));
         }
         if let Some(existing) = existing
@@ -775,7 +775,7 @@ impl ConnectMcpService {
             .read_secret("relay-environment-credential")
             .await?
             .map(|credential| {
-                let digest = Sha256::digest(format!("bibcode-link-generation:{credential}"));
+                let digest = Sha256::digest(format!("coddy-studio-link-generation:{credential}"));
                 URL_SAFE_NO_PAD.encode(&digest[..16])
             }))
     }
@@ -830,7 +830,7 @@ impl ConnectMcpService {
             RELAY_HEALTH_REQUEST_TYP.into(),
             proof_token.into(),
             linked.relay_issuer.clone(),
-            format!("bibcode-env:{}", self.config.environment_id),
+            format!("coddy-studio-env:{}", self.config.environment_id),
             now,
         )
         .await
@@ -853,7 +853,7 @@ impl ConnectMcpService {
             })?;
         let checked_at = iso_timestamp(now)?;
         let response_payload = json!({
-            "iss": format!("bibcode-env:{}", self.config.environment_id),
+            "iss": format!("coddy-studio-env:{}", self.config.environment_id),
             "aud": linked.relay_issuer,
             "sub": self.config.environment_id,
             "jti": Uuid::new_v4().to_string(),
@@ -886,7 +886,7 @@ impl ConnectMcpService {
             RELAY_MINT_REQUEST_TYP.into(),
             proof_token.into(),
             linked.relay_issuer.clone(),
-            format!("bibcode-env:{}", self.config.environment_id),
+            format!("coddy-studio-env:{}", self.config.environment_id),
             now,
         )
         .await
@@ -916,7 +916,7 @@ impl ConnectMcpService {
         })?;
         let expires_at_seconds = parse_iso_timestamp(&issued.expires_at)?;
         let response_payload = json!({
-            "iss": format!("bibcode-env:{}", self.config.environment_id),
+            "iss": format!("coddy-studio-env:{}", self.config.environment_id),
             "aud": linked.relay_issuer,
             "sub": self.config.environment_id,
             "jti": Uuid::new_v4().to_string(),
@@ -1009,7 +1009,7 @@ impl ConnectMcpService {
             "initialize" => json!({
                 "protocolVersion": request.pointer("/params/protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
                 "capabilities":{"tools":{"listChanged":false}},
-                "serverInfo":{"name":"BiBCode","version":env!("CARGO_PKG_VERSION")}
+                "serverInfo":{"name":"Coddy Studio","version":env!("CARGO_PKG_VERSION")}
             }),
             "ping" => json!({}),
             "tools/list" => {

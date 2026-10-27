@@ -1,4 +1,4 @@
-import { EditorId, EnvironmentId, type ResolvedKeybindingsConfig } from "@bibcode/contracts";
+import { EditorId, EnvironmentId, type ResolvedKeybindingsConfig } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BIBCODE-SSH-FIXTURE fake OpenSSH client.
+"""CODDY_STUDIO-SSH-FIXTURE fake OpenSSH client.
 
 Used only by apps/desktop/src-tauri/tests/ssh_environment.rs, which starts it
 through a generated wrapper that sets the SSH_FIXTURE_* variables below. It
@@ -19,13 +19,13 @@ the fake only relays stdio, so killing the client closes the channel but
 signals nothing, and the remote command runs on until it ends by itself or
 writes to the closed channel.
 
-Destination aliases starting with `hang-pairing` make the remote `bibcode`
+Destination aliases starting with `hang-pairing` make the remote `coddy-studio`
 wrapper hang on `pairing issue`, to exercise the desktop's pairing deadline.
 
 Environment:
   SSH_FIXTURE_ROOT              per-run state directory (required)
-  SSH_FIXTURE_BIBCODE           the real `bibcode` binary (required)
-  SSH_FIXTURE_REMOTE_BIN        directory holding the remote `bibcode` wrapper
+  SSH_FIXTURE_CODDY_STUDIO           the real `coddy-studio` binary (required)
+  SSH_FIXTURE_REMOTE_BIN        directory holding the remote `coddy-studio` wrapper
                                 (required)
   SSH_FIXTURE_REMOTE_PORT_START first remote port the launch script scans
                                 (keeps the fake remote server away from 3773)
@@ -46,11 +46,11 @@ def fail(message):
     return 255
 
 
-SCRIPT_HEADER = "# bibcode-ssh:"
+SCRIPT_HEADER = "# coddy-studio-ssh:"
 
 
 def classify(remote, script):
-    """Names a remote script by its first line, `# bibcode-ssh:<kind>`."""
+    """Names a remote script by its first line, `# coddy-studio-ssh:<kind>`."""
     if remote[:3] == ["sh", "-s", "--"]:
         first_line = script.split("\n", 1)[0]
         if first_line.startswith(SCRIPT_HEADER):
@@ -171,7 +171,7 @@ def seed_port(remote_home, state_key, start):
     # free-port scan and still verifies that the port is free.
     if not start:
         return
-    state_dir = os.path.join(remote_home, ".bibcode-ssh-launch", state_key)
+    state_dir = os.path.join(remote_home, ".coddy/studio/ssh-launch", state_key)
     port_file = os.path.join(state_dir, "port")
     if not os.path.exists(port_file):
         os.makedirs(state_dir, exist_ok=True)
@@ -181,11 +181,11 @@ def seed_port(remote_home, state_key, start):
 
 def main():
     root = os.environ.get("SSH_FIXTURE_ROOT")
-    real = os.environ.get("SSH_FIXTURE_BIBCODE")
+    real = os.environ.get("SSH_FIXTURE_CODDY_STUDIO")
     remote_bin = os.environ.get("SSH_FIXTURE_REMOTE_BIN")
     if not root or not real or not remote_bin:
         return fail(
-            "fake ssh: SSH_FIXTURE_ROOT, SSH_FIXTURE_BIBCODE and SSH_FIXTURE_REMOTE_BIN must be set"
+            "fake ssh: SSH_FIXTURE_ROOT, SSH_FIXTURE_CODDY_STUDIO and SSH_FIXTURE_REMOTE_BIN must be set"
         )
 
     args = sys.argv[1:]
@@ -285,13 +285,13 @@ def main():
         "LANG": "C.UTF-8",
         "PATH": remote_bin + ":/usr/local/bin:/usr/bin:/bin",
         "SSH_FIXTURE_STATE": state,
-        "SSH_FIXTURE_BIBCODE": real,
+        "SSH_FIXTURE_CODDY_STUDIO": real,
         "SSH_FIXTURE_HANG_PAIRING": "1" if alias.startswith("hang-pairing") else "0",
     }
     # Preserve the explicitly selected dev-guard diagnostic mode for the owned
     # remote CLI; production SSH scripts do not manage this test-only variable.
-    if "BIBCODE_HERMETIC_GUARD" in os.environ:
-        environment["BIBCODE_HERMETIC_GUARD"] = os.environ["BIBCODE_HERMETIC_GUARD"]
+    if "CODDY_STUDIO_HERMETIC_GUARD" in os.environ:
+        environment["CODDY_STUDIO_HERMETIC_GUARD"] = os.environ["CODDY_STUDIO_HERMETIC_GUARD"]
     if not remote:
         return fail("fake ssh: interactive sessions are not supported")
     if sshd_sessions:

@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { ThreadId } from "@bibcode/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import { ThreadId } from "@coddy/contracts";
 import { DraftId } from "./composerDraftStore";
 
 import {

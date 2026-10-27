@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import type { AdvertisedEndpoint } from "@bibcode/contracts";
-import { buildBrowserPairUrl, buildPairingDeepLink } from "@bibcode/shared/pairingCode";
+import type { AdvertisedEndpoint } from "@coddy/contracts";
+import { buildBrowserPairUrl, buildPairingDeepLink } from "@coddy/shared/pairingCode";
 
 import {
   generateShareOffer,
@@ -36,7 +36,7 @@ const defaultDeps = {
 
 describe("share offer links", () => {
   it("builds the deep link and browser URL from one code", () => {
-    expect(buildPairingDeepLink("abc123")).toBe("bibcode://pair?code=abc123");
+    expect(buildPairingDeepLink("abc123")).toBe("coddy-studio://pair?code=abc123");
     expect(buildBrowserPairUrl("http://192.168.1.20:3773", "abc123")).toBe(
       "http://192.168.1.20:3773/pair?code=abc123",
     );
@@ -73,7 +73,7 @@ describe("generateShareOffer", () => {
     expect(calls).toEqual(["widen", "mint"]);
     expect(result).toMatchObject({
       ok: true,
-      offer: { endpoint: "http://192.168.1.20:3773", deepLink: "bibcode://pair?code=c0de" },
+      offer: { endpoint: "http://192.168.1.20:3773", deepLink: "coddy-studio://pair?code=c0de" },
     });
   });
 
@@ -680,7 +680,7 @@ describe("nativeShareAddressUnavailableReason", () => {
           id: "auto-lan",
           label: "Automatic (LAN)",
           httpBaseUrl: null,
-          description: "BiBCode will enable remote access and choose a LAN address.",
+          description: "Coddy Studio will enable remote access and choose a LAN address.",
         },
       ]);
     },

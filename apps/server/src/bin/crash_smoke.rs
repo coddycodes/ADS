@@ -7,7 +7,7 @@
 
 use std::{io::Write, path::PathBuf, time::Duration};
 
-use bibcode_server::diagnostics::profiler::crash;
+use coddy_studio_server::diagnostics::profiler::crash;
 
 fn main() {
     if let Some(code) = crash::dispatch_crash_monitor() {

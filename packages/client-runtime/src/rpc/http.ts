@@ -6,8 +6,8 @@ import {
   type EnvironmentOperationForbiddenError,
   type EnvironmentRequestInvalidError,
   type EnvironmentScopeRequiredError,
-} from "@bibcode/contracts";
-import { httpHeaderRedactionLayer } from "@bibcode/shared/httpObservability";
+} from "@coddy/contracts";
+import { httpHeaderRedactionLayer } from "@coddy/shared/httpObservability";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

@@ -52,13 +52,13 @@ import {
   VcsStatusSummary,
   WorktreeKey,
   WorktreeRepositoryKey,
-} from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
-import { createModelSelection } from "@bibcode/shared/model";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+} from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
+import { createModelSelection } from "@coddy/shared/model";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import { createEnvironmentPresentationPolicy } from "../connection/environmentPresentationPolicy";
 import { derivePhysicalProjectKey } from "../logicalProject";
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@coddy/client-runtime/state/shell";
 import Sidebar, {
   SidebarBrandContent,
   SidebarThreadRow,
@@ -284,8 +284,8 @@ staticDescribe("Sidebar global event helpers", () => {
 
 staticDescribe("SidebarBrandContent", () => {
   it("renders base name and stage label", () => {
-    const markup = render(<SidebarBrandContent appBaseName="BiBCode" stageLabel="Dev" />);
-    expect(markup).toContain("BiBCode");
+    const markup = render(<SidebarBrandContent appBaseName="Coddy Studio" stageLabel="Dev" />);
+    expect(markup).toContain("Coddy Studio");
     expect(markup).toContain("Dev");
     // UI.md: no letter-spacing; the stage badge keeps its capitals.
     expect(markup).not.toContain("tracking-");
@@ -1079,7 +1079,7 @@ staticDescribe("Sidebar full render", () => {
         wsBaseUrl: null,
         preflightError: {
           kind: "wsl-secondary-unavailable",
-          detail: "Could not find a Linux bibcode server binary for WSL.",
+          detail: "Could not find a Linux coddy-studio server binary for WSL.",
         },
       },
     ];
@@ -1087,7 +1087,7 @@ staticDescribe("Sidebar full render", () => {
     const markup = render(<Sidebar />);
 
     expect(markup).toContain("Couldn&#x27;t connect WSL (Ubuntu-20.04)");
-    expect(markup).toContain("Could not find a Linux bibcode server binary for WSL.");
+    expect(markup).toContain("Could not find a Linux coddy-studio server binary for WSL.");
     expect(markup).toMatch(/data-mock="AlertDescription"[^>]*class="[^"]*wrap-anywhere[^"]*"/);
     expect(markup).not.toContain("Connecting WSL (Ubuntu-20.04)");
   });
@@ -1968,7 +1968,7 @@ staticDescribe("worktree discovery integration", () => {
     invoke(row, "onContextMenu", mouseEvent());
     await flush();
     const missingReason =
-      "The worktree directory is missing. Use Retry detection or Remove from BiBCode on its card.";
+      "The worktree directory is missing. Use Retry detection or Remove from Coddy Studio on its card.";
     expect(menuItems.find((item) => item.id === "pull")).toMatchObject({
       disabled: true,
       description: missingReason,
@@ -2819,7 +2819,7 @@ staticDescribe("thread context menu", () => {
     await flush();
     expect(h.spies.dialogConfirm).toHaveBeenCalledWith(
       expect.stringContaining(
-        "1 worktree-backed thread will be removed from BiBCode only. Git worktrees and files are left untouched.",
+        "1 worktree-backed thread will be removed from Coddy Studio only. Git worktrees and files are left untouched.",
       ),
     );
     expect(h.spies.deleteThread).toHaveBeenCalledTimes(2);

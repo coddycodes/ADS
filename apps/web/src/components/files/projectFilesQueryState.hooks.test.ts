@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
@@ -77,8 +77,8 @@ vi.mock("~/rpc/atomRegistry", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bibcode/client-runtime/state/runtime")>()),
+vi.mock("@coddy/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@coddy/client-runtime/state/runtime")>()),
   executeAtomQuery: vi.fn(),
   retryEnvironmentQuery: (atom: unknown, refresh: () => void) => {
     harness.retries.push(atom);

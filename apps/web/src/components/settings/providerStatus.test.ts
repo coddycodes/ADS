@@ -1,4 +1,4 @@
-import type { ServerProvider, ServerProviderVersionAdvisory } from "@bibcode/contracts";
+import type { ServerProvider, ServerProviderVersionAdvisory } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -47,7 +47,7 @@ describe("getProviderSummary", () => {
     ).toEqual({
       headline: "Disabled",
       detail:
-        "This provider is disabled for new sessions in BiBCode. Turn it on to check whether it is installed.",
+        "This provider is disabled for new sessions in Coddy Studio. Turn it on to check whether it is installed.",
     });
   });
 
@@ -72,7 +72,7 @@ describe("getProviderSummary", () => {
     });
     expect(getProviderSummary(provider({ enabled: false, installed: true }))).toEqual({
       headline: "Disabled",
-      detail: "This provider is installed but disabled for new sessions in BiBCode.",
+      detail: "This provider is installed but disabled for new sessions in Coddy Studio.",
     });
     expect(getProviderSummary(provider({ installed: false }))).toEqual({
       headline: "Not found",

@@ -15,7 +15,7 @@ const EXPECTED_INCLUDE = [
   "infra/relay/alchemy.run.ts",
   "infra/relay/scripts/**/*.ts",
   "infra/relay/src/**/*.ts",
-  "oxlint-plugin-bibcode/**/*.ts",
+  "oxlint-plugin-coddy-studio/**/*.ts",
   "packages/client-runtime/scripts/**/*.ts",
   "packages/client-runtime/src/**/*.ts",
   "packages/client-runtime/vite.config.runtime.ts",

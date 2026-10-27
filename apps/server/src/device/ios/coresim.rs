@@ -1,4 +1,4 @@
-//! CoreSimulator and SimulatorKit loaded into the `bibcode` process, and a booted
+//! CoreSimulator and SimulatorKit loaded into the `coddy-studio` process, and a booted
 //! simulator's screen read through them. Every private name comes from spec §0 "Results".
 //!
 //! The IO ports, display descriptors and screen properties are `ROCKRemoteProxy` objects:
@@ -483,7 +483,7 @@ fn is_instance_of(object: Id, class: &CStr) -> bool {
 
 fn missing(selector: &CStr) -> DeviceError {
     let selector = selector.to_string_lossy();
-    tracing::warn!(%selector, "a simulator object does not respond to a selector BiBCode uses");
+    tracing::warn!(%selector, "a simulator object does not respond to a selector Coddy Studio uses");
     protocol_error(format!("the simulator does not respond to {selector}"))
 }
 
@@ -678,7 +678,7 @@ impl Drop for SurfaceLock<'_> {
 }
 
 /// The block signatures CoreSimulator needs: it sends the blocks across XPC and refuses a
-/// block without one ("Block is missing signature field"). Every other block BiBCode hands
+/// block without one ("Block is missing signature field"). Every other block Coddy Studio hands
 /// a framework (XPC handlers and barriers, the legacy HID completion) carries one too.
 /// `void (^)(void)`: frame callbacks and XPC barriers.
 struct VoidBlock;
@@ -807,7 +807,7 @@ impl Screen {
         {
             state.set_surface(surface);
         }
-        let queue = DispatchQueue::new("dev.bibcode.ios-screen", DispatchQueueAttr::SERIAL);
+        let queue = DispatchQueue::new("dev.coddy.studio.ios-screen", DispatchQueueAttr::SERIAL);
         let uuid = NSUUID::new();
         // SAFETY: an `NSUUID` is an object.
         let uuid = Object(unsafe { Retained::cast_unchecked::<AnyObject>(uuid) });
@@ -1352,7 +1352,7 @@ impl LegacyHid {
         };
         Ok(Self {
             client,
-            queue: DispatchQueue::new("dev.bibcode.ios-legacy-hid", DispatchQueueAttr::SERIAL),
+            queue: DispatchQueue::new("dev.coddy.studio.ios-legacy-hid", DispatchQueueAttr::SERIAL),
             mouse,
             button,
             arbitrary,

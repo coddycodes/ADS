@@ -9,9 +9,9 @@ import {
   ThreadId,
   type ModelSelection,
   type ServerProvider,
-} from "@bibcode/contracts";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import type { ConnectionTarget } from "@bibcode/client-runtime/connection";
+} from "@coddy/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import type { ConnectionTarget } from "@coddy/client-runtime/connection";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";

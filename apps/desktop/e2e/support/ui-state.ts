@@ -160,7 +160,7 @@ export async function getAddProjectDialogVisibilityDiagnostics(): Promise<unknow
       viewport: describe(document.querySelector<HTMLElement>('[data-slot="dialog-viewport"]')),
       browse: describe(browse ?? null),
       popupMatchesOpenStarting: popup?.matches("[data-open][data-starting-style]") ?? false,
-      motionStyleInstalled: document.documentElement.dataset.bibcodeDesktopUiMotion === "disabled",
+      motionStyleInstalled: document.documentElement.dataset.coddyStudioDesktopUiMotion === "disabled",
       motionSheetActive: motionRules.length === 2,
       motionRules,
     };

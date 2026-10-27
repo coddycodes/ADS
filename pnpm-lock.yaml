@@ -140,18 +140,18 @@ importers:
       '@base-ui/react':
         specifier: ^1.9.0
         version: 1.9.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@bibcode/client-runtime':
-        specifier: workspace:*
-        version: link:../../packages/client-runtime
-      '@bibcode/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@bibcode/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@clerk/react':
         specifier: 6.17.7
         version: 6.17.7(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@coddy/client-runtime':
+        specifier: workspace:*
+        version: link:../../packages/client-runtime
+      '@coddy/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@coddy/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -309,18 +309,18 @@ importers:
 
   infra/relay:
     dependencies:
-      '@bibcode/client-runtime':
-        specifier: workspace:*
-        version: link:../../packages/client-runtime
-      '@bibcode/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@bibcode/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@clerk/backend':
         specifier: 3.23.1
         version: 3.23.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@coddy/client-runtime':
+        specifier: workspace:*
+        version: link:../../packages/client-runtime
+      '@coddy/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@coddy/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@effect/sql-pg':
         specifier: 4.0.2
         version: 4.0.2(effect@4.0.2(patch_hash=55f987759413183fb661bd20b8ca555d1b5cefa1dc907b33be7d14bdd2bf96f2))
@@ -359,7 +359,7 @@ importers:
         specifier: 1.1.0
         version: 1.1.0(@types/node@26.6.4)(@vitest/coverage-v8@5.0.3)(@vitest/ui@5.0.3)(@volar/typescript@2.4.28(typescript@7.0.2))(bufferutil@4.1.0)(esbuild@0.28.2)(happy-dom@20.14.6(bufferutil@4.1.0)(utf-8-validate@6.0.6))(jiti@2.7.0)(msw@2.15.0(@types/node@26.6.4)(typescript@7.0.2))(terser@5.48.0)(tsx@4.23.15)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.1)
 
-  oxlint-plugin-bibcode:
+  oxlint-plugin-coddy-studio:
     dependencies:
       '@effect/platform-node':
         specifier: 4.0.2
@@ -380,10 +380,10 @@ importers:
 
   packages/client-runtime:
     dependencies:
-      '@bibcode/contracts':
+      '@coddy/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@bibcode/shared':
+      '@coddy/shared':
         specifier: workspace:*
         version: link:../shared
       '@noble/ciphers':
@@ -430,7 +430,7 @@ importers:
 
   packages/shared:
     dependencies:
-      '@bibcode/contracts':
+      '@coddy/contracts':
         specifier: workspace:*
         version: link:../contracts
       '@noble/curves':
@@ -464,13 +464,13 @@ importers:
 
   scripts:
     dependencies:
-      '@bibcode/client-runtime':
+      '@coddy/client-runtime':
         specifier: workspace:*
         version: link:../packages/client-runtime
-      '@bibcode/contracts':
+      '@coddy/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
-      '@bibcode/shared':
+      '@coddy/shared':
         specifier: workspace:*
         version: link:../packages/shared
       '@effect/platform-node':

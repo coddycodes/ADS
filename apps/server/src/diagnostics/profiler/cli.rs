@@ -1,4 +1,4 @@
-//! `bibcode profiler`: findings, events and crash records from the profiler directory, read
+//! `coddy-studio profiler`: findings, events and crash records from the profiler directory, read
 //! through [`Reader`], their stacks symbolicated, and an MCP server over them for AI agents. It
 //! never starts a server and works while one is stopped or running. Only `symbolicate
 //! --download` writes, and only outside the profiler directory.
@@ -127,19 +127,19 @@ pub fn run_profiler_cli(args: ProfilerArgs, state_dir: PathBuf) -> i32 {
         // The reader of the pipe left (`| head`); that is not a failure.
         Err(CliError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe => 0,
         Err(error) => {
-            let _ = writeln!(io::stderr(), "bibcode: {error}");
+            let _ = writeln!(io::stderr(), "coddy-studio: {error}");
             1
         }
     }
 }
 
-/// The desktop executable ships no separate `bibcode`, so `<desktop exe> profiler …` runs the
+/// The desktop executable ships no separate `coddy-studio`, so `<desktop exe> profiler …` runs the
 /// command here, before Tauri starts. Returns the exit code, or `None` when the process was
 /// not started that way. `attach_console` runs first: a release build on Windows has no
 /// console of its own to print to.
 ///
 /// Only the profiler arguments are parsed, not the server's environment-backed options. The
-/// data root is the desktop's: `BIBCODE_HOME` or `~/.bibcode`, and the state directory its
+/// data root is the desktop's: `CODDY_STUDIO_HOME` or `~/.coddy/studio`, and the state directory its
 /// in-process server uses.
 pub fn desktop_dispatch(attach_console: fn()) -> Option<i32> {
     if std::env::args_os().nth(1).as_deref() != Some(OsStr::new("profiler")) {
@@ -156,7 +156,7 @@ pub fn desktop_dispatch(attach_console: fn()) -> Option<i32> {
     Some(match crate::config::profiler_state_dir(None, None) {
         Ok(state_dir) => run_profiler_cli(cli.args, state_dir),
         Err(error) => {
-            let _ = writeln!(io::stderr(), "bibcode: {error}");
+            let _ = writeln!(io::stderr(), "coddy-studio: {error}");
             1
         }
     })
@@ -165,7 +165,7 @@ pub fn desktop_dispatch(attach_console: fn()) -> Option<i32> {
 #[derive(Debug, Parser)]
 #[command(
     name = "profiler",
-    about = "Read BiBCode profiler data from disk. The data root is BIBCODE_HOME, or ~/.bibcode."
+    about = "Read Coddy Studio profiler data from disk. The data root is CODDY_STUDIO_HOME, or ~/.coddy.studio."
 )]
 struct DesktopCli {
     #[command(flatten)]
@@ -354,7 +354,7 @@ fn write_status(out: &mut impl Write, status: &Value) -> io::Result<()> {
     let on = status["enabled"].as_bool().unwrap_or(false);
     writeln!(out, "Profiler setting: {}", if on { "on" } else { "off" })?;
     if let Some(version) = status["version"].as_str() {
-        writeln!(out, "Latest run: BiBCode {}", plain(version))?;
+        writeln!(out, "Latest run: Coddy Studio {}", plain(version))?;
     }
     if let Some(since) = status["recordingSince"].as_str() {
         writeln!(out, "Recording since: {}", plain(since))?;
@@ -782,7 +782,7 @@ mod tests {
         let symbolicated = json!({
             "thread": "main", "message": "boom\u{1b}[2J", "location": "src/lib.rs:42",
             "frames": [
-                { "module": "bibcode", "offset": 0x1010, "function": "my_fn\u{9b}", "file": "src/lib.rs", "line": 42 },
+                { "module": "coddy-studio", "offset": 0x1010, "function": "my_fn\u{9b}", "file": "src/lib.rs", "line": 42 },
                 { "module": "libc.so.6\u{202e}", "offset": 0x29d90, "function": null, "file": null, "line": null },
             ],
         });
@@ -792,7 +792,7 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            "Panic on thread main: boom?[2J at src/lib.rs:42\n  0 bibcode!my_fn? [src/lib.rs:42]\n  1 libc.so.6?+0x29d90\n"
+            "Panic on thread main: boom?[2J at src/lib.rs:42\n  0 coddy-studio!my_fn? [src/lib.rs:42]\n  1 libc.so.6?+0x29d90\n"
         );
         let mut out = Vec::new();
         write_symbolicated(&mut out, &json!({ "crashReason": "SIGSEGV / SEGV_MAPERR", "crashingThread": { "frames": [{ "module": "crash-smoke", "offset": 16 }] } })).unwrap();

@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-const VERSION_PROBE_CONTROL_ENV: &str = "BIBCODE_TEST_CURSOR_VERSION_PROBE_CONTROL";
+const VERSION_PROBE_CONTROL_ENV: &str = "CODDY_STUDIO_TEST_CURSOR_VERSION_PROBE_CONTROL";
 
 fn adjacent_file(name: &str) -> PathBuf {
     env::current_exe()

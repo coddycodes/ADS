@@ -19,8 +19,8 @@ import {
   ExecutionEnvironmentDescriptor,
   RemoteUpdateInstallError,
   RemoteUpdateSnapshot,
-} from "@bibcode/contracts";
-import { parsePairingCode } from "@bibcode/shared/pairingCode";
+} from "@coddy/contracts";
+import { parsePairingCode } from "@coddy/shared/pairingCode";
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import * as NodeNet from "node:net";
@@ -34,8 +34,8 @@ import {
   requestTestRpc,
 } from "./testSupport.ts";
 
-const serverUrl = process.env["BIBCODE_DOCKER_SERVER_URL"];
-const adminCredential = process.env["BIBCODE_DOCKER_ADMIN_CREDENTIAL"];
+const serverUrl = process.env["CODDY_STUDIO_DOCKER_SERVER_URL"];
+const adminCredential = process.env["CODDY_STUDIO_DOCKER_ADMIN_CREDENTIAL"];
 
 const decodeAccessToken = Schema.decodeUnknownSync(AuthAccessTokenResult);
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
@@ -162,7 +162,7 @@ async function createOffHostOffer(administrator: string, label: string) {
 }
 
 async function assertDescriptor(): Promise<void> {
-  const descriptor = decodeDescriptor(await fetchJson("/.well-known/bibcode/environment"));
+  const descriptor = decodeDescriptor(await fetchJson("/.well-known/coddy-studio/environment"));
   expect(descriptor.capabilities.remoteUpdateControl).toBe(true);
   expect(descriptor.remoteProtocolVersion).toBeGreaterThanOrEqual(1);
   expect(descriptor.remoteUpdateSupport).toEqual({

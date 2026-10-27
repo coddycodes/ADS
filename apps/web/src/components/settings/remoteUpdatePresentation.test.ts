@@ -1,8 +1,8 @@
-import type { RemoteUpdateActiveWork, RemoteUpdateSnapshot } from "@bibcode/contracts";
+import type { RemoteUpdateActiveWork, RemoteUpdateSnapshot } from "@coddy/contracts";
 import type {
   RemoteUpdateFailure,
   RemoteUpdateRunState,
-} from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+} from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -26,8 +26,8 @@ describe("manualUpdateSteps", () => {
       os: "linux",
       arch: "arm64",
     });
-    expect(linux).toContain("bibcode-server-vVERSION-linux-aarch64.tar.gz");
-    expect(linux).toContain("bibcode-server-SHA256SUMS");
+    expect(linux).toContain("coddy-studio-server-vVERSION-linux-aarch64.tar.gz");
+    expect(linux).toContain("coddy-studio-server-SHA256SUMS");
     expect(linux).toContain("sha256sum --check -");
     expect(
       manualUpdateSteps({ ...base, installKind: "archive", os: "darwin", arch: "x64" }),
@@ -38,7 +38,7 @@ describe("manualUpdateSteps", () => {
       os: "windows",
       arch: "x64",
     });
-    expect(windows).toContain("bibcode-server-vVERSION-windows-x86_64.zip");
+    expect(windows).toContain("coddy-studio-server-vVERSION-windows-x86_64.zip");
     expect(windows).toContain("Get-FileHash");
     expect(windows).not.toContain("grep");
   });
@@ -49,8 +49,8 @@ describe("manualUpdateSteps", () => {
       os: "linux",
       arch: "x64",
     });
-    expect(steps).toContain("sudo apt install ./bibcode-server_VERSION_amd64.deb");
-    expect(steps).toContain("sudo dnf install ./bibcode-server-VERSION-1.x86_64.rpm");
+    expect(steps).toContain("sudo apt install ./coddy-studio-server_VERSION_amd64.deb");
+    expect(steps).toContain("sudo dnf install ./coddy-studio-server-VERSION-1.x86_64.rpm");
     expect(steps).toContain("Currently running: v0.7.2");
   });
   it("instructs an SSH operator to verify this server and reconnect without stopping every recorded pid", () => {
@@ -61,7 +61,7 @@ describe("manualUpdateSteps", () => {
       arch: "x64",
       sshLaunched: true,
     });
-    expect(steps).toContain("~/.bibcode-ssh-launch/");
+    expect(steps).toContain("~/.coddy/studio/ssh-launch/");
     expect(steps).toContain("Reconnect");
     expect(steps).toContain("Verify");
     expect(steps).not.toContain("kill");
@@ -73,7 +73,7 @@ describe("manualUpdateSteps", () => {
       os: "unknown",
       arch: "other",
     });
-    expect(steps).toContain("bibcode serve");
+    expect(steps).toContain("coddy-studio serve");
     expect(steps).not.toContain("linux-");
   });
 });
@@ -107,7 +107,7 @@ describe("remoteUpdateConfirmation", () => {
     ).toEqual({
       title: "Update Ai-server to v0.6.4?",
       lines: [
-        "Updating Ai-server restarts BiBCode there.",
+        "Updating Ai-server restarts Coddy Studio there.",
         `2 running agents and 3 terminals will stop. ${KEPT}`,
       ],
       confirmLabel: "Update Ai-server",
@@ -123,7 +123,7 @@ describe("remoteUpdateConfirmation", () => {
     });
     expect(confirmation.title).toBe("Update Ai-server?");
     expect(confirmation.lines).toEqual([
-      "Updating Ai-server restarts BiBCode there.",
+      "Updating Ai-server restarts Coddy Studio there.",
       `Running agents and terminals on it will stop. ${KEPT}`,
     ]);
   });
@@ -166,7 +166,7 @@ describe("remoteUpdateConfirmation", () => {
     expect(
       remoteUpdateConfirmation({ ...base, targetVersion, appVersion, activeWork: null }).lines,
     ).toEqual([
-      "Updating Ai-server restarts BiBCode there.",
+      "Updating Ai-server restarts Coddy Studio there.",
       `Running agents and terminals on it will stop. ${KEPT}`,
       `v${targetVersion} is newer than this app (v${appVersion}). Update this app too.`,
     ]);
@@ -240,7 +240,7 @@ describe("remoteUpdateFailureMessage", () => {
     ],
     [
       { kind: "not-back" },
-      "Ai-server hasn't come back after the update. Check BiBCode on Ai-server; it may be on a different port.",
+      "Ai-server hasn't come back after the update. Check Coddy Studio on Ai-server; it may be on a different port.",
     ],
     [
       { kind: "wrong-version", runningVersion: "0.6.2", targetVersion: "0.6.4" },
@@ -252,11 +252,11 @@ describe("remoteUpdateFailureMessage", () => {
     ],
     [
       { kind: "install-timeout", targetVersion: "0.6.4" },
-      "Ai-server is taking longer than 2 minutes to install v0.6.4. Check BiBCode on Ai-server.",
+      "Ai-server is taking longer than 2 minutes to install v0.6.4. Check Coddy Studio on Ai-server.",
     ],
     [
       { kind: "install-timeout", targetVersion: null },
-      "Ai-server is taking longer than 2 minutes to install the update. Check BiBCode on Ai-server.",
+      "Ai-server is taking longer than 2 minutes to install the update. Check Coddy Studio on Ai-server.",
     ],
     [
       { kind: "blocked", message: "Pair this server again" },

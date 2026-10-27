@@ -1,5 +1,5 @@
-import { computeCompatVerdict, type CompatVerdict } from "@bibcode/client-runtime/connection";
-import type { ServerConfig } from "@bibcode/contracts";
+import { computeCompatVerdict, type CompatVerdict } from "@coddy/client-runtime/connection";
+import type { ServerConfig } from "@coddy/contracts";
 
 /**
  * Compatibility verdict for an environment. `null` means the environment has

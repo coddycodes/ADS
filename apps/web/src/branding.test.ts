@@ -31,7 +31,7 @@ describe("branding", () => {
 
     const branding = await import("./branding");
 
-    expect(branding.APP_BASE_NAME).toBe("BiBCode");
+    expect(branding.APP_BASE_NAME).toBe("Coddy Studio");
   });
 
   it("uses injected desktop branding when available", async () => {
@@ -40,9 +40,9 @@ describe("branding", () => {
       value: {
         desktopBridge: {
           getAppBranding: () => ({
-            baseName: "BiBCode",
+            baseName: "Coddy Studio",
             stageLabel: "Nightly",
-            displayName: "BiBCode (Nightly)",
+            displayName: "Coddy Studio (Nightly)",
           }),
         },
       },
@@ -50,9 +50,9 @@ describe("branding", () => {
 
     const branding = await import("./branding");
 
-    expect(branding.APP_BASE_NAME).toBe("BiBCode");
+    expect(branding.APP_BASE_NAME).toBe("Coddy Studio");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("BiBCode (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Coddy Studio (Nightly)");
   });
 
   it("normalizes hosted app channel metadata", async () => {
@@ -63,7 +63,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("BiBCode (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Coddy Studio (Nightly)");
   });
 
   it("labels the latest hosted app channel", async () => {
@@ -87,13 +87,13 @@ describe("branding", () => {
 
 describe("branding logic", () => {
   it("omits the channel suffix for stable releases", () => {
-    expect(formatAppDisplayName({ baseName: "BiBCode", stageLabel: "Latest" })).toBe("BiBCode");
+    expect(formatAppDisplayName({ baseName: "Coddy Studio", stageLabel: "Latest" })).toBe("Coddy Studio");
   });
 
   it("keeps the channel suffix for non-stable releases", () => {
-    expect(formatAppDisplayName({ baseName: "BiBCode", stageLabel: "Dev" })).toBe("BiBCode (Dev)");
-    expect(formatAppDisplayName({ baseName: "BiBCode", stageLabel: "Nightly" })).toBe(
-      "BiBCode (Nightly)",
+    expect(formatAppDisplayName({ baseName: "Coddy Studio", stageLabel: "Dev" })).toBe("Coddy Studio (Dev)");
+    expect(formatAppDisplayName({ baseName: "Coddy Studio", stageLabel: "Nightly" })).toBe(
+      "Coddy Studio (Nightly)",
     );
   });
 
@@ -109,33 +109,33 @@ describe("branding logic", () => {
   it("updates the display name for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
-        baseName: "BiBCode",
-        fallbackDisplayName: "BiBCode",
+        baseName: "Coddy Studio",
+        fallbackDisplayName: "Coddy Studio",
         fallbackStageLabel: "Latest",
         primaryServerVersion: "0.0.28-nightly.20260616.12",
       }),
-    ).toBe("BiBCode (Nightly)");
+    ).toBe("Coddy Studio (Nightly)");
   });
 
   it("keeps the fallback display name for stable primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
-        baseName: "BiBCode",
-        fallbackDisplayName: "BiBCode",
+        baseName: "Coddy Studio",
+        fallbackDisplayName: "Coddy Studio",
         fallbackStageLabel: "Latest",
         primaryServerVersion: "0.0.27",
       }),
-    ).toBe("BiBCode");
+    ).toBe("Coddy Studio");
   });
 
   it("keeps the fallback display name for malformed nightly primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
-        baseName: "BiBCode",
-        fallbackDisplayName: "BiBCode",
+        baseName: "Coddy Studio",
+        fallbackDisplayName: "Coddy Studio",
         fallbackStageLabel: "Latest",
         primaryServerVersion: "0.0.28-nightly.20260616",
       }),
-    ).toBe("BiBCode");
+    ).toBe("Coddy Studio");
   });
 });

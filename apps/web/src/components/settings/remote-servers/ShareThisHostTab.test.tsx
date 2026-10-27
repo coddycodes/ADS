@@ -3,7 +3,7 @@ import type {
   AdvertisedEndpoint,
   DesktopServerExposureMode,
   DesktopServerExposureState,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { createRoot, type Root } from "react-dom/client";
 import { Window } from "happy-dom";
 import * as DateTime from "effect/DateTime";
@@ -411,7 +411,7 @@ describe("ShareThisHostTab", () => {
         status: "available",
         isDefault: false,
         description:
-          "Public address. Select explicitly only after reviewing exposure. BiBCode does not manage this platform's firewall.",
+          "Public address. Select explicitly only after reviewing exposure. Coddy Studio does not manage this platform's firewall.",
       },
     ];
     installBridge();
@@ -477,10 +477,10 @@ describe("ShareThisHostTab", () => {
     await click("Generate pairing offer");
     expect(order).toEqual(["widen", "mint"]);
     expect(apply).toHaveBeenCalledWith("network-accessible");
-    expect(container.textContent).toContain("bibcode://pair?code=c0de");
+    expect(container.textContent).toContain("coddy-studio://pair?code=c0de");
     expect(container.textContent).toContain("for networks you trust");
     expect(
-      container.querySelector('svg[aria-label="Pairing code — scan with a BiBCode client"]'),
+      container.querySelector('svg[aria-label="Pairing code — scan with a Coddy Studio client"]'),
     ).not.toBeNull();
   });
 
@@ -684,7 +684,7 @@ describe("ShareThisHostTab", () => {
 
   it("keeps browser exposure read-only while server-side minting remains available", async () => {
     await renderTab();
-    expect(container.textContent).toContain("restart `bibcode serve` with `--host`");
+    expect(container.textContent).toContain("restart `coddy-studio serve` with `--host`");
     await click("Generate pairing offer");
     expect(h.createOffer).toHaveBeenCalledOnce();
   });

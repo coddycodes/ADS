@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::diagnostics::{
+use coddy_studio_server::diagnostics::{
     AttributedProcess, AttributedProcessSnapshot, AttributionConfidence, AttributionKind,
     AttributionScope, DiagnosticsMonitor, ProcessAttributionTotals, ProcessIdentity, ProcessRow,
     ResourceSampler, SamplingError, UiCoverage, UiCoverageStatus,
@@ -63,7 +63,7 @@ struct IdleDesktop {
 const PROCESSES: [(u32, &str); 5] = [
     (
         100,
-        "/Applications/BiBCode.app/Contents/MacOS/bibcode-desktop",
+        "/Applications/Coddy Studio.app/Contents/MacOS/coddy-studio-desktop",
     ),
     (
         101,
@@ -121,9 +121,9 @@ impl ResourceSampler for IdleDesktop {
                     AttributionKind::Ui
                 },
                 label: if *pid == 100 {
-                    "BiBCode server".to_owned()
+                    "Coddy Studio server".to_owned()
                 } else {
-                    "BiBCode UI".to_owned()
+                    "Coddy Studio UI".to_owned()
                 },
                 confidence: AttributionConfidence::Exact,
                 cpu_percent: 0.1,

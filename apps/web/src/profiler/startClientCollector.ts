@@ -1,6 +1,6 @@
-import type { EnvironmentPresentation } from "@bibcode/client-runtime/connection";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
-import { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentPresentation } from "@coddy/client-runtime/connection";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
+import { EnvironmentId } from "@coddy/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 
 import { environmentPresentations } from "../state/presentation";

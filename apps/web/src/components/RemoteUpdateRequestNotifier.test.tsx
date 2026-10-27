@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { DesktopUpdateState } from "@bibcode/contracts";
+import type { DesktopUpdateState } from "@coddy/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -44,7 +44,7 @@ afterEach(async () => {
 describe("remote update request notice", () => {
   it("names metadata without fabricating a missing address or version", () => {
     expect(remoteUpdateRequestToast({ label: "Tablet", detail: null }, null).description).toBe(
-      "Tablet is installing an update. BiBCode restarts when it's done.",
+      "Tablet is installing an update. Coddy Studio restarts when it's done.",
     );
     expect(
       remoteUpdateRequestToast({ label: "Desktop", detail: "MacIntel" }, "0.7.3").description,

@@ -9,12 +9,12 @@ Each saved server's row in that list shows its connection state. While a server
 sends its settings slowly, the row reads "Receiving settings from <name> over a
 slow connection…" until it connects.
 
-Remote access connects a browser or another desktop app to the BiBCode server
+Remote access connects a browser or another desktop app to the Coddy Studio server
 running on a different machine. That server owns projects, files, Git state,
 terminals, provider CLIs, credentials, and agent sessions.
 
 Use a trusted private network such as a LAN or tailnet. Do not expose a plain
-BiBCode HTTP endpoint directly to the public internet.
+Coddy Studio HTTP endpoint directly to the public internet.
 
 ## Name a saved server
 
@@ -22,8 +22,8 @@ In **Settings → Remote Servers → Connect to a host → Add Server**, enter a
 **Server alias (optional)** along with the pairing code. This name appears in
 the saved-server list and environment rail on this device and persists across
 restarts. Leave it blank to use the name supplied by the server. A headless
-web-mode `bibcode serve` supplies its hostname (for example `ai-server`), or
-"Local" if the machine has no usable hostname. `bibcode start`, bare `bibcode`,
+web-mode `coddy-studio serve` supplies its hostname (for example `ai-server`), or
+"Local" if the machine has no usable hostname. `coddy-studio start`, bare `coddy-studio`,
 and desktop-owned servers keep "Local". An alias does not rename the server for
 other clients.
 
@@ -71,15 +71,15 @@ When the desktop app can read `tailscale status --json`, it can add the machine'
 Tailnet IPv4 addresses and MagicDNS name to the endpoint list.
 
 An HTTPS MagicDNS endpoint is shown as available only after its well-known
-BiBCode endpoint responds successfully. Configure Tailscale Serve separately to
-proxy the chosen HTTPS address to the local BiBCode backend, then let the desktop
-app rescan it. The native `bibcode` CLI does not currently provide Tailscale
+Coddy Studio endpoint responds successfully. Configure Tailscale Serve separately to
+proxy the chosen HTTPS address to the local Coddy Studio backend, then let the desktop
+app rescan it. The native `coddy-studio` CLI does not currently provide Tailscale
 Serve setup flags.
 
 ### Reverse proxies
 
-Run the reverse proxy on the same machine as the BiBCode server and have it send
-the browser's host in `X-Forwarded-Host`. BiBCode trusts `X-Forwarded-Host` and
+Run the reverse proxy on the same machine as the Coddy Studio server and have it send
+the browser's host in `X-Forwarded-Host`. Coddy Studio trusts `X-Forwarded-Host` and
 `X-Forwarded-Proto` only from a proxy on the same machine. For nginx:
 
 ```nginx
@@ -112,7 +112,7 @@ your choice.
 
 The card and row show download progress, backup, restart, and version checking.
 Closing Settings keeps the update running. On failure, **Retry** asks again;
-Settings also offers **Dismiss**. If the host has not come back, inspect BiBCode
+Settings also offers **Dismiss**. If the host has not come back, inspect Coddy Studio
 there and re-pair if its port changed. A restart on the old version is reported
 explicitly. The host displays who requested the update; **Manage devices** opens
 its sharing controls.
@@ -125,11 +125,11 @@ client. It preserves your unsent text until you choose Reload.
 
 ## Headless server
 
-`bibcode start` and `bibcode serve` run the same native server. `start` opens the
+`coddy-studio start` and `coddy-studio serve` run the same native server. `start` opens the
 startup URL in a browser by default; `serve` does not. Only headless web-mode
 `serve` names itself after the machine's hostname, falling back to "Local" if
 no usable hostname is reported. `start` (including `start --no-browser`), bare
-`bibcode`, and the desktop app's own backend keep the name "Local".
+`coddy-studio`, and the desktop app's own backend keep the name "Local".
 
 Download the signed-release checksum set and the native archive or Linux package for
 your host by following [Standalone server installation](./server-installation.md).
@@ -139,9 +139,9 @@ automatically.
 For example, bind to a trusted Tailnet address and serve built web assets:
 
 ```bash
-bibcode serve \
+coddy-studio serve \
   --host "$(tailscale ip -4)" \
-  --static-dir /path/to/BibCode/apps/web/dist
+  --static-dir /path/to/CoddyStudio/apps/web/dist
 ```
 
 The server prints one JSON object to stdout. In authenticated web mode it has
@@ -153,25 +153,25 @@ this shape:
   "httpBaseUrl": "http://100.64.0.10:3773",
   "token": "one-time-pairing-credential",
   "pairingUrl": "http://100.64.0.10:3773/pair#token=one-time-pairing-credential",
-  "pairingCode": "bibcode://pair?code=…"
+  "pairingCode": "coddy-studio://pair?code=…"
 }
 ```
 
 `pairingCode` is a five-minute encrypted offer for the desktop app's
 **Add Server** dialog; it is present only when the bound address is routable
 (not loopback, not `0.0.0.0`). Pass `--no-startup-pairing-offer` (or set
-`BIBCODE_NO_STARTUP_PAIRING_OFFER=1`) when stdout goes to a log, and mint
-offers on demand with `bibcode pairing offer` instead. `pairingUrl` remains the
+`CODDY_STUDIO_NO_STARTUP_PAIRING_OFFER=1`) when stdout goes to a log, and mint
+offers on demand with `coddy-studio pairing offer` instead. `pairingUrl` remains the
 one-time owner bootstrap for a browser.
 
 To keep the server running across reboots, install it as a per-user service
-with `bibcode service install --host <address>`; see
+with `coddy-studio service install --host <address>`; see
 [Standalone server installation](./server-installation.md#run-as-a-per-user-service).
 
 The CLI does not print a QR code and has no `project` subcommand. Pairing
-credentials come from `bibcode pairing offer` (encrypted offers for the desktop
-app) and `bibcode pairing issue` (the desktop SSH bootstrap). Use
-`bibcode serve --help` for the implemented options.
+credentials come from `coddy-studio pairing offer` (encrypted offers for the desktop
+app) and `coddy-studio pairing issue` (the desktop SSH bootstrap). Use
+`coddy-studio serve --help` for the implemented options.
 
 `--static-dir` explicitly overrides packaged web discovery and must contain
 `index.html`. A source-built or intentionally API-only server can omit static assets. A
@@ -205,35 +205,35 @@ Create and revoke additional access from **Settings → Remote Servers**. On a
 headless server, mint an encrypted offer for the desktop app from the CLI:
 
 ```sh
-bibcode pairing offer --endpoint http://100.64.0.10:3773
+coddy-studio pairing offer --endpoint http://100.64.0.10:3773
 ```
 
-It prints a `bibcode://pair?code=…` link that expires after five minutes. Paste
+It prints a `coddy-studio://pair?code=…` link that expires after five minutes. Paste
 it into **Settings → Remote Servers → Connect → Add Server** on the other
 device. `--reach this-computer` requires a loopback endpoint and is for tunnels;
 `--name` sets the display name (default: this machine's hostname); `--json`
 prints one JSON line. The command works while the server is running on the same
 data root and refuses to run before the server has ever started there. Revoke
 the resulting device from the Share tab like any other client. The focused
-`bibcode pairing issue` command remains for desktop-managed SSH bootstrap.
+`coddy-studio pairing issue` command remains for desktop-managed SSH bootstrap.
 
 A server started with `--dev-url` keeps its data in `<base>/dev`; without it,
 the server uses `<base>/userdata`. Pass the same `--dev-url`, or set
-`VITE_DEV_SERVER_URL`, for `bibcode pairing offer` and `bibcode pairing issue`
+`VITE_DEV_SERVER_URL`, for `coddy-studio pairing offer` and `coddy-studio pairing issue`
 to select that server's state, including when both stores exist.
 
 ## Desktop-managed SSH
 
 The desktop contains an SSH launcher that can install a small runner under
-`~/.bibcode-ssh-launch/<state-key>`, start or reuse `bibcode serve` on remote
+`~/.coddy/studio/ssh-launch/<state-key>`, start or reuse `coddy-studio serve` on remote
 loopback, and create a local port forward. The remote host must provide:
 
-- a compatible native `bibcode` executable on non-interactive `sh`'s `PATH`;
+- a compatible native `coddy-studio` executable on non-interactive `sh`'s `PATH`;
 - `curl` or `wget` for the readiness probe; and
 - each provider CLI and its credentials.
 
 The launcher does not install Node.js, npm, npx, package-manager shims, or a
-BiBCode binary on the remote host. Install a matching standalone server release first.
+Coddy Studio binary on the remote host. Install a matching standalone server release first.
 
 Adding the environment pairs this desktop with the remote server over SSH. The
 desktop then appears as a device with standard access on the host's **Share**
@@ -251,8 +251,8 @@ failing, remove the environment and add it again.
 Each remote step has a time limit: issuing the pairing credential 30 seconds,
 starting the server 60 seconds, stopping it 30 seconds. A step that runs out
 reports the limit (for example "The remote host did not issue a pairing
-credential within 30 seconds. Check the connection; BiBCode keeps trying.").
-BiBCode keeps retrying on its own; the environment shows **Connecting…** until a
+credential within 30 seconds. Check the connection; Coddy Studio keeps trying.").
+Coddy Studio keeps retrying on its own; the environment shows **Connecting…** until a
 step succeeds.
 
 While a remote environment is not connected, its chats show the reason once in
@@ -262,7 +262,7 @@ sidebar notice names the environment and offers the same action; hover or
 focus it for the reason.
 
 If a network fetch fails before receiving a server response, its connection
-notice asks you to check that the server is running and reachable. BiBCode keeps
+notice asks you to check that the server is running and reachable. Coddy Studio keeps
 reconnecting automatically. Framework transport diagnostics and request URLs
 stay out of this fetch-failure notice; the original transport cause remains
 available to diagnostic handling. Timeout and other failure notices keep their
@@ -270,27 +270,27 @@ own guidance.
 
 ## Windows Subsystem for Linux
 
-The optional WSL backend runs a native Linux `bibcode` binary. It does not invoke
+The optional WSL backend runs a native Linux `coddy-studio` binary. It does not invoke
 WSL Node.js, npm, npx, or a JavaScript server package.
 
 Prerequisites:
 
 - Windows Subsystem for Linux and an installed distribution;
 - `wsl.exe` available to the desktop process;
-- a `bibcode` Linux binary matching the distribution architecture; and
+- a `coddy-studio` Linux binary matching the distribution architecture; and
 - provider CLIs and credentials installed inside the distribution.
 
 For source development, the desktop searches
-`target/x86_64-unknown-linux-gnu/(debug|release)/bibcode` and
-`target/aarch64-unknown-linux-gnu/(debug|release)/bibcode`. Set
-`BIBCODE_WSL_SERVER_BINARY` to a different Windows-side binary path when needed;
+`target/x86_64-unknown-linux-gnu/(debug|release)/coddy-studio` and
+`target/aarch64-unknown-linux-gnu/(debug|release)/coddy-studio`. Set
+`CODDY_STUDIO_WSL_SERVER_BINARY` to a different Windows-side binary path when needed;
 the desktop translates it with `wslpath` for the selected distribution.
 
-The WSL launcher uses a fixed system `PATH` and starts `bibcode serve` directly.
+The WSL launcher uses a fixed system `PATH` and starts `coddy-studio serve` directly.
 Verify a custom binary from Windows with:
 
 ```powershell
-wsl.exe -d <distribution> -- /path/to/bibcode --version
+wsl.exe -d <distribution> -- /path/to/coddy-studio --version
 ```
 
 When **WSL only** is enabled, a missing distribution, binary, or failed WSL

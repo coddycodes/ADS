@@ -1338,7 +1338,7 @@ pub fn initialize(log_path: &Path) -> Result<Init, LoggingError> {
 
 #[cfg(not(test))]
 fn log_filter() -> EnvFilter {
-    crate::environment_identity::bibcode_env_string("BIBCODE_LOG")
+    crate::environment_identity::coddy_studio_env_string("CODDY_STUDIO_LOG")
         .and_then(|value| EnvFilter::try_new(value).ok())
         .or_else(|| EnvFilter::try_from_default_env().ok())
         .unwrap_or_else(|| EnvFilter::new("info"))
@@ -2633,10 +2633,10 @@ mod tests {
             .finish();
 
         tracing::subscriber::with_default(left_subscriber, || {
-            tracing::info!(target: "bibcode_server_logging_test", "left sandbox event");
+            tracing::info!(target: "coddy_studio_server_logging_test", "left sandbox event");
         });
         tracing::subscriber::with_default(right_subscriber, || {
-            tracing::info!(target: "bibcode_server_logging_test", "right sandbox event");
+            tracing::info!(target: "coddy_studio_server_logging_test", "right sandbox event");
         });
 
         let left = std::fs::read_to_string(left_path).expect("left log is readable");

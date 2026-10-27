@@ -1,4 +1,4 @@
-import type { PreviewAnnotationPayload } from "@bibcode/contracts";
+import type { PreviewAnnotationPayload } from "@coddy/contracts";
 import { Frame, MousePointerClick, Paintbrush, PenLine, X } from "lucide-react";
 import type { ReactNode } from "react";
 

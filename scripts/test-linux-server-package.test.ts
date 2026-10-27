@@ -20,7 +20,7 @@ describe("Linux server package smoke", () => {
   });
 
   it("builds a native ARM64 install, startup, removal, and data-preservation plan", () => {
-    const packagePath = NodePath.resolve("/tmp/bibcode-server_0.4.3_arm64.deb");
+    const packagePath = NodePath.resolve("/tmp/coddy-studio-server_0.4.3_arm64.deb");
     const plan = buildLinuxPackageSmokePlan(
       { format: "deb", image: "debian:12" },
       {
@@ -32,7 +32,7 @@ describe("Linux server package smoke", () => {
     );
 
     expect(plan.command).toBe("docker");
-    expect(plan.containerName).toBe("bibcode-server-package-run-17-debian-12-arm64");
+    expect(plan.containerName).toBe("coddy-studio-server-package-run-17-debian-12-arm64");
     expect(plan.args).toEqual(
       expect.arrayContaining([
         "--rm",
@@ -46,7 +46,7 @@ describe("Linux server package smoke", () => {
     expect(plan.script).toContain('test "$(uname -m)" = "aarch64"');
     expect(plan.script).toContain("apt-get install -y /artifacts/package.deb");
     expect(plan.script).toContain("curl -fsS http://127.0.0.1:3773/");
-    expect(plan.script).toContain("apt-get remove -y bibcode-server");
+    expect(plan.script).toContain("apt-get remove -y coddy-studio-server");
     expect(plan.script).toContain('test -f "$state_root/preserved-sentinel"');
   });
 
@@ -56,7 +56,7 @@ describe("Linux server package smoke", () => {
       {
         arch: "x64",
         expectedVersion: "0.4.3",
-        packagePath: NodePath.resolve("/tmp/bibcode-server-0.4.3-1.x86_64.rpm"),
+        packagePath: NodePath.resolve("/tmp/coddy-studio-server-0.4.3-1.x86_64.rpm"),
         runId: "run-18",
       },
     );

@@ -1,5 +1,5 @@
-import type { EnvironmentSupervisor as SupervisorService } from "@bibcode/client-runtime/connection";
-import { EnvironmentId, type ProjectReadFileResult } from "@bibcode/contracts";
+import type { EnvironmentSupervisor as SupervisorService } from "@coddy/client-runtime/connection";
+import { EnvironmentId, type ProjectReadFileResult } from "@coddy/contracts";
 import type { Effect as EffectOf } from "effect/Effect";
 import * as Option from "effect/Option";
 import type { Stream as StreamOf } from "effect/Stream";
@@ -25,9 +25,9 @@ vi.mock("~/state/projects", async () => {
   const SubscriptionRef = await import("effect/SubscriptionRef");
   const { Atom } = await import("effect/reactivity");
   const { EnvironmentRegistry, EnvironmentSupervisor } =
-    await import("@bibcode/client-runtime/connection");
+    await import("@coddy/client-runtime/connection");
   const { createEnvironmentQueryAtomFamily } =
-    await import("@bibcode/client-runtime/state/runtime");
+    await import("@coddy/client-runtime/state/runtime");
 
   const supervisor = EnvironmentSupervisor.of({
     target: { environmentId: "files-confirm", label: "Files confirm test" },

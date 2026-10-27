@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { type ChatAttachmentId } from "@bibcode/contracts";
+import { type ChatAttachmentId } from "@coddy/contracts";
 import type { ComposerAttachment } from "../../composerDraftStore";
 import { mergeQueuedMessageIntoDraft } from "./restoreQueuedMessage";
 

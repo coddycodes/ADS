@@ -7,7 +7,7 @@ use std::{
 };
 
 const PARENT_FIXTURE: &str = "watchdog_tests::child_watchdog_parent_fixture";
-const READY_PATH: &str = "BIBCODE_WATCHDOG_PARENT_READY";
+const READY_PATH: &str = "CODDY_STUDIO_WATCHDOG_PARENT_READY";
 
 pub(super) struct OwnedPeer(std::process::Child);
 
@@ -330,8 +330,8 @@ fn child_watchdog_normal_exit_cleans_a_descendant_holding_output() {
 
 const CONFIG_TEST: &str = "watchdog_tests::child_watchdog_preserves_lossless_command_configuration";
 const CONFIG_FIXTURE: &str = "watchdog_tests::child_watchdog_configuration_fixture";
-const CONFIG_PARENT: &str = "BIBCODE_WATCHDOG_CONFIG_PARENT";
-const CONFIG_MODE: &str = "BIBCODE_WATCHDOG_CONFIG_MODE";
+const CONFIG_PARENT: &str = "CODDY_STUDIO_WATCHDOG_CONFIG_PARENT";
+const CONFIG_MODE: &str = "CODDY_STUDIO_WATCHDOG_CONFIG_MODE";
 
 #[test]
 #[ignore = "private lossless command fixture"]
@@ -352,23 +352,23 @@ fn child_watchdog_configuration_fixture() {
         cwd_name
     );
     assert_eq!(
-        std::env::var_os("BIBCODE_WATCHDOG_OVERRIDE")
+        std::env::var_os("CODDY_STUDIO_WATCHDOG_OVERRIDE")
             .expect("override")
             .as_bytes(),
         b"override\xfd"
     );
     assert_eq!(
-        std::env::var_os(OsString::from_vec(b"BIBCODE_KEY\xff".to_vec()))
+        std::env::var_os(OsString::from_vec(b"CODDY_STUDIO_KEY\xff".to_vec()))
             .expect("binary key")
             .as_bytes(),
         b"value\xfe"
     );
-    assert!(std::env::var_os("BIBCODE_WATCHDOG_REMOVE").is_none());
-    assert!(std::env::var_os("BIBCODE_WATCHDOG_DISCARDED").is_none());
+    assert!(std::env::var_os("CODDY_STUDIO_WATCHDOG_REMOVE").is_none());
+    assert!(std::env::var_os("CODDY_STUDIO_WATCHDOG_DISCARDED").is_none());
     match mode.to_str().expect("mode") {
         "inherit" => {
             assert_eq!(
-                std::env::var("BIBCODE_WATCHDOG_INHERITED").as_deref(),
+                std::env::var("CODDY_STUDIO_WATCHDOG_INHERITED").as_deref(),
                 Ok("inherited")
             );
             assert_eq!(
@@ -389,7 +389,7 @@ fn child_watchdog_configuration_fixture() {
         "remove" | "clear" => {
             assert!(std::env::var_os(child_watchdog::SELECTOR).is_none());
             if mode == "clear" {
-                assert!(std::env::var_os("BIBCODE_WATCHDOG_INHERITED").is_none());
+                assert!(std::env::var_os("CODDY_STUDIO_WATCHDOG_INHERITED").is_none());
             }
         }
         _ => panic!("unknown fixture mode"),
@@ -407,8 +407,8 @@ fn child_watchdog_preserves_lossless_command_configuration() {
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", CONFIG_TEST, "--nocapture", "--test-threads=1"])
             .env(CONFIG_PARENT, "selected")
-            .env("BIBCODE_WATCHDOG_INHERITED", "inherited")
-            .env("BIBCODE_WATCHDOG_REMOVE", "removed")
+            .env("CODDY_STUDIO_WATCHDOG_INHERITED", "inherited")
+            .env("CODDY_STUDIO_WATCHDOG_REMOVE", "removed")
             .env(
                 child_watchdog::SELECTOR,
                 OsString::from_vec(b"original\xff".to_vec()),
@@ -443,24 +443,24 @@ fn child_watchdog_preserves_lossless_command_configuration() {
             "--nocapture",
             "--test-threads=1",
         ]);
-        spec.env("BIBCODE_WATCHDOG_DISCARDED", "discarded");
+        spec.env("CODDY_STUDIO_WATCHDOG_DISCARDED", "discarded");
         if mode == "clear" {
             spec.env_clear();
         } else {
-            spec.env_remove("BIBCODE_WATCHDOG_DISCARDED");
+            spec.env_remove("CODDY_STUDIO_WATCHDOG_DISCARDED");
         }
         spec.current_dir(&cwd)
             .env(CONFIG_MODE, mode)
-            .env("BIBCODE_WATCHDOG_OVERRIDE", "earlier")
+            .env("CODDY_STUDIO_WATCHDOG_OVERRIDE", "earlier")
             .env(
-                "BIBCODE_WATCHDOG_OVERRIDE",
+                "CODDY_STUDIO_WATCHDOG_OVERRIDE",
                 OsString::from_vec(b"override\xfd".to_vec()),
             )
             .env(
-                OsString::from_vec(b"BIBCODE_KEY\xff".to_vec()),
+                OsString::from_vec(b"CODDY_STUDIO_KEY\xff".to_vec()),
                 OsString::from_vec(b"value\xfe".to_vec()),
             )
-            .env_remove("BIBCODE_WATCHDOG_REMOVE");
+            .env_remove("CODDY_STUDIO_WATCHDOG_REMOVE");
         if mode == "override" {
             spec.env(
                 child_watchdog::SELECTOR,
@@ -529,7 +529,7 @@ fn child_watchdog_preserves_binary_output_and_real_signal_status() {
 }
 
 const CONTINUOUS_WRITER_TEST: &str = "watchdog_tests::child_watchdog_continuous_writer_fixture";
-const CONTINUOUS_WRITER_READY: &str = "BIBCODE_WATCHDOG_CONTINUOUS_WRITER_READY";
+const CONTINUOUS_WRITER_READY: &str = "CODDY_STUDIO_WATCHDOG_CONTINUOUS_WRITER_READY";
 
 #[test]
 #[ignore = "private captured-pipe backpressure fixture"]

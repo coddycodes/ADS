@@ -2,13 +2,13 @@ import {
   RelayEnvironmentLinkProofPayload,
   RelayEnvironmentLinkProofInvalidReason,
   type RelayEnvironmentLinkRequest,
-} from "@bibcode/contracts/relay";
+} from "@coddy/contracts/relay";
 import {
   decodeRelayJwt,
   normalizeRelayIssuer,
   RELAY_LINK_PROOF_TYP,
   verifyRelayJwt,
-} from "@bibcode/shared/relayJwt";
+} from "@coddy/shared/relayJwt";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -92,7 +92,7 @@ export class EnvironmentLinker extends Context.Service<
       EnvironmentLinkError
     >;
   }
->()("bibcode-relay/environments/EnvironmentLinker") {}
+>()("coddy-studio-relay/environments/EnvironmentLinker") {}
 
 const decodeProof = Schema.decodeUnknownEffect(RelayEnvironmentLinkProofPayload);
 
@@ -183,7 +183,7 @@ const make = Effect.gen(function* () {
           expiresAt: DateTime.formatIso(DateTime.makeUnsafe(candidate.exp * 1_000)),
         });
       }
-      const issuer = `bibcode-env:${candidate.environmentId}`;
+      const issuer = `coddy-studio-env:${candidate.environmentId}`;
       const relayIssuer = normalizeRelayIssuer(config.relayIssuer);
       const verified = yield* verifyRelayJwt({
         publicKey: candidate.environmentPublicKey,

@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { shouldShowOpenInPicker } from "./ChatHeaderActions";

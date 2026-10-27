@@ -1,6 +1,6 @@
 # Workspace UI
 
-BiBCode is split into left, center, and right work areas. The left panel
+Coddy Studio is split into left, center, and right work areas. The left panel
 navigates agents and project/worktree threads, the center panel runs chats and
 terminals, and the right panel hosts project tools.
 
@@ -232,12 +232,12 @@ Menus separate their groups:
   "Stop the running session before deleting this worktree." (the card hides
   **Archive** while its session runs, too). The removal dialog follows the same
   rule however it opens (this menu, a missing worktree's **Remove from
-  BiBCode**, or **Delete** on an archived worktree in **Settings → Archive**):
+  Coddy Studio**, or **Delete** on an archived worktree in **Settings → Archive**):
   its delete buttons stay disabled, with that sentence shown, until the session
   stops. The server also refuses deletion while a session is running or
   starting, so a turn started by another client is protected even before this
   window updates. A server refusal shows the same sentence and keeps the
-  worktree. **Remove from BiBCode** remains available without deleting the
+  worktree. **Remove from Coddy Studio** remains available without deleting the
   checkout.
 - **Primary card (the main checkout):** **Open in ›**, **Pull** · **Copy Path**,
   **Copy Branch Name** · **Pin** or **Unpin**, **Mark as Unread** or **Mark as
@@ -274,7 +274,7 @@ host.
 
 ### Discovering existing worktrees
 
-When a connected server advertises worktree-catalog support, BiBCode can show
+When a connected server advertises worktree-catalog support, Coddy Studio can show
 Git worktrees that already belong to a project repository but have no workspace
 row. New projects start with discovery hidden. The first authoritative result
 offers **Add**, **Add all**, or **Keep hidden**; the project menu can later
@@ -308,13 +308,13 @@ claim that the directory is missing.
 
 Removal always begins by loading a fresh server plan. For a present worktree the
 dialog offers exactly these outcomes: cancel, remove the workspace from
-BiBCode, or delete the Git worktree and remove it from BiBCode. Dirty changes
+Coddy Studio, or delete the Git worktree and remove it from Coddy Studio. Dirty changes
 and stale-registration prune impact require separate confirmations. If the plan
 changes before execution, the dialog requires review again.
 
-For an already missing worktree, BiBCode may offer verified cleanup of its stale
+For an already missing worktree, Coddy Studio may offer verified cleanup of its stale
 Git registration before detaching. Cleanup failure is reported as a partial
-outcome while the workspace can still be removed from BiBCode. A failed
+outcome while the workspace can still be removed from Coddy Studio. A failed
 deletion of a present worktree leaves the workspace attached. Removal requests
 contain IDs, the plan token and generation, the selected mode, and confirmation
 flags—not a filesystem path.
@@ -329,17 +329,17 @@ safe even when a new worktree has since reused the old folder.
 ### Importing CLI sessions
 
 To continue a conversation you started in Claude Code or Codex outside
-BiBCode, open the project menu and choose **Import CLI sessions…**. The dialog
+Coddy Studio, open the project menu and choose **Import CLI sessions…**. The dialog
 lists the sessions run in the project's folder on the server in the last 30
 days, newest first, with the provider, last activity and message count. Select
 sessions (or **Select all**) and choose **Import**. Each becomes a thread with
 the session's recent messages (up to 200, always including the first prompt); your
-next message in it continues the same CLI conversation. BiBCode opens the most
+next message in it continues the same CLI conversation. Coddy Studio opens the most
 recently active imported thread and reports how many sessions were imported or
 skipped and why.
 
 A session imported earlier shows **Already imported** with **Open**; importing
-it again does nothing. Conversations started in BiBCode, sessions run in a
+it again does nothing. Conversations started in Coddy Studio, sessions run in a
 subfolder, and sessions run in another worktree are not listed. Only the
 default Claude Code and Codex providers are scanned, and a provider turned off
 in settings is skipped.
@@ -447,7 +447,7 @@ message. If the original was not accepted and its upload expired, the error
 asks you to send again; that explicit send uploads a fresh copy.
 
 If the environment changes host or data store while a send is unresolved,
-BiBCode keeps the draft and original intent and asks you to reconnect to the
+Coddy Studio keeps the draft and original intent and asks you to reconnect to the
 original environment before sending another copy. A reconnect or credential
 renewal on the same store checks the original send under your current permissions.
 
@@ -506,7 +506,7 @@ remains in the timeline with its copy button so you can prepare the corrected
 message. Other failed deliveries still offer Retry and Dismiss; uncertain
 deliveries still warn that Retry could send a duplicate.
 
-When BiBCode cannot resume a thread's provider conversation (the provider no
+When Coddy Studio cannot resume a thread's provider conversation (the provider no
 longer has it, for example after its history was cleared), it starts a new one
 and the thread shows **Couldn't resume the previous <provider> conversation.
 Started a new one with a summary of this thread.** Your next message reaches the
@@ -731,7 +731,7 @@ Against servers that support it, the form also offers **Mark as draft**,
 for GitHub and GitLab, and GitLab's **Delete source branch** and **Squash
 commits**, which start from the project's settings.
 On GitLab it says **Create merge request** and uses `!N`. A self-hosted host
-that BiBCode has not identified yet shows "Not identified yet" with the next
+that Coddy Studio has not identified yet shows "Not identified yet" with the next
 step (open Pull Requests for the project or Rescan in **Settings → Source
 Control**); nothing is published until the host is identified. **New merge
 request** in Pull Requests already knows the host and shows it right away.
@@ -739,7 +739,7 @@ Hover a disabled **Create** button to see why it is unavailable.
 GitHub checks are available; other providers currently return checks
 unavailable.
 
-Project view state is stored under `bibcode:git-manager-state:v1` for the two
+Project view state is stored under `coddy-studio:git-manager-state:v1` for the two
 most recently used physical projects. Its persisted project record contains
 `selectedRef`, `selectedCommitSha`, `multiCommitSelection`,
 `selectedFilePath`, `selectedStashSha`, `stashPaneOpen`, `imageDiffMode`,
@@ -748,7 +748,7 @@ most recently used physical projects. Its persisted project record contains
 that enforces eviction. The companion toolbar record contains
 `branchFilterText` and `openDropdown`. The mounted commit box does not currently
 read the legacy `commitDraft` field; its active draft instead uses the shared
-`bibcode:source-control-panel-state:v1` store keyed by environment and checkout,
+`coddy-studio:source-control-panel-state:v1` store keyed by environment and checkout,
 so the right-panel Source Control surface and Git Manager do not diverge. The
 selected worktree is intentionally session-only and resets to the main checkout
 after a reload. Evicted or hidden projects retain no mounted panel or live Git
@@ -920,7 +920,7 @@ Git Manager's current-branch pane also links each row to **Open in Pull Requests
 selecting that pane's checkout before navigation. **Open beside a thread…** in
 the detail's header opens the request in a thread's right panel instead (see
 [Pull and merge requests in the panel](#pull-and-merge-requests-in-the-panel)).
-The local `bibcode:pull-requests-state:v1` cache retains the two most recently
+The local `coddy-studio:pull-requests-state:v1` cache retains the two most recently
 used physical projects (LRU), including checkout, filters, tab, sort, scroll
 position, viewed files, and unsent per-review drafts. This module does not fetch avatar images or refresh on a timer or
 window focus.
@@ -986,8 +986,8 @@ when the panel is narrow, not only when the window is.
 
 ### Opening links
 
-Web links open in the BiBCode browser by default. **Settings → General → Open
-links in** chooses **BiBCode browser** or **System browser**; a change applies to
+Web links open in the Coddy Studio browser by default. **Settings → General → Open
+links in** chooses **Coddy Studio browser** or **System browser**; a change applies to
 the next click. Without a thread or without desktop preview support (for example
 macOS before 14), web links open in the system browser, and the setting is not
 shown. In a browser tab the setting is not shown either: links to the server's
@@ -995,7 +995,7 @@ localhost dev servers open in the Browser surface when the tab is served over
 plain HTTP from that server, and every other link opens a new browser tab.
 
 - **Chat:** Ctrl/Cmd-, Shift-, or Alt-click or middle-click opens the other
-  target. Right-click on an `http(s)` link offers **Open in BiBCode browser**,
+  target. Right-click on an `http(s)` link offers **Open in Coddy Studio browser**,
   **Open in system browser**, and **Copy link**. Any
   modifier-click on an `.html`, `.htm`, or `.pdf` file chip opens
   it in the editor instead of the browser. Links to network or device paths
@@ -1004,7 +1004,7 @@ plain HTTP from that server, and every other link opens a new browser tab.
   `//host/…` link stays an ordinary web link.
 - **Terminal:** Ctrl/Cmd-click opens a link (Cmd on macOS); adding Shift opens
   the other target. `.html`, `.htm`, and `.pdf` paths, including a bare
-  `index.html` and `file:///` URLs, open in the BiBCode browser; Ctrl/Cmd+Shift
+  `index.html` and `file:///` URLs, open in the Coddy Studio browser; Ctrl/Cmd+Shift
   opens them in the editor, and every other path opens in the editor. Without a
   thread or desktop preview support, they open in the editor too. If such a
   file can't be previewed (for example, the environment isn't connected), a
@@ -1024,7 +1024,7 @@ plain HTTP from that server, and every other link opens a new browser tab.
 A link to `localhost`, a `*.localhost` name, any `127.x.x.x` address, `::1`, or a
 wildcard address (`0.0.0.0`, `[::]`) means the server's machine, not this
 computer. From a thread on this computer's own server it opens directly. From
-any other thread BiBCode never opens this computer's `localhost`, whatever the
+any other thread Coddy Studio never opens this computer's `localhost`, whatever the
 target, modifier, or setting; see
 [Previewing the server's dev servers](#previewing-the-servers-dev-servers).
 
@@ -1058,22 +1058,22 @@ thread's environment is:
   your computer, it loads from `http://127.0.0.1:<local port>` instead, and a
   note says the port is in use and that apps expecting it (OAuth sign-in, for
   example) may not work until you free it;
-- reached through BiBCode Connect; the preview loads from one of the
+- reached through Coddy Connect; the preview loads from one of the
   environment's 4 preview addresses, `https://<environment address>-p1` to
   `-p4` in the same domain. Up to 4 previews of one environment can be open at
-  once; a preview's address frees when its BiBCode browser tab closes, or after
+  once; a preview's address frees when its Coddy Studio browser tab closes, or after
   10 minutes without connections. In a browser tab, these
   previews always open in a new tab, not in the Browser panel. Environments
   linked before preview addresses existed get them the next time you open
-  BiBCode on that environment while signed in to BiBCode Connect. Service
+  Coddy Studio on that environment while signed in to Coddy Connect. Service
   workers don't run in these previews.
 
 The gateway opens one port per thread and dev-server port, so the client must
-be able to reach that host on ports other than BiBCode's own. The BiBCode
+be able to reach that host on ports other than Coddy Studio's own. The Coddy Studio
 browser's address bar and the thread's shared tab state keep showing the
 `localhost` address, and its **Reload** opens the address through the gateway
 again. A
-gateway port closes when its last BiBCode browser tab closes, after 10 minutes
+gateway port closes when its last Coddy Studio browser tab closes, after 10 minutes
 without connections, when its thread is deleted, or when the server stops.
 Closing a system-browser or browser tab doesn't close it; the idle timeout
 does.
@@ -1093,37 +1093,37 @@ link**:
 | Situation                                                           | Message                                                                                                                                                                                   |
 | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A public IP address, or SSH in a browser tab                        | "This address is on <environment>, not this computer. Opening its ports from here isn't supported yet."                                                                                   |
-| BiBCode Connect before its previews are set up                      | "Previews over BiBCode Connect aren't set up for <environment> yet. Open BiBCode on <environment> to finish setting them up."                                                             |
-| BiBCode Connect with too many previews open                         | "Too many previews of <environment> are open over BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up."                             |
-| BiBCode Connect inside a browser tab's panel                        | "<environment> is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab." |
+| Coddy Connect before its previews are set up                      | "Previews over Coddy Connect aren't set up for <environment> yet. Open Coddy Studio on <environment> to finish setting them up."                                                             |
+| Coddy Connect with too many previews open                         | "Too many previews of <environment> are open over Coddy Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up."                             |
+| Coddy Connect inside a browser tab's panel                        | "<environment> is reached through Coddy Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab." |
 | The environment isn't connected, or its SSH connection is down      | "<environment> isn't connected. Reconnect it, then open the link again."                                                                                                                  |
 | An `https://` dev server                                            | "HTTPS dev servers can't be previewed through the gateway yet; serve over HTTP or open it on <environment> directly."                                                                     |
 | Nothing listens on the port                                         | "Nothing is listening on port <port> on <environment>."                                                                                                                                   |
-| The server refused the address                                      | "BiBCode can only preview plain HTTP addresses on <environment>'s own localhost."                                                                                                         |
+| The server refused the address                                      | "Coddy Studio can only preview plain HTTP addresses on <environment>'s own localhost."                                                                                                         |
 | You reached the server on a public address                          | "Previews aren't available on a public address. Open it on <environment> directly."                                                                                                       |
 | You reached the server through a reverse proxy or Tailscale Serve   | "Previews aren't available through a proxied address. Open it on <environment> directly."                                                                                                 |
 | The gateway or SSH forward failed, or this client's session expired | "Couldn't open a preview connection to <environment>. Try again, or reconnect <environment> if it keeps failing."                                                                         |
 | A terminal with no thread                                           | "Open this address from a thread's chat or terminal to reach it from here."                                                                                                               |
 
-When a BiBCode browser tab's address can't load, the tab shows the reason in
+When a Coddy Studio browser tab's address can't load, the tab shows the reason in
 place of the page, and **Reload** resolves the address again and reopens it.
-For BiBCode's own reasons (the messages above) the page reads "Can't show this
+For Coddy Studio's own reasons (the messages above) the page reads "Can't show this
 page here" and shows the sentence alone, without network error codes or
 connection tips. A network error reads "This site can't be reached".
 
 A refusal about the address itself (HTTPS, nothing listening, an address the
 server won't preview) shows the same on every client. A failure on this
 computer's side shows on this computer only, because another client may load
-the page fine: its SSH forward, its BiBCode session, the public or proxied
+the page fine: its SSH forward, its Coddy Studio session, the public or proxied
 address it reached the server on, or a failure resolving or forwarding the
 address. After a page has loaded, a dropped forward shows the webview's own
 error page instead; **Reload** recovers. An agent asking for the tab's status,
 or opening a new tab, gets the same reason as an error.
 
-Gateway traffic is plain HTTP on the server's address, outside BiBCode's
+Gateway traffic is plain HTTP on the server's address, outside Coddy Studio's
 encrypted transport, so previews need a direct private route to the server: a
 LAN, tailnet, or WSL address, or a desktop-managed SSH connection. When the
-environment's address is a public IP address, BiBCode doesn't use the gateway.
+environment's address is a public IP address, Coddy Studio doesn't use the gateway.
 When you reach the server on a public address under a host name, or through a
 reverse proxy or Tailscale Serve, the server refuses the preview with the
 messages above. See [Reverse proxies](./remote-access.md#reverse-proxies).
@@ -1133,27 +1133,27 @@ server that serves the page opens in the Browser surface, through the gateway
 even when the browser runs on the server's own machine. Another environment's
 gateway refuses to be framed by this page, so its links open new tabs. The address bar shows the `localhost` address and
 follows the page. Back and Forward need a browser with the Navigation API;
-without it, or on a page whose security policy blocks BiBCode's navigation
+without it, or on a page whose security policy blocks Coddy Studio's navigation
 script, they stay disabled and the address bar keeps the address you opened.
 Screenshots, recording, element picking, zoom, hard reload, DevTools, and
 clearing site data aren't available there (**Reload** in the address bar
 reloads the page); the browser's own DevTools inspect the frame. An address
 the frame can't show, such as another site, says so with **Open in new tab**;
 the address bar's **Open in new tab** button does the same for any page. A
-link to the server's `localhost`, however you open it, opens as a new BiBCode
+link to the server's `localhost`, however you open it, opens as a new Coddy Studio
 browser tab, and a click on a link to another site opens a new browser tab.
 A redirect to another site (a sign-in provider, for example) can't show in the
 frame; the browser shows its own error there, and **Reload** returns to the
 last page the frame reported.
 
 Zoom keys zoom the whole browser tab there. While you type or click inside the
-page, BiBCode's shortcuts don't reach BiBCode; Ctrl/Cmd+R and F5 reload only
+page, Coddy Studio's shortcuts don't reach Coddy Studio; Ctrl/Cmd+R and F5 reload only
 the page.
 
 **In a browser tab served over HTTPS or on an IPv6 address**, or with a
 modifier-click, a gateway link opens a new browser tab: such a page can't frame
 the plain-HTTP gateway. The
-tab opens blank at once and loads the preview after BiBCode resolves it; if
+tab opens blank at once and loads the preview after Coddy Studio resolves it; if
 resolution fails, the tab closes and the notice appears. If the browser blocks
 the new tab, a bar at the top of the window asks again:
 
@@ -1171,10 +1171,10 @@ shows the thread the bar names); **Copy link** copies the address and keeps the 
 "(N more waiting)" when more are queued, and keeps a request whose open failed
 so you can try again. The gateway pages a preview tab can show:
 
-- "This preview link expired. Go back to BiBCode and open it again." The
+- "This preview link expired. Go back to Coddy Studio and open it again." The
   preview's sign-in is gone: the link was already used or is older than 60
-  seconds, or your BiBCode session ended or was revoked. A live preview stops
-  within 30 seconds of its BiBCode session being revoked.
+  seconds, or your Coddy Studio session ended or was revoked. A live preview stops
+  within 30 seconds of its Coddy Studio session being revoked.
 - "Nothing is listening on port <port> on <environment>." The dev server
   stopped.
 - "This request didn't come from the preview itself, so the gateway blocked
@@ -1184,13 +1184,13 @@ so you can try again. The gateway pages a preview tab can show:
 
 Reloading such a browser tab works while its gateway port is open. After the
 port closes, the tab shows a connection error or the expired page; open the
-link again from BiBCode, which starts a new gateway session.
+link again from Coddy Studio, which starts a new gateway session.
 
 **Commands that open a browser.** Every agent and terminal session gets
-`BROWSER` and `BRAINSTORM_OPEN_CMD` set to `bibcode-open-url` (a
-`bibcode-open-url.exe` on Windows), so tools that launch a browser through
-either variable, such as the brainstorming companion, ask BiBCode instead of
-opening a browser on the server's machine. One BiBCode client takes the
+`BROWSER` and `BRAINSTORM_OPEN_CMD` set to `coddy-studio-open-url` (a
+`coddy-studio-open-url.exe` on Windows), so tools that launch a browser through
+either variable, such as the brainstorming companion, ask Coddy Studio instead of
+opening a browser on the server's machine. One Coddy Studio client takes the
 request. A visible client showing that thread takes it at once. Otherwise,
 after 2 seconds, a visible client takes it and asks with the "A command in
 “<thread title>” wants to open" bar; a client whose window is hidden takes it
@@ -1199,11 +1199,11 @@ opens like a clicked link, in the system browser when the thread is only shown
 in a side panel. In a browser tab it always waits for **Open** on the bar. A
 request no client takes within 60 seconds is dropped.
 
-`bibcode-open-url` prints the address instead when it has no BiBCode session
-(for example, run outside an agent or terminal session) or when BiBCode can't
+`coddy-studio-open-url` prints the address instead when it has no Coddy Studio session
+(for example, run outside an agent or terminal session) or when Coddy Studio can't
 take the request. Its credential lasts 8 hours from the start of the agent or
 terminal session and is not renewed, so a longer session falls back to
-printing. It also prints when the command can't reach BiBCode, for example
+printing. It also prints when the command can't reach Coddy Studio, for example
 inside a sandbox without network access. See
 [Provider architecture](../architecture/providers.md) for the mechanism.
 
@@ -1217,7 +1217,7 @@ screen beside the chat. It is off by default.
 **Device previews** ("Android emulators and, on macOS servers, iOS
 simulators.") for that environment. Turning the setting off while a device runs
 asks first, naming the running devices, then stops them. A server too old for
-device previews shows the switch disabled with "This server's BiBCode version
+device previews shows the switch disabled with "This server's Coddy Studio version
 has no device previews. Update the server to use them."
 
 - **Android** needs the Android SDK on the server, with `emulator` and
@@ -1231,15 +1231,15 @@ has no device previews. Update the server to use them."
 - **iOS** needs a macOS server with Xcode installed and set up (open it once,
   or run `sudo xcodebuild -runFirstLaunch`) and at least one iPhone or iPad
   simulator, created in Xcode under **Window → Devices and Simulators**.
-  BiBCode uses the Xcode that `xcode-select` points to.
+  Coddy Studio uses the Xcode that `xcode-select` points to.
 
 **Open it.** Choose **Device** from the right panel's `+` menu, or run **Open
 device preview** from the command palette. The device list groups devices
 under **Android** and **iOS**. When a platform cannot run a device, its group
 says why (for example Android SDK not found, no virtual devices, Xcode not
 found, or no simulators) and what to do; the other platform still works. A
-simulator already running outside BiBCode, for example in Xcode's Simulator
-app, is listed as "— Running outside BiBCode" and cannot be picked: shut it
+simulator already running outside Coddy Studio, for example in Xcode's Simulator
+app, is listed as "— Running outside Coddy Studio" and cannot be picked: shut it
 down there first.
 
 **Use it.** Pick a device and choose **Start**. The state pill moves through
@@ -1250,7 +1250,7 @@ minutes. Then:
   there is no pinch or other multi-touch;
 - with the screen focused, type to send text, and use Backspace, Delete,
   Enter, Tab, and the arrow keys; shortcuts with Ctrl, Cmd, or Alt stay with
-  BiBCode, and Shift+Tab leaves the screen;
+  Coddy Studio, and Shift+Tab leaves the screen;
 - paste into the focused screen with Ctrl+V or ⌘V, or choose **Paste** in the
   toolbar, to send the clipboard's text. If the browser will not hand the
   clipboard to the button, the panel says so; click the screen and use the
@@ -1283,15 +1283,15 @@ down. One device runs per platform: an Android emulator and an iOS simulator
 can run side by side, but to start another device of the same platform, stop
 the running one first. A device that fails shows **Failed:** with the reason,
 for example a boot that did not finish within 180 s, or a simulator shut down
-outside BiBCode. BiBCode only shuts down simulators it started.
+outside Coddy Studio. Coddy Studio only shuts down simulators it started.
 
-**View only.** An iOS simulator opens view only when BiBCode cannot use this
+**View only.** An iOS simulator opens view only when Coddy Studio cannot use this
 Xcode's simulator interfaces: an Xcode release that changed them ("Xcode
 version not supported"), or a change of Xcode while the server was running
 (restart the server). The iOS group and the screen say so before and after you
 start it. A view-only simulator shows still screenshots about twice a second,
 with no video, touch, keys, rotation, or toolbar buttons. Rarely, one
-simulator opens view only because BiBCode could not attach to its screen, or
+simulator opens view only because Coddy Studio could not attach to its screen, or
 takes no input because it could not connect to its input; the **Still
 images** badge or the error after a touch says why. Stop it and start it
 again.
@@ -1473,10 +1473,10 @@ The Files surface is a full file manager for the active workspace:
   Dragging entries to or from the operating system's file manager is not
   supported.
 - Open file tabs follow renames and moves, and close when their file is deleted.
-- The tree follows changes made outside BiBCode. While the Files surface is open,
+- The tree follows changes made outside Coddy Studio. While the Files surface is open,
   the server watches the workspace and the tree picks up files and folders
   created, renamed, or removed by other tools within a few seconds. Editing a
-  file's contents outside BiBCode does not change the tree, because the tree
+  file's contents outside Coddy Studio does not change the tree, because the tree
   lists paths rather than contents.
 - The panel header offers collapse all folders, expand all folders, search, and
   Refresh. **Refresh** rescans the workspace on the server immediately, rather
@@ -1503,13 +1503,13 @@ The Files surface is a full file manager for the active workspace:
 - The rendered Markdown view shows source edits that are not saved yet, and
   ticking a task there changes that text, so the edits are kept. Once they are
   saved, it shows the file as last read from disk, so a task toggle also keeps
-  changes made to the file outside BiBCode.
+  changes made to the file outside Coddy Studio.
 
 ## Current limitations
 
 - Device previews run one Android emulator and one iOS simulator at a time per
   environment, and iOS simulators only on macOS servers. iOS takes a single
-  touch, and BiBCode cannot install apps or create simulators. Two people
+  touch, and Coddy Studio cannot install apps or create simulators. Two people
   watching the same device both control it.
 
 - Staged-row diff viewing in the right-panel Source Control surface does not yet

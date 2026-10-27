@@ -166,7 +166,7 @@ export function ResourceUsageSegment({
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <ResourceTotalsCard title="BiBCode Core" totals={presentation.core} />
+            <ResourceTotalsCard title="Coddy Studio Core" totals={presentation.core} />
             <ResourceTotalsCard title="External Tooling" totals={presentation.external} />
           </div>
 
@@ -211,7 +211,7 @@ export function ResourceUsageSegment({
             <div
               className="border-t border-border pt-3"
               role="group"
-              aria-label={`This device BiBCode Core${
+              aria-label={`This device Coddy Studio Core${
                 presentation.localCore.warning === null
                   ? ""
                   : `; ${presentation.localCore.warning.statusLabel}`
@@ -221,7 +221,7 @@ export function ResourceUsageSegment({
                 <div>
                   <div className="font-medium text-foreground">This device</div>
                   <div className="text-xs text-muted-foreground">
-                    BiBCode Core
+                    Coddy Studio Core
                     {presentation.localCore.totals?.coverageLabel === null ||
                     presentation.localCore.totals?.coverageLabel === undefined
                       ? null

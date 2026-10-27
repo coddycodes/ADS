@@ -76,11 +76,11 @@ it("runs native raster fixtures before building without replacing the mounted ic
 });
 
 it("publishes stable updater metadata atomically from a verified draft", () => {
-  assert.include(releaseWorkflow, 'echo "name=BiBCode v$version"');
+  assert.include(releaseWorkflow, 'echo "name=Coddy Studio v$version"');
   assert.match(releaseWorkflow, /build-tauri-update-manifest\.ts/);
   assert.match(
     releaseWorkflow,
-    /name: Verify Tauri update signatures[\s\S]*cargo run --locked -p bibcode-updater-verifier -- apps\/desktop\/src-tauri\/tauri\.release\.conf\.json release-assets\/latest\.json release-assets/,
+    /name: Verify Tauri update signatures[\s\S]*cargo run --locked -p coddy-studio-updater-verifier -- apps\/desktop\/src-tauri\/tauri\.release\.conf\.json release-assets\/latest\.json release-assets/,
   );
   assert.match(releaseWorkflow, /draft:\s*true/);
   assert.match(releaseWorkflow, /gh release view/);

@@ -165,7 +165,7 @@ pub struct SessionInput {
     pub last_error: Option<String>,
     /// Which side reported `last_error` — a `RuntimeErrorClass`. `last_error`
     /// alone is mixed-provenance: it carries both a provider's own failure and
-    /// BiBCode's restart notice, so the UI cannot attribute it without this.
+    /// Coddy Studio's restart notice, so the UI cannot attribute it without this.
     #[serde(
         rename = "lastErrorClass",
         default,
@@ -10221,7 +10221,7 @@ mod tests {
                 Box::pin(async move {
                     Ok(BootstrapWorktree {
                         repository_root: input.project_cwd.clone(),
-                        branch: "bibcode/bootstrap".to_owned(),
+                        branch: "coddy-studio/bootstrap".to_owned(),
                         path: format!("{}/bootstrap", input.project_cwd),
                         remove_branch: true,
                     })
@@ -10285,7 +10285,7 @@ mod tests {
                 "prepareWorktree":{
                     "projectCwd":"C:/repo",
                     "baseBranch":"main",
-                    "branch":"bibcode/bootstrap"
+                    "branch":"coddy-studio/bootstrap"
                 },
                 "runSetupScript":true
             },

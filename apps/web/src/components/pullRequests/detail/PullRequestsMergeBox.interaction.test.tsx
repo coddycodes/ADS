@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { PullRequestsDetail, PullRequestsMergeMethod } from "@bibcode/contracts";
+import type { PullRequestsDetail, PullRequestsMergeMethod } from "@coddy/contracts";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { usePullRequestsStore } from "../../../pullRequestsStore";

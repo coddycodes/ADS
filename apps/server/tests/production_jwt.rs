@@ -12,17 +12,17 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-use bibcode_server::production::connect_mcp::{
+use coddy_studio_server::production::connect_mcp::{
     ConnectMcpConfig, ConnectMcpService, EndpointRuntime, PairingCredential, PairingIssuer,
     PreviewInvoker,
 };
-use bibcode_server::production::http_routes::{JsonOperation, RouteContext};
-use bibcode_server::production::jwt::PersistentJwtCodec;
+use coddy_studio_server::production::http_routes::{JsonOperation, RouteContext};
+use coddy_studio_server::production::jwt::PersistentJwtCodec;
 
 const NOW: i64 = 1_800_000_000;
-const TYP: &str = "bibcode-cloud-mint+jwt";
+const TYP: &str = "coddy-studio-cloud-mint+jwt";
 const ISSUER: &str = "https://relay.example";
-const AUDIENCE: &str = "bibcode-env:environment-1";
+const AUDIENCE: &str = "coddy-studio-env:environment-1";
 
 fn proof_claims() -> Value {
     json!({
@@ -138,7 +138,7 @@ async fn signs_typed_eddsa_jwts_and_produces_connect_mcp_callbacks() {
 
     let token = codec.sign(TYP, proof_claims()).await.expect("signed JWT");
     assert_eq!(token_header(&token), json!({ "alg": "EdDSA", "typ": TYP }));
-    let _callbacks: bibcode_server::production::connect_mcp::JwtCodec = codec.jwt_codec();
+    let _callbacks: coddy_studio_server::production::connect_mcp::JwtCodec = codec.jwt_codec();
 }
 
 #[tokio::test]
@@ -240,7 +240,7 @@ async fn persistent_callbacks_sign_link_proofs_and_verify_health_requests_end_to
     let mut health_claims = proof_claims();
     health_claims["scope"] = json!(["environment:status"]);
     let health_token = codec
-        .sign("bibcode-cloud-health+jwt", health_claims)
+        .sign("coddy-studio-cloud-health+jwt", health_claims)
         .await
         .expect("health proof");
     let health = service

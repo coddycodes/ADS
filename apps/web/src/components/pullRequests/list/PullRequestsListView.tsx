@@ -1,6 +1,6 @@
-import { resolveChangeRequestPresentationForKind } from "@bibcode/shared/sourceControl";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import { environmentRpcKey, squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+import { resolveChangeRequestPresentationForKind } from "@coddy/shared/sourceControl";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import { environmentRpcKey, squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import {
   PullRequestsOperationError,
   type EnvironmentId,
@@ -9,7 +9,7 @@ import {
   type PullRequestsListPage,
   type PullRequestsListRow,
   type ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {

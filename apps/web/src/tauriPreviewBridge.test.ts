@@ -1,4 +1,4 @@
-import type { DesktopPreviewBridge, DesktopPreviewTabState } from "@bibcode/contracts";
+import type { DesktopPreviewBridge, DesktopPreviewTabState } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { TauriDesktopCapabilityUnsupportedError } from "./tauriDesktopBridge";

@@ -1,5 +1,5 @@
 /**
- * The handler-driven socket contract BiBCode's socket layers are written
+ * The handler-driven socket contract Coddy Studio's socket layers are written
  * against, bridged onto Effect 4's pull-based `Socket`.
  *
  * Effect 4.0 removed `Socket.runRaw`: a socket now exposes a scoped `reader`

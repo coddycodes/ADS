@@ -6,7 +6,7 @@
 //! window's web content process is remembered after each page it finishes loading, and its
 //! OS crash record is looked up by that pid.
 
-use bibcode_server::diagnostics::profiler::{exits, is_enabled};
+use coddy_studio_server::diagnostics::profiler::{exits, is_enabled};
 
 /// Our WebKitWebProcess children, with their executables, as of the main window's last
 /// finished page load. WebKitGTK has reaped the one that ended by the time it says so.
@@ -43,7 +43,7 @@ pub(crate) fn page_loaded<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, _label:
 /// From the in-process server's start on, finds the main window's web content process as its
 /// profiler turns on, since the page loaded before then: Linux scans for our web processes,
 /// macOS reads the main window's web content pid. Windows reads nothing ahead.
-pub(crate) fn follow_server(handle: &bibcode_server::ServerHandle) {
+pub(crate) fn follow_server(handle: &coddy_studio_server::ServerHandle) {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Some(setting) = handle.profiler_enabled_signal() {
         tauri::async_runtime::spawn(follow_setting(setting));
@@ -76,7 +76,7 @@ fn remember_web_processes(enabled: bool) {
         return;
     }
     let scan = std::thread::Builder::new()
-        .name("bibcode-web-processes".into())
+        .name("coddy-studio-web-processes".into())
         .spawn(move || store_scan(generation, children_named("WebKitWebProcess")));
     if let Err(error) = scan {
         tracing::debug!(%error, "web process scan did not start");

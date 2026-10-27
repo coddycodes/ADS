@@ -1,8 +1,8 @@
-//! The bibcode:// URL scheme must stay registered in the bundler config and the
+//! The coddy-studio:// URL scheme must stay registered in the bundler config and the
 //! deep-link plugin permission must stay granted to the main webview.
 
 #[test]
-fn tauri_config_registers_the_bibcode_deep_link_scheme() {
+fn tauri_config_registers_the_coddy_studio_deep_link_scheme() {
     let config: serde_json::Value =
         serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid tauri.conf.json");
     let schemes = config
@@ -14,7 +14,7 @@ fn tauri_config_registers_the_bibcode_deep_link_scheme() {
             .iter()
             .filter_map(|value| value.as_str())
             .collect::<Vec<_>>(),
-        vec!["bibcode"],
+        vec!["coddy-studio"],
     );
 }
 

@@ -1,4 +1,4 @@
-use bibcode_server::preview;
+use coddy_studio_server::preview;
 
 use preview::{
     MAX_PENDING_OPEN_REQUESTS, OpenRequestError, PreviewManager, PreviewNavStatus,

@@ -1,4 +1,4 @@
-import { RpcResponseTooLargeError, WS_METHODS, WsRpcGroup } from "@bibcode/contracts";
+import { RpcResponseTooLargeError, WS_METHODS, WsRpcGroup } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";

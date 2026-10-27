@@ -12,12 +12,12 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-export const RELAY_LINK_PROOF_TYP = "bibcode-env-link+jwt";
-export const RELAY_MINT_REQUEST_TYP = "bibcode-cloud-mint+jwt";
-export const RELAY_HEALTH_REQUEST_TYP = "bibcode-cloud-health+jwt";
-export const RELAY_MINT_RESPONSE_TYP = "bibcode-env-mint+jwt";
-export const RELAY_HEALTH_RESPONSE_TYP = "bibcode-env-health+jwt";
-export const RELAY_ACTIVITY_PUBLISH_TYP = "bibcode-env-activity+jwt";
+export const RELAY_LINK_PROOF_TYP = "coddy-studio-env-link+jwt";
+export const RELAY_MINT_REQUEST_TYP = "coddy-studio-cloud-mint+jwt";
+export const RELAY_HEALTH_REQUEST_TYP = "coddy-studio-cloud-health+jwt";
+export const RELAY_MINT_RESPONSE_TYP = "coddy-studio-env-mint+jwt";
+export const RELAY_HEALTH_RESPONSE_TYP = "coddy-studio-env-health+jwt";
+export const RELAY_ACTIVITY_PUBLISH_TYP = "coddy-studio-env-activity+jwt";
 
 export class RelayJwtError extends Schema.TaggedError<RelayJwtError>()("RelayJwtError", {
   operation: Schema.Literals(["sign", "verify"]),

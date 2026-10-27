@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "../rpc/atomRegistry";

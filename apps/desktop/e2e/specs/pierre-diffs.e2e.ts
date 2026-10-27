@@ -13,8 +13,8 @@ import {
   setDesktopUiWindowSize,
 } from "../support/ui-state.ts";
 
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
-const projectPath = process.env.BIBCODE_E2E_PROJECT_PATH;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
+const projectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH;
 
 if (!artifactDirectory || !projectPath) {
   throw new Error("The packaged desktop Pierre fixture environment was not prepared.");

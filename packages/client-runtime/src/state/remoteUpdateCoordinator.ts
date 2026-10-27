@@ -2,8 +2,8 @@ import {
   REMOTE_UPDATE_MANUAL_REQUIRED,
   RemoteUpdateInstallError,
   type RemoteUpdateSnapshot,
-} from "@bibcode/contracts";
-import { compareSemverVersions } from "@bibcode/shared/semver";
+} from "@coddy/contracts";
+import { compareSemverVersions } from "@coddy/shared/semver";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

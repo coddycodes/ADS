@@ -3,7 +3,7 @@
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
 
-use bibcode_server::{
+use coddy_studio_server::{
     RequestId, RpcRequest,
     production::pull_requests_rpc::ConfiguredPullRequestsRpcServices,
     pull_requests::{ContextRead, PullRequestsService, host::HostCommandRunner},
@@ -336,7 +336,7 @@ async fn pull_requests_github_read_viewer_detail_matches_wire_permissions_and_re
 }
 
 #[tokio::test]
-async fn pull_requests_github_merged_bibcode_14_can_revert_but_not_merge() {
+async fn pull_requests_github_merged_coddy_studio_14_can_revert_but_not_merge() {
     let mut f = Fixture::new(false).await;
     f.number = 14;
     f.runner
@@ -346,7 +346,7 @@ async fn pull_requests_github_merged_bibcode_14_can_revert_but_not_merge() {
                 "remote",
                 "set-url",
                 "origin",
-                "https://github.com/mubeda/BibCode.git",
+                "https://github.com/mubeda/CoddyStudio.git",
             ],
             &CancellationToken::new(),
         )
@@ -357,7 +357,7 @@ async fn pull_requests_github_merged_bibcode_14_can_revert_but_not_merge() {
     d["state"] = json!("MERGED");
     d["mergeStateStatus"] = json!("UNKNOWN");
     d["mergeable"] = json!("UNKNOWN");
-    d["url"] = json!("https://github.com/mubeda/BibCode/pull/14");
+    d["url"] = json!("https://github.com/mubeda/CoddyStudio/pull/14");
     f.put("github-detail.json", d);
     let mut v = f.json("github-viewer.json");
     v["data"]["repository"]["viewerPermission"] = json!("ADMIN");
@@ -367,7 +367,10 @@ async fn pull_requests_github_merged_bibcode_14_can_revert_but_not_merge() {
     assert_eq!(d["readiness"]["status"], "merged");
     assert_eq!(d["permissions"]["revert"]["allowed"], true);
     assert_eq!(d["permissions"]["merge"]["allowed"], false);
-    assert!(f.calls("gh").contains("--repo github.com/mubeda/BibCode"));
+    assert!(
+        f.calls("gh")
+            .contains("--repo github.com/mubeda/CoddyStudio")
+    );
 }
 
 #[tokio::test]

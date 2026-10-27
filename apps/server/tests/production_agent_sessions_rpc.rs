@@ -3,7 +3,7 @@
 
 use std::{path::Path, time::Duration};
 
-use bibcode_server::{
+use coddy_studio_server::{
     CauseItem, RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     orchestration::{EngineOptions, OrchestrationEngine},
     persistence::{Database, ProviderSessionRuntime, run_migrations},
@@ -282,7 +282,7 @@ async fn imports_cli_sessions_as_threads_that_resume_them() {
         assert_eq!(runtime.runtime_payload, Some(payload));
     }
 
-    // A session another BiBCode thread runs is neither offered nor imported, and an
+    // A session another Coddy Studio thread runs is neither offered nor imported, and an
     // interrupted import whose thread started its own conversation keeps that conversation.
     let owned_id = "2f8b5c2e-4d6a-4b1c-9e3f-2a7d8c9b1e40";
     let used_id = "3f8b5c2e-4d6a-4b1c-9e3f-2a7d8c9b1e40";
@@ -362,7 +362,7 @@ async fn imports_cli_sessions_as_threads_that_resume_them() {
     assert_eq!(
         refused["skipped"],
         json!([
-            {"sessionId":owned_id,"reason":"This session already belongs to a BiBCode thread."},
+            {"sessionId":owned_id,"reason":"This session already belongs to a Coddy Studio thread."},
             {"sessionId":used_id,"reason":"This session's thread was used before its import finished, so it keeps its own conversation."}
         ])
     );

@@ -33,10 +33,10 @@ use super::{os_records, persisted_enabled, profiler_dir, runtime::Detector, stor
 
 const MONITOR_FLAG: &str = "--crash-monitor";
 /// Set by the parent; the monitor names the crashed process with it in each sidecar.
-const PROCESS_KIND_ENV: &str = "BIBCODE_CRASH_MONITOR_PROCESS_KIND";
+const PROCESS_KIND_ENV: &str = "CODDY_STUDIO_CRASH_MONITOR_PROCESS_KIND";
 /// A release-build validation hook for the runbooks: exactly `1` at startup makes the process
 /// fault on purpose 5 s after its monitor is armed.
-const CRASH_TEST_ENV: &str = "BIBCODE_PROFILER_CRASH_TEST";
+const CRASH_TEST_ENV: &str = "CODDY_STUDIO_PROFILER_CRASH_TEST";
 const CRASH_TEST_DELAY: Duration = Duration::from_secs(5);
 const CAPABILITIES_FILE: &str = "capabilities.json";
 /// The monitor's socket, inside a directory of its own.
@@ -209,7 +209,7 @@ fn run_monitor(args: MonitorArgs) -> i32 {
     if let Some(dir) = args.socket.parent()
         && dir
             .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with("bibcode-"))
+            .is_some_and(|name| name.to_string_lossy().starts_with("coddy-studio-"))
     {
         let _ = fs::remove_dir(dir);
     }
@@ -224,7 +224,7 @@ fn watch_parent(parent_pid: u32, dir: PathBuf) -> bool {
         return false;
     };
     std::thread::Builder::new()
-        .name("bibcode-crash-parent-watch".into())
+        .name("coddy-studio-crash-parent-watch".into())
         .spawn(move || {
             while !parent_gone(parent) {
                 std::thread::sleep(PARENT_CHECK_EVERY);
@@ -268,7 +268,7 @@ fn watch_parent(parent_pid: u32, dir: PathBuf) -> bool {
     let parent = unsafe { OwnedHandle::from_raw_handle(raw) };
     let wait_ms = u32::try_from(PARENT_CHECK_EVERY.as_millis()).unwrap_or(u32::MAX);
     std::thread::Builder::new()
-        .name("bibcode-crash-parent-watch".into())
+        .name("coddy-studio-crash-parent-watch".into())
         .spawn(move || {
             // SAFETY: `parent` stays open for as long as this thread waits on it.
             while unsafe { WaitForSingleObject(parent.as_raw_handle(), wait_ms) } == WAIT_TIMEOUT {}
@@ -438,7 +438,7 @@ impl MonitorDetector {
     }
 
     /// Re-executes `executable` instead of this process's binary. A test harness cannot be the
-    /// monitor; every BiBCode binary can, since each dispatches `--crash-monitor` first.
+    /// monitor; every Coddy Studio binary can, since each dispatches `--crash-monitor` first.
     #[must_use]
     pub fn with_executable(mut self, executable: PathBuf) -> Self {
         self.executable = Some(executable);
@@ -467,7 +467,7 @@ impl Detector for MonitorDetector {
         // on a hung monitor must not stall the heartbeat that replaces that monitor. A plain
         // thread, because a runtime waits for its blocking tasks when it is dropped.
         let spawned = std::thread::Builder::new()
-            .name("bibcode-crash-monitor".into())
+            .name("coddy-studio-crash-monitor".into())
             .spawn(move || {
                 match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -883,9 +883,9 @@ fn fresh_socket_dir() -> io::Result<PathBuf> {
     let id = uuid::Uuid::new_v4().simple().to_string();
     #[cfg(unix)]
     // SAFETY: `getuid` takes nothing and cannot fail.
-    let name = format!("bibcode-{}-{}", unsafe { libc::getuid() }, &id[..12]);
+    let name = format!("coddy-studio-{}-{}", unsafe { libc::getuid() }, &id[..12]);
     #[cfg(not(unix))]
-    let name = format!("bibcode-{}", &id[..12]);
+    let name = format!("coddy-studio-{}", &id[..12]);
     #[cfg(target_os = "linux")]
     let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
     #[cfg(not(target_os = "linux"))]
@@ -1047,7 +1047,7 @@ fn crash_test_requested(value: Option<&OsStr>) -> bool {
 /// The runbooks' deliberate crash: 5 s after arming, if still armed.
 fn start_crash_test() {
     let _ = std::thread::Builder::new()
-        .name("bibcode-crash-test".into())
+        .name("coddy-studio-crash-test".into())
         .spawn(|| {
             std::thread::sleep(CRASH_TEST_DELAY);
             if ARMED.load(Ordering::Acquire) {
@@ -1094,7 +1094,7 @@ pub async fn follow(detector: impl Detector, mut setting: watch::Receiver<bool>)
 }
 
 /// The desktop host's local environment, read before Tauri starts: its profiler directory and
-/// committed `enableProfiler`, resolved as `bibcode-desktop profiler` resolves them.
+/// committed `enableProfiler`, resolved as `coddy-studio-desktop profiler` resolves them.
 pub fn desktop_local_profiler() -> Option<(PathBuf, bool)> {
     let state_dir = crate::config::profiler_state_dir(None, None).ok()?;
     Some((profiler_dir(&state_dir), persisted_enabled(&state_dir)))
@@ -1147,14 +1147,14 @@ mod tests {
 
     #[test]
     fn the_monitor_argv_names_the_socket_the_directory_and_the_parent() {
-        let socket = Path::new("/tmp/bibcode-crash-0123456789ab.sock");
+        let socket = Path::new("/tmp/coddy-studio-crash-0123456789ab.sock");
         let dir = Path::new("/data/userdata/profiler");
         let args = monitor_args(socket, dir, 4242);
         assert_eq!(
             args,
             [
                 "--crash-monitor",
-                "/tmp/bibcode-crash-0123456789ab.sock",
+                "/tmp/coddy-studio-crash-0123456789ab.sock",
                 "/data/userdata/profiler",
                 "4242"
             ]
@@ -1202,15 +1202,16 @@ mod tests {
         );
     }
 
-    /// The host arms its monitor for the local environment: `BIBCODE_HOME`'s `userdata/`
+    /// The host arms its monitor for the local environment: `CODDY_STUDIO_HOME`'s `userdata/`
     /// state, and the `enableProfiler` saved there. Runs in a child process, so setting the
     /// variable touches no other test.
     #[test]
-    fn the_desktop_monitor_follows_bibcode_home_and_its_saved_setting() {
+    fn the_desktop_monitor_follows_coddy_studio_home_and_its_saved_setting() {
         const CASE: &str = "desktop-local-profiler";
-        const TEST: &str = "diagnostics::profiler::crash::tests::the_desktop_monitor_follows_bibcode_home_and_its_saved_setting";
+        const TEST: &str = "diagnostics::profiler::crash::tests::the_desktop_monitor_follows_coddy_studio_home_and_its_saved_setting";
         if crate::test_support::TestSandbox::is_isolated_case(CASE, TEST) {
-            let home = std::fs::canonicalize(std::env::var_os("BIBCODE_HOME").unwrap()).unwrap();
+            let home =
+                std::fs::canonicalize(std::env::var_os("CODDY_STUDIO_HOME").unwrap()).unwrap();
             let state = home.join("userdata");
             assert_eq!(
                 desktop_local_profiler(),
@@ -1228,8 +1229,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
-            .env("BIBCODE_TEST_ISOLATED_CASE", CASE)
-            .env("BIBCODE_HOME", home.path())
+            .env("CODDY_STUDIO_TEST_ISOLATED_CASE", CASE)
+            .env("CODDY_STUDIO_HOME", home.path())
             .env_remove("VITE_DEV_SERVER_URL")
             .output()
             .unwrap();
@@ -1415,7 +1416,7 @@ mod tests {
     #[test]
     fn the_socket_directory_is_new_and_private() {
         let base = tempfile::tempdir().unwrap();
-        let dir = base.path().join("bibcode-test");
+        let dir = base.path().join("coddy-studio-test");
         let socket = create_socket_dir(&dir).unwrap();
         assert_eq!(socket, dir.join("monitor.sock"));
         assert!(!socket.exists());
@@ -1460,7 +1461,7 @@ mod tests {
         let long = root.path().join("l".repeat(120));
         std::fs::create_dir(&long).unwrap();
 
-        let name = "bibcode-1-0123456789ab";
+        let name = "coddy-studio-1-0123456789ab";
         assert_eq!(
             pick_socket_dir(&[shared.clone(), private.clone()], name).unwrap(),
             private.join(name),

@@ -4,7 +4,7 @@ import {
   type RelayClientStatus,
   type RelayClientInstallProgressEvent,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   RelayAuthInvalidError,
   RelayEnvironmentConnectNotAuthorizedError,
@@ -18,7 +18,7 @@ import {
   type RelayEnvironmentLinkResponse,
   RelayWebClientId,
   type RelayProtectedError,
-} from "@bibcode/contracts/relay";
+} from "@coddy/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,12 +32,12 @@ import {
   EnvironmentSupervisor,
   type PreparedConnection,
   PrimaryConnectionTarget,
-} from "@bibcode/client-runtime/connection";
-import { type RpcSession } from "@bibcode/client-runtime/rpc";
-import { EnvironmentRegistry } from "@bibcode/client-runtime/connection";
-import { ManagedRelay } from "@bibcode/client-runtime/relay";
-import { remoteHttpClientLayer } from "@bibcode/client-runtime/rpc";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/client-runtime/connection";
+import { type RpcSession } from "@coddy/client-runtime/rpc";
+import { EnvironmentRegistry } from "@coddy/client-runtime/connection";
+import { ManagedRelay } from "@coddy/client-runtime/relay";
+import { remoteHttpClientLayer } from "@coddy/client-runtime/rpc";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import {
   resetPrimaryEnvironmentDescriptorForTests,
   writePrimaryEnvironmentDescriptor,
@@ -125,7 +125,7 @@ function registryLayer(options?: {
             : Effect.succeed(
                 options?.status ?? {
                   status: "available",
-                  executablePath: "/usr/local/bin/bibcode-relay",
+                  executablePath: "/usr/local/bin/coddy-studio-relay",
                   source: "managed",
                   version: "2026.6.0",
                 },
@@ -222,7 +222,7 @@ function bodyText(body: BodyInit | null | undefined): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubEnv("VITE_BIBCODE_RELAY_URL", "https://relay.example.test");
+  vi.stubEnv("VITE_CODDY_STUDIO_RELAY_URL", "https://relay.example.test");
   relayClientInstallDialog.requestConfirmation.mockResolvedValue(true);
 });
 
@@ -309,13 +309,13 @@ describe("web cloud link environment client", () => {
 
   it.effect("reports missing relay configuration and relay listing failures", () =>
     Effect.gen(function* () {
-      vi.stubEnv("VITE_BIBCODE_RELAY_URL", "");
+      vi.stubEnv("VITE_CODDY_STUDIO_RELAY_URL", "");
       const missingConfig = yield* withServices(
         listManagedCloudEnvironments({ clerkToken: "clerk-token" }),
       ).pipe(Effect.flip);
-      expect(missingConfig.message).toBe("BIBCODE_RELAY_URL is not configured.");
+      expect(missingConfig.message).toBe("CODDY_STUDIO_RELAY_URL is not configured.");
 
-      vi.stubEnv("VITE_BIBCODE_RELAY_URL", "https://relay.example.test");
+      vi.stubEnv("VITE_CODDY_STUDIO_RELAY_URL", "https://relay.example.test");
       const cause = new ManagedRelay.ManagedRelayRequestTimeoutError({
         activity: "Relay environment listing",
         timeoutMs: 10_000,
@@ -464,7 +464,7 @@ describe("web cloud link environment client", () => {
             {
               _tag: "EnvironmentHttpConflictError",
               message:
-                "This environment's BiBCode Connect link changed. Link it again from Settings.",
+                "This environment's Coddy Connect link changed. Link it again from Settings.",
             },
             { status: 409 },
           ),
@@ -508,7 +508,7 @@ describe("web cloud link environment client", () => {
       );
       vi.stubGlobal("fetch", fetchMock);
       vi.stubGlobal("window", {
-        location: { origin: "bibcode://app" },
+        location: { origin: "coddy-studio://app" },
         desktopBridge: {
           getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
         } as unknown as DesktopBridge,
@@ -797,13 +797,13 @@ describe("web cloud link environment client", () => {
 
   it.effect("reports missing relay configuration before linking", () =>
     Effect.gen(function* () {
-      vi.stubEnv("VITE_BIBCODE_RELAY_URL", "");
+      vi.stubEnv("VITE_CODDY_STUDIO_RELAY_URL", "");
 
       const error = yield* withServices(
         linkPrimaryEnvironmentToCloud({ target: TARGET, clerkToken: "clerk-token" }),
       ).pipe(Effect.flip);
 
-      expect(error.message).toBe("BIBCODE_RELAY_URL is not configured.");
+      expect(error.message).toBe("CODDY_STUDIO_RELAY_URL is not configured.");
     }),
   );
 
@@ -824,7 +824,7 @@ describe("web cloud link environment client", () => {
               type: "complete",
               status: {
                 status: "available",
-                executablePath: "/usr/local/bin/bibcode-relay",
+                executablePath: "/usr/local/bin/coddy-studio-relay",
                 source: "managed",
                 version: "2026.6.0",
               },
@@ -979,7 +979,7 @@ describe("web cloud link environment client", () => {
       yield* withServices(unlinkPrimaryEnvironmentFromCloud({ target: TARGET, clerkToken: null }));
       expect(fetchMock).toHaveBeenCalledOnce();
 
-      vi.stubEnv("VITE_BIBCODE_RELAY_URL", "");
+      vi.stubEnv("VITE_CODDY_STUDIO_RELAY_URL", "");
       yield* withServices(
         unlinkPrimaryEnvironmentFromCloud({ target: TARGET, clerkToken: "clerk-token" }),
       );

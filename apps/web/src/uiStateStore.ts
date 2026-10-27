@@ -2,7 +2,7 @@ import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
-export const PERSISTED_STATE_KEY = "bibcode:ui-state:v1";
+export const PERSISTED_STATE_KEY = "coddy-studio:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v4",
   "codething:renderer-state:v3",

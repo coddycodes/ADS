@@ -3,7 +3,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/environment";
 import * as Schema from "effect/Schema";
 import {
   defaultInstanceIdForDriver,
@@ -17,9 +17,9 @@ import {
   type ProviderOptionSelection,
   type RuntimeMode,
   type ServerProvider,
-} from "@bibcode/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@bibcode/contracts/settings";
-import { createModelSelection } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@coddy/contracts/settings";
+import { createModelSelection } from "@coddy/shared/model";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 

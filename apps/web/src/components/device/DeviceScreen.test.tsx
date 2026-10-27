@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import type { DeviceInputEvent, DeviceSnapshot } from "@bibcode/contracts";
-import { EnvironmentId } from "@bibcode/contracts";
+import type { DeviceInputEvent, DeviceSnapshot } from "@coddy/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

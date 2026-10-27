@@ -3,7 +3,7 @@ import { inverseOf, scheduleUndo } from "../edit/undoToast.logic";
 import { toastManager } from "../../ui/toast";
 import type { PullRequestsAction, PullRequestsScope } from "../usePullRequestsAction";
 import { usePullRequestsActions } from "../usePullRequestsAction";
-import type { PullRequestsContext, PullRequestsDetail, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsContext, PullRequestsDetail, ScopedProjectRef } from "@coddy/contracts";
 import {
   RefreshCcwIcon,
   CheckIcon,

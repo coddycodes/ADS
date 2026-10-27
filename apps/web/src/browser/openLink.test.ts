@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -222,7 +222,7 @@ describe("openLink", () => {
       via: "relay",
       url: "http://localhost:5173/",
     });
-    const bootstrapUrl = "https://env-p1.zone.test/__bibcode/bootstrap?cap=CAP&to=%2F";
+    const bootstrapUrl = "https://env-p1.zone.test/__coddy-studio/bootstrap?cap=CAP&to=%2F";
     resolveForNavigation.mockResolvedValue({ kind: "ok", url: bootstrapUrl });
     const { openLink } = await import("./openLink");
 
@@ -271,7 +271,7 @@ describe("openLink", () => {
       host: "10.0.0.2",
       url: "http://localhost:5173/",
     };
-    const bootstrapUrl = "http://10.0.0.2:41000/__bibcode/bootstrap?cap=CAP&to=%2F";
+    const bootstrapUrl = "http://10.0.0.2:41000/__coddy-studio/bootstrap?cap=CAP&to=%2F";
 
     function stubBrowserTab(tab: unknown) {
       const open = vi.fn(() => tab);

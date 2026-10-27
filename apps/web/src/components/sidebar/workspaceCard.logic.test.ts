@@ -1,4 +1,4 @@
-import { EnvironmentId, ProviderInstanceId, type ServerConfig } from "@bibcode/contracts";
+import { EnvironmentId, ProviderInstanceId, type ServerConfig } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { WORKSPACE_CARD_STATUS } from "../Sidebar.logic";

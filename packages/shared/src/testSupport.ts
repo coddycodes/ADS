@@ -1,5 +1,5 @@
 // Test-only fixture support. Import through the dedicated testSupport package subpath.
-import type { ExecutionEnvironmentCapabilities } from "@bibcode/contracts";
+import type { ExecutionEnvironmentCapabilities } from "@coddy/contracts";
 
 export function makeTestExecutionEnvironmentCapabilities(
   overrides: Partial<ExecutionEnvironmentCapabilities> = {},

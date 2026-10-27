@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { DiscoveredLocalServer, EnvironmentId, ServerConfig } from "@bibcode/contracts";
+import type { DiscoveredLocalServer, EnvironmentId, ServerConfig } from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useMemo, useRef } from "react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { selectWorktreeCatalogCapabilityPolicy } from "@bibcode/client-runtime/state/worktrees";
+import { selectWorktreeCatalogCapabilityPolicy } from "@coddy/client-runtime/state/worktrees";
 import { previewEnvironment } from "../../state/preview";
 import { terminalEnvironment } from "../../state/terminal";
 import { worktreeEnvironment } from "../../state/worktrees";

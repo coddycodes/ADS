@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { PreviewViewportSetting } from "@bibcode/contracts";
+import type { PreviewViewportSetting } from "@coddy/contracts";
 
 import type { Fixture } from "./types";
 import { BrowserDeviceToolbar } from "../../src/browser/BrowserDeviceToolbar";
@@ -375,7 +375,7 @@ export const settingsFixtures: readonly Fixture[] = [
       "Live Processes",
       "Resource History",
       "Codex fixture worker",
-      "BiBCode Core average",
+      "Coddy Studio Core average",
       "External Tooling average",
     ],
     render: () => <ResourceFixture />,
@@ -463,7 +463,7 @@ export const settingsFixtures: readonly Fixture[] = [
     title: "Resource usage popover",
     modules: ["components/status-bar/ResourceUsageSegment.tsx"],
     owners: ["ResourceUsageSegment", "ResourceTotalsCard"],
-    anchors: ["Resource Manager", "BiBCode Core", "External Tooling", "Highest consumers"],
+    anchors: ["Resource Manager", "Coddy Studio Core", "External Tooling", "Highest consumers"],
     render: () => (
       <ResourceUsageSegment
         diagnostics={{ diagnostics: resourceProcesses, queryError: null }}
@@ -478,7 +478,7 @@ export const settingsFixtures: readonly Fixture[] = [
     title: "Unavailable resource totals",
     modules: ["components/status-bar/ResourceUsageSegment.tsx"],
     owners: ["ResourceUsageSegment", "ResourceTotalsCard"],
-    anchors: ["Resource Manager", "Unavailable", "BiBCode Core", "External Tooling"],
+    anchors: ["Resource Manager", "Unavailable", "Coddy Studio Core", "External Tooling"],
     render: () => (
       <ResourceUsageSegment
         diagnostics={{ diagnostics: null, queryError: null }}

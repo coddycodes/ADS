@@ -292,7 +292,7 @@ impl SimctlRunner {
     /// takes `-` as a file name), so it writes to a temporary file that is read and removed.
     pub(crate) async fn screenshot_jpeg(&self, udid: &str) -> Result<Vec<u8>, SimctlError> {
         let path = RemovedOnDrop(std::env::temp_dir().join(format!(
-            "bibcode-simulator-{}.jpg",
+            "coddy-studio-simulator-{}.jpg",
             uuid::Uuid::new_v4().simple()
         )));
         let target = path.0.to_string_lossy().into_owned();
@@ -391,7 +391,7 @@ impl SimctlRunner {
     }
 
     /// Registers the booted simulator's `launchd_sim` with the profiler's sampler, so its
-    /// memory and CPU are attributed to BiBCode. Best effort: `None` when it is not found.
+    /// memory and CPU are attributed to Coddy Studio. Best effort: `None` when it is not found.
     pub(crate) async fn register_simulator(&self, udid: &str) -> Option<SimulatorProcess> {
         let owned = udid.to_owned();
         let pid = tokio::task::spawn_blocking(move || find_launchd_sim(&owned))
@@ -436,7 +436,7 @@ impl SimctlRunner {
 /// A booted simulator's `launchd_sim`, registered for attribution until dropped.
 pub(crate) struct SimulatorProcess {
     pub pid: u32,
-    /// When BiBCode found it, which bounds its uptime from below.
+    /// When Coddy Studio found it, which bounds its uptime from below.
     pub started: Instant,
     registration: Option<ProcessRegistration>,
 }
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn a_temporary_screenshot_is_removed_on_drop() {
         let path = std::env::temp_dir().join(format!(
-            "bibcode-simulator-test-{}.jpg",
+            "coddy-studio-simulator-test-{}.jpg",
             uuid::Uuid::new_v4().simple()
         ));
         std::fs::write(&path, b"jpeg").unwrap();

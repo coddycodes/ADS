@@ -1,7 +1,7 @@
 import {
   E2eeAuthenticatedMessage,
   type E2eeAuthenticatedMessage as E2eeAuthenticatedMessageType,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

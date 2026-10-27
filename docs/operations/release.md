@@ -65,7 +65,7 @@ Each matrix job installs the frontend build toolchain, Rust, and the pinned
 and in-process server and embeds the built React assets. No Node runtime or
 TypeScript server is packaged.
 
-A separate native matrix builds `bibcode` plus the matching static web client for the
+A separate native matrix builds `coddy-studio` plus the matching static web client for the
 same six targets. macOS and Linux receive `.tar.gz` archives; Windows receives `.zip`.
 Linux also receives direct-download `.deb` and `.rpm` packages for both architectures.
 The Linux server binary is compiled on an Ubuntu 20.04 compatibility baseline, then its
@@ -90,20 +90,20 @@ baseline described above.
 
 ## Standalone Server Assets
 
-Each release contains `bibcode-server-v<version>-<os>-<architecture>.tar.gz` for macOS
+Each release contains `coddy-studio-server-v<version>-<os>-<architecture>.tar.gz` for macOS
 and Linux or `.zip` for Windows. Public OS/architecture keys are
 `darwin-{aarch64,x86_64}`, `linux-{aarch64,x86_64}`, and
 `windows-{aarch64,x86_64}`. Linux also publishes:
 
-- `bibcode-server_<version>_arm64.deb`
-- `bibcode-server_<version>_amd64.deb`
-- `bibcode-server-<version>-1.aarch64.rpm`
-- `bibcode-server-<version>-1.x86_64.rpm`
+- `coddy-studio-server_<version>_arm64.deb`
+- `coddy-studio-server_<version>_amd64.deb`
+- `coddy-studio-server-<version>-1.aarch64.rpm`
+- `coddy-studio-server-<version>-1.x86_64.rpm`
 
 The packages are direct GitHub Release downloads, not hosted APT or RPM repositories.
 Before staging, each server job dumps the binary's symbols and strips it; see
 [Symbol assets](#symbol-assets).
-Every release includes `bibcode-server-SHA256SUMS`; optional server `.minisig` files
+Every release includes `coddy-studio-server-SHA256SUMS`; optional server `.minisig` files
 appear only when both dedicated server-signing secrets are configured.
 Windows server archives are written through `scripts/create-portable-zip.ps1`, which assigns
 forward-slash entry names explicitly. The artifact builder rejects a mislabeled non-ZIP payload,
@@ -112,20 +112,20 @@ backslash entry names, duplicate entries, traversal, or paths outside the versio
 ## Symbol Assets
 
 Each release also contains twelve Breakpad symbol archives, one for each
-release binary: `bibcode-desktop-symbols-<version>-<os>-<architecture>.zip` and
-`bibcode-server-symbols-<version>-<os>-<architecture>.zip`, with the public
+release binary: `coddy-studio-desktop-symbols-<version>-<os>-<architecture>.zip` and
+`coddy-studio-server-symbols-<version>-<os>-<architecture>.zip`, with the public
 OS/architecture keys of the server archives. Each archive holds one `.sym` file
 in symbol-store layout, `<module>/<debug id>/<module>.sym`. On Windows the module
 is named after its PDB: `<name>.pdb/<debug id>/<name>.sym`. `minidump-stackwalk`
 and the profiler's symbolication read that layout from the extracted archive.
 `scripts/assemble-release-assets.ts` requires all twelve and still rejects any
-other unlisted file. The archives are not covered by `bibcode-server-SHA256SUMS`
+other unlisted file. The archives are not covered by `coddy-studio-server-SHA256SUMS`
 or the optional server signatures.
 
-The archive names are a client contract. `bibcode profiler symbolicate
+The archive names are a client contract. `coddy-studio profiler symbolicate
 --download`, and the profiler MCP tool `profiler_symbolicate` with
 `download: true`, fetch
-`https://github.com/mubeda/BibCode/releases/download/v<version>/<archive>` for
+`https://github.com/mubeda/CoddyStudio/releases/download/v<version>/<archive>` for
 the version, OS, and architecture recorded in the crash sidecar or panic event,
 and unpack it into `<state dir>/profiler-symbols/`. The repository is the
 updater's, which a test pins. A release that lacks the archive answers "the
@@ -150,7 +150,7 @@ when nothing needs rebuilding. The wrapper therefore fails the job unless the
 binary is still the stripped file after bundling, and unless the copy in each
 bundle that has a readable one (the macOS app, the AppImage's file system) has
 its build ID and symbol table; Windows installers pack the binary itself. The
-server jobs build `bibcode` with the same profile (the Linux build inside its
+server jobs build `coddy-studio` with the same profile (the Linux build inside its
 Ubuntu 20.04 container), then dump and strip it on the runner before staging.
 Both strip as rustc does for executables, with `strip --strip-all` on Linux and
 plain `strip` on macOS, into a copy that replaces the binary, so Cargo's
@@ -174,24 +174,24 @@ on `main` when branch protection permits the workflow token to push.
 
 ## Cloud Configuration
 
-BiBCode Connect public configuration is optional for this fork. When Cloudflare and
+Coddy Connect public configuration is optional for this fork. When Cloudflare and
 Clerk production configuration exists, the workflow resolves and injects:
 
-- `BIBCODE_CLERK_PUBLISHABLE_KEY`;
-- `BIBCODE_CLERK_JWT_TEMPLATE`;
-- `BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID`;
-- `BIBCODE_RELAY_URL`.
+- `CODDY_STUDIO_CLERK_PUBLISHABLE_KEY`;
+- `CODDY_STUDIO_CLERK_JWT_TEMPLATE`;
+- `CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID`;
+- `CODDY_STUDIO_RELAY_URL`.
 
-`BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID` remains in build and release plumbing, but
+`CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID` remains in build and release plumbing, but
 the current native runtime has no matching headless Connect CLI or OAuth
 consumer. It does not enable a CLI login flow.
 
-Without that configuration, desktop artifacts are still built with BiBCode Connect
+Without that configuration, desktop artifacts are still built with Coddy Connect
 disabled. Never place `CLERK_SECRET_KEY` in client build variables or artifacts.
 
 Relay deployment and hosted web deployment are separate from this fork's
 desktop release. The workflow intentionally does not publish the upstream
-`bibcode` npm package or deploy the upstream Vercel project.
+`coddy-studio` npm package or deploy the upstream Vercel project.
 
 ## Signing And OS Trust
 
@@ -228,8 +228,8 @@ Developer account and new signing secrets in the release workflow. Tauri updater
 not replace Apple Developer ID signing, macOS notarization, or Windows
 Authenticode.
 
-Every server artifact is covered by `bibcode-server-SHA256SUMS`. If both
-`BIBCODE_SERVER_SIGNING_PRIVATE_KEY` and `BIBCODE_SERVER_SIGNING_PUBLIC_KEY` are
+Every server artifact is covered by `coddy-studio-server-SHA256SUMS`. If both
+`CODDY_STUDIO_SERVER_SIGNING_PRIVATE_KEY` and `CODDY_STUDIO_SERVER_SIGNING_PUBLIC_KEY` are
 configured, release assembly also creates and verifies `.minisig` files. Server signing
 is optional and uses a key separate from the mandatory Tauri updater key.
 
@@ -254,7 +254,7 @@ updater I/O. The workflow passes `--updater` only for updater candidates.
 
 The stable updater endpoint is:
 
-`https://github.com/mubeda/BibCode/releases/latest/download/latest.json`
+`https://github.com/mubeda/CoddyStudio/releases/latest/download/latest.json`
 
 Every stable `latest.json` has exactly these signed manifest targets:
 
@@ -292,7 +292,7 @@ before protection began. The installer is never called while an included
 backend remains uncommitted or running. This guarantee applies to updates
 installed from the in-app signed stable channel. Replacing the application
 manually with a DMG, NSIS executable, AppImage, or an external package manager
-does not pass through the in-app coordinator; close BiBCode before performing a
+does not pass through the in-app coordinator; close Coddy Studio before performing a
 manual replacement.
 
 The coordinated sequence rejects new mutations, drains admitted mutations,
@@ -311,10 +311,10 @@ is shown by its exact environment ID and may be explicitly excluded; a generic
 "continue anyway" is not accepted. WSL-only intent never falls back to native
 Windows during update preparation or recovery.
 
-Linux AppImage updates launched through BiBCode use this coordinator. Replacing
+Linux AppImage updates launched through Coddy Studio use this coordinator. Replacing
 an AppImage directly, installing through an external package manager, or
 manually replacing an NSIS/DMG installation is outside the coordinator. Close
-every BiBCode backend before those operations. Application files and project
+every Coddy Studio backend before those operations. Application files and project
 data are separate: a normal in-place updater replaces application files and
 must retain the selected project-data root.
 
@@ -371,7 +371,7 @@ updater key, a loopback-only mock updater, the packaged app's embedded
 WebDriver, and bounded redacted evidence. It never opens or copies the SQLite
 database directly. Linux additionally requires the normal Tauri/AppImage
 libraries plus Xvfb. The harness is **CI-only** and rejects local invocation before
-starting an application. Never run it on a machine with a user's BiBCode app:
+starting an application. Never run it on a machine with a user's Coddy Studio app:
 legacy lane cleanup can select the process name. Use the workflow's disposable
 native runners and ephemeral signing keys, not production signing credentials.
 
@@ -411,7 +411,7 @@ Evidence requires a new boot on the candidate, unchanged storage identity,
 observed download/protection progress, a verified pre-update backup, and exactly
 one requester log line. Linux additionally requires one lane-specific AppImage
 mount/runtime and cleans only processes still carrying that lane's exact
-`BIBCODE_HOME`. Host evidence is captured before WebDriver teardown; backup and
+`CODDY_STUDIO_HOME`. Host evidence is captured before WebDriver teardown; backup and
 project retention are read through public bridge/RPC observations. Credentials
 stay in a private receipt outside retained evidence and are redacted from logs.
 The upload receipt is also private and immutable. Evidence redaction removes
@@ -467,7 +467,7 @@ sources makes finalization a no-op when nothing else has changed.
 
 Write the merge and annotated-tag messages to files. Give the merge a summary
 of the requested change, implementation, tests, documentation, and review; give
-the tag a `BiBCode v<version>` subject and release summary. `git merge -F -`
+the tag a `Coddy Studio v<version>` subject and release summary. `git merge -F -`
 treats `-` as a filename. Use file-backed messages for both merge and tag so a
 failed message read cannot leave a tag on the old `main`.
 
@@ -634,7 +634,7 @@ Use a fresh inspection directory and the previous stable tag. Compare asset
 names with only the version replaced; a changed asset set needs an explanation
 from the current workflow, rather than a fixed historical asset count. The first
 release with [symbol archives](#symbol-assets) adds twelve
-`bibcode-{desktop,server}-symbols-*.zip` names to the previous set:
+`coddy-studio-{desktop,server}-symbols-*.zip` names to the previous set:
 
 ```sh
 set -eu
@@ -668,7 +668,7 @@ jq -e --arg version "$version" \
       (.signature | type == "string" and length > 0) and
       (.url | startswith($prefix)))
   ' "$inspection_dir/assets/latest.json"
-cargo run --locked -p bibcode-updater-verifier -- \
+cargo run --locked -p coddy-studio-updater-verifier -- \
   apps/desktop/src-tauri/tauri.release.conf.json \
   "$inspection_dir/assets/latest.json" "$inspection_dir/assets"
 ```
@@ -725,7 +725,7 @@ vp run release:smoke
 
 Before tagging, every workspace package's `test` script must finish
 successfully. Check the inventory in `pnpm-workspace.yaml` and each package's
-`package.json`, including `scripts`, `oxlint-plugin-bibcode`, and `infra/relay`;
+`package.json`, including `scripts`, `oxlint-plugin-coddy-studio`, and `infra/relay`;
 root `vp test` alone omits the package graph and Rust suites. The serialized
 preflight stops at the first failed package task. Cargo likewise stops after
 the first failing test binary, leaving later binaries unrun; tests within that
@@ -746,7 +746,7 @@ infrastructure:
 ```powershell
 vp test scripts/tauri-hardening.test.ts scripts/build-desktop-artifact.test.ts scripts/build-tauri-update-manifest.test.ts scripts/ci-platform-contract.test.ts scripts/release-workflow.test.ts scripts/workflow-dependencies.test.ts
 vp test apps/web/src/components/settings/SettingsPanels.test.tsx apps/web/src/components/AppSidebarLayout.test.tsx apps/web/src/tauriDesktopBridge.test.ts apps/web/src/components/desktopUpdate.logic.test.ts apps/web/src/state/desktopUpdate.test.ts
-node scripts/run-msvc.mjs cargo test -p bibcode-desktop -j 2
+node scripts/run-msvc.mjs cargo test -p coddy-studio-desktop -j 2
 ```
 
 Build the native artifact for the current operating system:
@@ -768,7 +768,7 @@ node scripts/build-desktop-artifact.ts --platform mac --target dmg --output-dir 
 
 dmg=$(find "$artifact_dir" -maxdepth 1 -type f -name '*.dmg' -print -quit)
 test -n "$dmg"
-mount_dir=$(mktemp -d /private/tmp/bibcode-icon-dmg.XXXXXX)
+mount_dir=$(mktemp -d /private/tmp/coddy-studio-icon-dmg.XXXXXX)
 attached=0
 cleanup() {
   if [ "$attached" -eq 1 ]; then hdiutil detach "$mount_dir"; fi
@@ -778,7 +778,7 @@ trap cleanup EXIT
 
 hdiutil attach -readonly -nobrowse -noverify -mountpoint "$mount_dir" "$dmg"
 attached=1
-swift scripts/check-macos-app-icon.swift "$mount_dir/BiBCode.app"
+swift scripts/check-macos-app-icon.swift "$mount_dir/Coddy Studio.app"
 )
 ```
 

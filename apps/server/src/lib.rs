@@ -1,4 +1,4 @@
-//! Reusable BiBCode server runtime.
+//! Reusable Coddy Studio server runtime.
 
 pub mod activity;
 mod agent_sessions;
@@ -100,7 +100,7 @@ pub enum RunError {
     Server(#[from] ServerError),
     #[error("failed to install the shutdown signal handler")]
     ShutdownSignal(#[source] std::io::Error),
-    #[error("failed to open the BiBCode browser client")]
+    #[error("failed to open the Coddy Studio browser client")]
     OpenBrowser(#[source] std::io::Error),
     #[error(transparent)]
     Recovery(#[from] persistence::RecoveryError),
@@ -290,13 +290,13 @@ async fn open_existing_data_root(
         let other_database = root.effective.join(other_state).join("state.sqlite");
         if other_database.exists() {
             return Err(RunError::PairingIssue(format!(
-                "no BiBCode data store at {}; a data store exists at {}; {remedy}",
+                "no Coddy Studio data store at {}; a data store exists at {}; {remedy}",
                 paths.database.display(),
                 other_database.display()
             )));
         }
         return Err(RunError::PairingIssue(format!(
-            "no BiBCode data store at {}; start the server on this data root first",
+            "no Coddy Studio data store at {}; start the server on this data root first",
             paths.database.display()
         )));
     }
@@ -440,7 +440,7 @@ fn run_service_command(command: ServiceCommand) -> Result<(), RunError> {
 
 /// Display name embedded in offers when the caller gives none.
 pub(crate) fn default_pairing_offer_name() -> String {
-    config::machine_host_name().unwrap_or_else(|| "BiBCode server".to_owned())
+    config::machine_host_name().unwrap_or_else(|| "Coddy Studio server".to_owned())
 }
 
 #[cfg(unix)]

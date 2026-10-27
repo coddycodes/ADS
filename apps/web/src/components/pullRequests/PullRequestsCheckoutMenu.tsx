@@ -1,4 +1,4 @@
-import type { PullRequestsPermission, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsPermission, ScopedProjectRef } from "@coddy/contracts";
 import { ChevronDownIcon } from "lucide-react";
 import { useId, useMemo } from "react";
 import { useEnvironmentQuery } from "../../state/query";

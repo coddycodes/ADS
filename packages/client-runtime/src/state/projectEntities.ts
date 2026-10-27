@@ -4,7 +4,7 @@ import type {
   OrchestrationShellSnapshot,
   ProjectId,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentProject } from "./models.ts";

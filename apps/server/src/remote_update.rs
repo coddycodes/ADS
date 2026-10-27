@@ -474,7 +474,7 @@ mod tests {
             Some(delegate.clone()),
         );
         let requester = RemoteUpdateRequester {
-            label: Some("BiBCode Desktop".to_owned()),
+            label: Some("Coddy Studio Desktop".to_owned()),
             os: Some("MacIntel".to_owned()),
             ip_address: None,
             session_id_prefix: Some("0123abcd".to_owned()),

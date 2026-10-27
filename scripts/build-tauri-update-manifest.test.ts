@@ -26,21 +26,21 @@ const TEST_LEGACY_SIGNATURE = Buffer.from(TEST_LEGACY_MINISIGN_SIGNATURE).toStri
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const artifacts = {
-  "darwin-aarch64": "bibcode-update-darwin-aarch64.app.tar.gz",
-  "darwin-x86_64": "bibcode-update-darwin-x86_64.app.tar.gz",
-  "linux-aarch64": "BiBCode_0.2.12_arm64.AppImage",
-  "linux-x86_64": "BiBCode_0.2.12_amd64.AppImage",
-  "windows-aarch64": "BiBCode_0.2.12_arm64-setup.exe",
-  "windows-x86_64": "BiBCode_0.2.12_x64-setup.exe",
+  "darwin-aarch64": "coddy-studio-update-darwin-aarch64.app.tar.gz",
+  "darwin-x86_64": "coddy-studio-update-darwin-x86_64.app.tar.gz",
+  "linux-aarch64": "Coddy Studio_0.2.12_arm64.AppImage",
+  "linux-x86_64": "Coddy Studio_0.2.12_amd64.AppImage",
+  "windows-aarch64": "Coddy Studio_0.2.12_arm64-setup.exe",
+  "windows-x86_64": "Coddy Studio_0.2.12_x64-setup.exe",
 } as const;
 
 const inputFor = (assetsDir: string) => ({
   assetsDir,
   version: "0.2.12",
   tag: "v0.2.12",
-  repository: "mubeda/BibCode" as const,
+  repository: "mubeda/CoddyStudio" as const,
   pubDate: "2026-07-24T12:00:00Z",
-  notes: "BiBCode v0.2.12",
+  notes: "Coddy Studio v0.2.12",
 });
 
 const writeFixture = Effect.fn("writeTauriUpdateFixture")(function* (assetsDir: string) {
@@ -69,32 +69,32 @@ it.layer(NodeServices.layer)("build-tauri-update-manifest", (it) => {
 
       const expected = {
         version: "0.2.12",
-        notes: "BiBCode v0.2.12",
+        notes: "Coddy Studio v0.2.12",
         pub_date: "2026-07-24T12:00:00Z",
         platforms: {
           "darwin-aarch64": {
             signature: TEST_SIGNATURE,
-            url: "https://github.com/mubeda/BibCode/releases/download/v0.2.12/bibcode-update-darwin-aarch64.app.tar.gz",
+            url: "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/coddy-studio-update-darwin-aarch64.app.tar.gz",
           },
           "darwin-x86_64": {
             signature: TEST_SIGNATURE,
-            url: "https://github.com/mubeda/BibCode/releases/download/v0.2.12/bibcode-update-darwin-x86_64.app.tar.gz",
+            url: "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/coddy-studio-update-darwin-x86_64.app.tar.gz",
           },
           "linux-aarch64": {
             signature: TEST_SIGNATURE,
-            url: "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_arm64.AppImage",
+            url: "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_arm64.AppImage",
           },
           "linux-x86_64": {
             signature: TEST_SIGNATURE,
-            url: "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_amd64.AppImage",
+            url: "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_amd64.AppImage",
           },
           "windows-aarch64": {
             signature: TEST_SIGNATURE,
-            url: "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_arm64-setup.exe",
+            url: "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_arm64-setup.exe",
           },
           "windows-x86_64": {
             signature: TEST_SIGNATURE,
-            url: "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_x64-setup.exe",
+            url: "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_x64-setup.exe",
           },
         },
       };
@@ -105,32 +105,32 @@ it.layer(NodeServices.layer)("build-tauri-update-manifest", (it) => {
         [
           "{",
           '  "version": "0.2.12",',
-          '  "notes": "BiBCode v0.2.12",',
+          '  "notes": "Coddy Studio v0.2.12",',
           '  "pub_date": "2026-07-24T12:00:00Z",',
           '  "platforms": {',
           '    "darwin-aarch64": {',
           `      "signature": "${TEST_SIGNATURE}",`,
-          '      "url": "https://github.com/mubeda/BibCode/releases/download/v0.2.12/bibcode-update-darwin-aarch64.app.tar.gz"',
+          '      "url": "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/coddy-studio-update-darwin-aarch64.app.tar.gz"',
           "    },",
           '    "darwin-x86_64": {',
           `      "signature": "${TEST_SIGNATURE}",`,
-          '      "url": "https://github.com/mubeda/BibCode/releases/download/v0.2.12/bibcode-update-darwin-x86_64.app.tar.gz"',
+          '      "url": "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/coddy-studio-update-darwin-x86_64.app.tar.gz"',
           "    },",
           '    "linux-aarch64": {',
           `      "signature": "${TEST_SIGNATURE}",`,
-          '      "url": "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_arm64.AppImage"',
+          '      "url": "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_arm64.AppImage"',
           "    },",
           '    "linux-x86_64": {',
           `      "signature": "${TEST_SIGNATURE}",`,
-          '      "url": "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_amd64.AppImage"',
+          '      "url": "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_amd64.AppImage"',
           "    },",
           '    "windows-aarch64": {',
           `      "signature": "${TEST_SIGNATURE}",`,
-          '      "url": "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_arm64-setup.exe"',
+          '      "url": "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_arm64-setup.exe"',
           "    },",
           '    "windows-x86_64": {',
           `      "signature": "${TEST_SIGNATURE}",`,
-          '      "url": "https://github.com/mubeda/BibCode/releases/download/v0.2.12/BiBCode_0.2.12_x64-setup.exe"',
+          '      "url": "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/Coddy Studio_0.2.12_x64-setup.exe"',
           "    }",
           "  }",
           "}",
@@ -283,7 +283,7 @@ it.layer(NodeServices.layer)("build-tauri-update-manifest", (it) => {
       const path = yield* Path.Path;
       const assetsDir = yield* fs.makeTempDirectoryScoped({ prefix: "tauri-update-url-" });
       const originalArtifact = artifacts["darwin-x86_64"];
-      const artifact = "bibcode update+(x86).app.tar.gz";
+      const artifact = "coddy-studio update+(x86).app.tar.gz";
       yield* writeFixture(assetsDir);
       yield* fs.remove(path.join(assetsDir, originalArtifact));
       yield* fs.remove(path.join(assetsDir, `${originalArtifact}.sig`));
@@ -297,7 +297,7 @@ it.layer(NodeServices.layer)("build-tauri-update-manifest", (it) => {
       const manifest = yield* buildTauriUpdateManifest(inputFor(assetsDir));
       assert.equal(
         manifest.platforms["darwin-x86_64"].url,
-        "https://github.com/mubeda/BibCode/releases/download/v0.2.12/bibcode%20update%2B%28x86%29.app.tar.gz",
+        "https://github.com/mubeda/CoddyStudio/releases/download/v0.2.12/coddy-studio%20update%2B%28x86%29.app.tar.gz",
       );
     }),
   );
@@ -315,7 +315,7 @@ it.layer(NodeServices.layer)("build-tauri-update-manifest", (it) => {
             tag: change === "tag" ? "v9.9.9" : input.tag,
             version: change === "version" ? "0.2" : input.version,
             pubDate: change === "date" ? "tomorrow" : input.pubDate,
-            repository: change === "repository" ? ("other/bibcode" as never) : input.repository,
+            repository: change === "repository" ? ("other/coddy-studio" as never) : input.repository,
           }),
         );
       }

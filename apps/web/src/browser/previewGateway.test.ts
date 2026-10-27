@@ -1,4 +1,4 @@
-import { EnvironmentId, PreviewGatewayError, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, PreviewGatewayError, ThreadId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -126,7 +126,7 @@ describe("resolveForNavigation", () => {
       }),
     ).resolves.toEqual({
       kind: "ok",
-      url: "http://192.168.1.5:41000/__bibcode/bootstrap?cap=CAP&to=%2Fapp%3Fkey%3D1%23h",
+      url: "http://192.168.1.5:41000/__coddy-studio/bootstrap?cap=CAP&to=%2Fapp%3Fkey%3D1%23h",
     });
     expect(gatewayOpen).toHaveBeenCalledWith({
       environmentId,
@@ -135,7 +135,7 @@ describe("resolveForNavigation", () => {
     expect(sshForward).not.toHaveBeenCalled();
   });
 
-  it("names this BiBCode page on the bootstrap url in browser mode so it may frame the preview", async () => {
+  it("names this Coddy Studio page on the bootstrap url in browser mode so it may frame the preview", async () => {
     vi.stubGlobal("window", {});
     vi.stubGlobal("location", { origin: "http://192.168.1.5:3773", protocol: "http:" });
     readPreparedConnection.mockReturnValue(lan());
@@ -149,7 +149,7 @@ describe("resolveForNavigation", () => {
       }),
     ).resolves.toEqual({
       kind: "ok",
-      url: "http://192.168.1.5:41000/__bibcode/bootstrap?cap=CAP&to=%2F&ui=http%3A%2F%2F192.168.1.5%3A3773",
+      url: "http://192.168.1.5:41000/__coddy-studio/bootstrap?cap=CAP&to=%2F&ui=http%3A%2F%2F192.168.1.5%3A3773",
     });
   });
 
@@ -167,7 +167,7 @@ describe("resolveForNavigation", () => {
       }),
     ).resolves.toEqual({
       kind: "ok",
-      url: "http://127.0.0.1:50000/__bibcode/bootstrap?cap=C%2B%2F%3D&to=%2F",
+      url: "http://127.0.0.1:50000/__coddy-studio/bootstrap?cap=C%2B%2F%3D&to=%2F",
     });
     // The canonical URL the server sees is always on localhost.
     expect(gatewayOpen).toHaveBeenCalledWith({
@@ -194,7 +194,7 @@ describe("resolveForNavigation", () => {
       }),
     ).resolves.toEqual({
       kind: "ok",
-      url: "http://localhost:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb%3Fx%3D1",
+      url: "http://localhost:5173/__coddy-studio/bootstrap?cap=CAP&to=%2Fcb%3Fx%3D1",
     });
     expect(sshForward).toHaveBeenCalledWith(sshTarget, 41000, 5173);
     // The real origin maps to itself, so the address bar and history keep it.
@@ -225,12 +225,12 @@ describe("resolveForNavigation", () => {
 
     await expect(open()).resolves.toEqual({
       kind: "ok",
-      url: "http://127.0.0.1:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb",
+      url: "http://127.0.0.1:5173/__coddy-studio/bootstrap?cap=CAP&to=%2Fcb",
     });
     // A tab opened after it reuses the forward and still gets the real origin.
     await expect(open("tab-1")).resolves.toEqual({
       kind: "ok",
-      url: "http://localhost:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb",
+      url: "http://localhost:5173/__coddy-studio/bootstrap?cap=CAP&to=%2Fcb",
     });
     expect(sshForward).toHaveBeenNthCalledWith(1, sshTarget, 41000, 5173);
     expect(showSamePortBusyNotice).not.toHaveBeenCalled();
@@ -376,7 +376,7 @@ describe("resolveForNavigation", () => {
       }),
     ).resolves.toEqual({
       kind: "unreachable",
-      message: "BiBCode can only preview plain HTTP addresses on Build box's own localhost.",
+      message: "Coddy Studio can only preview plain HTTP addresses on Build box's own localhost.",
       refusedByServer: true,
     });
   });
@@ -414,7 +414,7 @@ describe("resolveForNavigation", () => {
         gatewayOpen: async () => refused("not-admitted"),
       }),
     ).resolves.toMatchObject({
-      message: "BiBCode can only preview plain HTTP addresses on this environment's own localhost.",
+      message: "Coddy Studio can only preview plain HTTP addresses on this environment's own localhost.",
     });
   });
 
@@ -448,7 +448,7 @@ describe("canonicalizePreviewUrl", () => {
 
     expect(
       canonicalizePreviewUrl(
-        "http://192.168.1.5:41000/__bibcode/bootstrap?cap=CAP&to=%2Fapp%3Fkey%3D1%23h",
+        "http://192.168.1.5:41000/__coddy-studio/bootstrap?cap=CAP&to=%2Fapp%3Fkey%3D1%23h",
       ),
     ).toBe("http://localhost:5173/app?key=1#h");
     expect(canonicalizePreviewUrl("http://192.168.1.5:41000/docs?a=b#c")).toBe(
@@ -725,7 +725,7 @@ describe("ssh forward bookkeeping", () => {
       gatewayOpen: async () => opened(41000),
     });
     expect(result).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:50000\//) });
-    expect(isGatewayBootstrapUrl("http://127.0.0.1:50000/__bibcode/bootstrap?cap=C&to=%2F")).toBe(
+    expect(isGatewayBootstrapUrl("http://127.0.0.1:50000/__coddy-studio/bootstrap?cap=C&to=%2F")).toBe(
       true,
     );
     expect(canonicalizePreviewUrl("http://127.0.0.1:50000/x")).toBe("http://localhost:5173/x");
@@ -733,7 +733,7 @@ describe("ssh forward bookkeeping", () => {
     releasePreviewTab(environmentId, "tab-a");
 
     expect(canonicalizePreviewUrl("http://127.0.0.1:50000/x")).toBe("http://127.0.0.1:50000/x");
-    expect(isGatewayBootstrapUrl("http://127.0.0.1:50000/__bibcode/bootstrap?cap=C&to=%2F")).toBe(
+    expect(isGatewayBootstrapUrl("http://127.0.0.1:50000/__coddy-studio/bootstrap?cap=C&to=%2F")).toBe(
       false,
     );
   });
@@ -787,7 +787,7 @@ describe("ssh forward bookkeeping", () => {
   });
 
   it("recognizes only known gateway bootstrap pages", () => {
-    expect(isGatewayBootstrapUrl("http://localhost:5173/__bibcode/bootstrap?to=%2F")).toBe(false);
+    expect(isGatewayBootstrapUrl("http://localhost:5173/__coddy-studio/bootstrap?to=%2F")).toBe(false);
     expect(isGatewayBootstrapUrl("not a url")).toBe(false);
     expect(isGatewayBootstrapUrl(null)).toBe(false);
   });
@@ -927,7 +927,7 @@ describe("relay", () => {
     });
     expect(result).toEqual({
       kind: "ok",
-      url: "https://env-p2.zone.test/__bibcode/bootstrap?cap=CAP&to=%2Fapp%3Fx%3D1",
+      url: "https://env-p2.zone.test/__coddy-studio/bootstrap?cap=CAP&to=%2Fapp%3Fx%3D1",
     });
     expect(canonicalizePreviewUrl("https://env-p2.zone.test/next")).toBe(
       "http://localhost:5173/next",
@@ -938,7 +938,7 @@ describe("relay", () => {
   it("says previews aren't set up when the server returns no origin or refuses", async () => {
     readPreparedConnection.mockReturnValue(relay());
     const message =
-      "Previews over BiBCode Connect aren't set up for Build box yet. Open BiBCode on Build box to finish setting them up.";
+      "Previews over Coddy Connect aren't set up for Build box yet. Open Coddy Studio on Build box to finish setting them up.";
     for (const gatewayOpen of [
       vi.fn(async () => relayOpened()),
       vi.fn(async () => refused("relay-not-provisioned")),
@@ -967,13 +967,13 @@ describe("relay", () => {
     ).resolves.toEqual({
       kind: "unreachable",
       message:
-        "Too many previews of Build box are open over BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up.",
+        "Too many previews of Build box are open over Coddy Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up.",
       retryable: true,
     });
   });
 
   it("bootstraps on the returned origin for a page served from the managed endpoint", async () => {
-    // A browser opened at the environment's BiBCode Connect hostname connects as a primary
+    // A browser opened at the environment's Coddy Connect hostname connects as a primary
     // (host) environment; the server still recognizes the tunnel and names the origin.
     readPreparedConnection.mockReturnValue(
       connection(
@@ -990,12 +990,12 @@ describe("relay", () => {
       }),
     ).resolves.toEqual({
       kind: "ok",
-      url: "https://env-p3.zone.test/__bibcode/bootstrap?cap=CAP&to=%2F",
+      url: "https://env-p3.zone.test/__coddy-studio/bootstrap?cap=CAP&to=%2F",
     });
   });
 
   it("never frames a returned preview origin in browser mode, whatever the connection", async () => {
-    // BiBCode opened over plain HTTP at the managed endpoint: a framed panel can't load HTTPS.
+    // Coddy Studio opened over plain HTTP at the managed endpoint: a framed panel can't load HTTPS.
     vi.stubGlobal("window", {});
     vi.stubGlobal("location", { origin: "http://env.zone.test", protocol: "http:" });
     readPreparedConnection.mockReturnValue(
@@ -1015,7 +1015,7 @@ describe("relay", () => {
     ).resolves.toEqual({
       kind: "unreachable",
       message:
-        "Build box is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.",
+        "Build box is reached through Coddy Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.",
     });
   });
 
@@ -1065,7 +1065,7 @@ describe("relay", () => {
     ).resolves.toEqual({
       kind: "unreachable",
       message:
-        "Build box is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.",
+        "Build box is reached through Coddy Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.",
     });
     expect(gatewayOpen).not.toHaveBeenCalled();
     await expect(
@@ -1077,7 +1077,7 @@ describe("relay", () => {
       }),
     ).resolves.toEqual({
       kind: "ok",
-      url: "https://env-p1.zone.test/__bibcode/bootstrap?cap=CAP&to=%2F",
+      url: "https://env-p1.zone.test/__coddy-studio/bootstrap?cap=CAP&to=%2F",
     });
   });
 });

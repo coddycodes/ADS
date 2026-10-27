@@ -8,8 +8,8 @@ import {
   type TerminalAttachSnapshot,
   type TerminalSessionState,
   type TerminalTranscriptRuntime,
-} from "@bibcode/client-runtime/state/terminal";
-import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/terminal";
+import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@coddy/contracts";
 import { useAtomRefresh, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useMemo, useState } from "react";

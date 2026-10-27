@@ -1,4 +1,4 @@
-import { ThreadId } from "@bibcode/contracts";
+import { ThreadId } from "@coddy/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useThreadSelectionStore } from "./threadSelectionStore";

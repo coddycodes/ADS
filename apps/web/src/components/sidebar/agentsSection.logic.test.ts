@@ -1,10 +1,10 @@
-import type { EnvironmentAvailabilityStatus } from "@bibcode/client-runtime/state/shell";
+import type { EnvironmentAvailabilityStatus } from "@coddy/client-runtime/state/shell";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-} from "@bibcode/client-runtime/state/models";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@bibcode/contracts";
-import { createModelSelection } from "@bibcode/shared/model";
+} from "@coddy/client-runtime/state/models";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@coddy/contracts";
+import { createModelSelection } from "@coddy/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ThreadStatusPill } from "../Sidebar.logic";

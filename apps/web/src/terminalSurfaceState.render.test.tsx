@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

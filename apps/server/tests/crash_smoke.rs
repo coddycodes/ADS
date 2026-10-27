@@ -1,5 +1,5 @@
 //! The crash smoke, also run by CI on every OS: a real native fault in the `crash-smoke`
-//! binary must leave exactly one minidump with its sidecar that `bibcode profiler symbolicate`
+//! binary must leave exactly one minidump with its sidecar that `coddy-studio profiler symbolicate`
 //! reads, and the monitor child must never outlive the process it watches.
 
 use std::{
@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_server::diagnostics::profiler::{
+use coddy_studio_server::diagnostics::profiler::{
     crash::{self, MonitorDetector},
     runtime::{Detector, ProfilerRuntime},
     sentinel,
@@ -27,7 +27,7 @@ const SMOKE: &str = env!("CARGO_BIN_EXE_crash-smoke");
 fn native_crash_produces_a_minidump_and_a_sidecar() {
     // CI sets CRASH_SMOKE_OUT to a persistent directory so the dump survives the
     // test and can be symbolicated (and uploaded as an artifact) afterwards. It is a data
-    // root: the dump goes to its profiler directory, where `bibcode profiler` finds it.
+    // root: the dump goes to its profiler directory, where `coddy-studio profiler` finds it.
     let temp = tempfile::tempdir().unwrap();
     let out = std::env::var_os("CRASH_SMOKE_OUT").map(PathBuf::from);
     let root = out.as_deref().unwrap_or(temp.path());
@@ -89,12 +89,12 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
 
     // The CLI walks the real dump; naming its frames needs symbols, the crash reason and the
     // crashing thread's stack do not.
-    let symbolicated = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let symbolicated = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["profiler", "symbolicate", &stem, "--json", "--base-dir"])
         .arg(root)
         // A developer shell must not move the state directory to `dev/`.
         .env_remove("VITE_DEV_SERVER_URL")
-        .env_remove("BIBCODE_HOME")
+        .env_remove("CODDY_STUDIO_HOME")
         .output()
         .unwrap();
     assert!(
@@ -177,7 +177,7 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
     );
 }
 
-/// The runbooks' release-build hook: with `BIBCODE_PROFILER_CRASH_TEST=1` an armed process
+/// The runbooks' release-build hook: with `CODDY_STUDIO_PROFILER_CRASH_TEST=1` an armed process
 /// faults by itself 5 s later, here well before the 60 s it would otherwise sleep.
 #[test]
 #[cfg_attr(
@@ -190,7 +190,7 @@ fn the_crash_test_hook_faults_five_seconds_after_arming() {
     let status = Command::new(SMOKE)
         .arg(dir.path())
         .env("CRASH_SMOKE_MODE", "arm-and-sleep")
-        .env("BIBCODE_PROFILER_CRASH_TEST", "1")
+        .env("CODDY_STUDIO_PROFILER_CRASH_TEST", "1")
         .stdout(Stdio::null())
         .status()
         .unwrap();
@@ -232,7 +232,11 @@ fn the_monitor_exits_when_its_parent_is_killed() {
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    assert!(name.starts_with("bibcode-"), "{}", socket_dir.display());
+    assert!(
+        name.starts_with("coddy-studio-"),
+        "{}",
+        socket_dir.display()
+    );
     #[cfg(unix)]
     assert_eq!(mode(&socket_dir), 0o700);
 
@@ -393,7 +397,7 @@ fn a_crash_while_the_monitor_hangs_still_ends_the_process() {
     let dir = tempfile::tempdir().unwrap();
     // A real fault, 5 s after arming: a signal sent with `kill` would not fault again once
     // the hook declines it, so it could not end the process.
-    let mut smoke = spawn_armed(dir.path(), &[("BIBCODE_PROFILER_CRASH_TEST", "1")]);
+    let mut smoke = spawn_armed(dir.path(), &[("CODDY_STUDIO_PROFILER_CRASH_TEST", "1")]);
     let parent = smoke.id();
     let monitors = monitors_of(parent);
     assert_eq!(monitors.len(), 1);

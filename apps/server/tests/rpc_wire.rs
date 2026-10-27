@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use bibcode_server::{
+use coddy_studio_server::{
     ACTIVE_RPC_METHODS, CauseItem, ClientMessage, MethodMode, RequestId, RpcExit, RpcRegistry,
     ServerConfig, ServerMessage, ServerRuntime, WireMessage,
 };
@@ -558,7 +558,7 @@ async fn connect_plain(
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Option<String>,
 ) {
-    connect_plain_offering(address, chunked.then_some("bibcode.rpc.chunked.v1")).await
+    connect_plain_offering(address, chunked.then_some("coddy-studio.rpc.chunked.v1")).await
 }
 
 async fn connect_plain_offering(
@@ -605,7 +605,7 @@ async fn chunked_subprotocol_splits_large_responses_into_records() {
         .await
         .expect("server starts");
     let (mut socket, selected) = connect_plain(handle.local_addr(), true).await;
-    assert_eq!(selected.as_deref(), Some("bibcode.rpc.chunked.v1"));
+    assert_eq!(selected.as_deref(), Some("coddy-studio.rpc.chunked.v1"));
 
     send_json(
         &mut socket,
@@ -669,10 +669,13 @@ async fn deflate_subprotocol_compresses_large_responses_into_records() {
     // A new client offers both; the server prefers compression.
     let (mut socket, selected) = connect_plain_offering(
         handle.local_addr(),
-        Some("bibcode.rpc.chunked-deflate.v1, bibcode.rpc.chunked.v1"),
+        Some("coddy-studio.rpc.chunked-deflate.v1, coddy-studio.rpc.chunked.v1"),
     )
     .await;
-    assert_eq!(selected.as_deref(), Some("bibcode.rpc.chunked-deflate.v1"));
+    assert_eq!(
+        selected.as_deref(),
+        Some("coddy-studio.rpc.chunked-deflate.v1")
+    );
 
     send_json(
         &mut socket,
@@ -731,7 +734,7 @@ async fn deflate_subprotocol_compresses_large_responses_into_records() {
 
     // A client offering only chunked records, like an old one, gets them uncompressed.
     let (socket, selected) = connect_plain(handle.local_addr(), true).await;
-    assert_eq!(selected.as_deref(), Some("bibcode.rpc.chunked.v1"));
+    assert_eq!(selected.as_deref(), Some("coddy-studio.rpc.chunked.v1"));
     drop(socket);
     handle.shutdown();
     handle.join().await.expect("server joins");

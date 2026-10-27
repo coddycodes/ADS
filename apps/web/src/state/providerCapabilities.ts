@@ -1,5 +1,5 @@
-import { PROVIDER_CAPABILITIES_STALE_TIME_MS } from "@bibcode/client-runtime/state/server";
-import type { EnvironmentId, ProviderInstanceId } from "@bibcode/contracts";
+import { PROVIDER_CAPABILITIES_STALE_TIME_MS } from "@coddy/client-runtime/state/server";
+import type { EnvironmentId, ProviderInstanceId } from "@coddy/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback } from "react";
 

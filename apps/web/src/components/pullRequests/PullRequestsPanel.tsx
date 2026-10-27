@@ -1,7 +1,7 @@
-import { resolveChangeRequestPresentationForKind } from "@bibcode/shared/sourceControl";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import { environmentRpcKey } from "@bibcode/client-runtime/state/runtime";
-import type { PullRequestsDetail, ScopedProjectRef } from "@bibcode/contracts";
+import { resolveChangeRequestPresentationForKind } from "@coddy/shared/sourceControl";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import { environmentRpcKey } from "@coddy/client-runtime/state/runtime";
+import type { PullRequestsDetail, ScopedProjectRef } from "@coddy/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";

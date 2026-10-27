@@ -148,7 +148,7 @@ jobs:
             echo "release_channel=stable" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
-            echo "name=BiBCode v$version" >> "$GITHUB_OUTPUT"
+            echo "name=Coddy Studio v$version" >> "$GITHUB_OUTPUT"
             echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_PUBLISH:-false}" == "true" ]]; then
               echo "publish_requested=true" >> "$GITHUB_OUTPUT"
@@ -202,7 +202,7 @@ jobs:
             --github-output
 
   relay_public_config:
-    name: Resolve BiBCode Connect public config
+    name: Resolve Coddy Connect public config
     needs: preflight
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-24.04
@@ -229,7 +229,7 @@ jobs:
       # Clerk config here, which gates the entire desktop build matrix. When
       # none of that is configured, emit an empty public config so the desktop
       # artifacts still build (the apps treat empty cloud config as
-      # "BiBCode Connect disabled").
+      # "Coddy Connect disabled").
       - id: relay_mode
         name: Detect relay configuration
         shell: bash
@@ -237,7 +237,7 @@ jobs:
           if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No relay deployment configuration found; releasing without BiBCode Connect cloud features."
+            echo "No relay deployment configuration found; releasing without Coddy Connect cloud features."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -255,14 +255,14 @@ jobs:
           cache: true
           run-install: |
             args:
-              - --filter=bibcode-relay...
+              - --filter=coddy-studio-relay...
 
       - id: relay_state
         if: steps.relay_mode.outputs.enabled == 'true'
         name: Read production relay state
         shell: bash
         run: |
-          vp run --filter bibcode-relay deploy \
+          vp run --filter coddy-studio-relay deploy \
             --stage prod \
             --read-state \
             --github-output
@@ -314,10 +314,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.jobTimeoutMinutes }}
     env:
-      BIBCODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      BIBCODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      BIBCODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      CODDY_STUDIO_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      CODDY_STUDIO_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      CODDY_STUDIO_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ needs.preflight.outputs.is_update_candidate == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ needs.preflight.outputs.is_update_candidate == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
     strategy:
@@ -489,7 +489,7 @@ jobs:
             "release/*.dmg" \
             "release/*.AppImage" \
             "release/*.exe" \
-            "release/bibcode-desktop-symbols-*.zip"; do
+            "release/coddy-studio-desktop-symbols-*.zip"; do
             for file in $pattern; do
               cp "$file" release-publish/
             done
@@ -519,10 +519,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
-      BIBCODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      BIBCODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      BIBCODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      CODDY_STUDIO_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      CODDY_STUDIO_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      CODDY_STUDIO_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     strategy:
       fail-fast: false
       matrix:
@@ -590,7 +590,7 @@ jobs:
             . -> target
 
       - name: Build production web client
-        run: vp run --filter @bibcode/web build
+        run: vp run --filter @coddy/web build
 
       - name: Build Linux server on the compatibility baseline
         if: matrix.platform == 'linux'
@@ -622,7 +622,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates cmake curl perl pkg-config
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs |
                 sh -s -- -y --profile minimal --default-toolchain 1.98.1
-              /root/.cargo/bin/cargo build -p bibcode-server --bin bibcode --release --target "$RUST_TARGET"
+              /root/.cargo/bin/cargo build -p coddy-studio-server --bin coddy-studio --release --target "$RUST_TARGET"
               chown -R "$HOST_UID:$HOST_GID" /workspace/target
             '
 
@@ -637,7 +637,7 @@ jobs:
           CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
         run: |
           set -euo pipefail
-          cargo_args=(cargo build -p bibcode-server --bin bibcode --release --target "${{ matrix.serverArch }}-${{ matrix.platform == 'mac' && 'apple-darwin' || 'pc-windows-msvc' }}")
+          cargo_args=(cargo build -p coddy-studio-server --bin coddy-studio --release --target "${{ matrix.serverArch }}-${{ matrix.platform == 'mac' && 'apple-darwin' || 'pc-windows-msvc' }}")
           if [[ "${{ matrix.platform }}" == "win" ]]; then
             node scripts/run-msvc.mjs "${cargo_args[@]}"
           else
@@ -656,34 +656,34 @@ jobs:
           release_dir="target/${{ matrix.serverArch }}-${{ matrix.platform == 'mac' && 'apple-darwin' || matrix.platform == 'win' && 'pc-windows-msvc' || 'unknown-linux-gnu' }}/release"
           args=(node scripts/dump-symbols.ts \
             --out server-symbols \
-            --zip "server-release/bibcode-server-symbols-${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}.zip")
+            --zip "server-release/coddy-studio-server-symbols-${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}.zip")
           case "${{ matrix.platform }}" in
-            linux) args+=(--binary "$release_dir/bibcode" --module-name bibcode) ;;
-            mac) args+=(--binary "$release_dir/bibcode" --module-name bibcode --dsym "$release_dir/bibcode.dSYM") ;;
-            win) args+=(--binary "$release_dir/bibcode.exe" --module-name bibcode.exe --pdb "$release_dir/bibcode.pdb") ;;
+            linux) args+=(--binary "$release_dir/coddy-studio" --module-name coddy-studio) ;;
+            mac) args+=(--binary "$release_dir/coddy-studio" --module-name coddy-studio --dsym "$release_dir/coddy-studio.dSYM") ;;
+            win) args+=(--binary "$release_dir/coddy-studio.exe" --module-name coddy-studio.exe --pdb "$release_dir/coddy-studio.pdb") ;;
           esac
           "${args[@]}"
           # The shipped profile strips symbols as rustc does for executables (plain strip on macOS;
           # -x is the level for dynamic libraries). Windows keeps them in the PDB, which is not
           # shipped. A stripped copy replaces the binary, because Cargo's binary is a hard link to
           # its cached deps/ artifact, which an in-place strip would strip as well.
-          stripped="$release_dir/bibcode.stripped"
+          stripped="$release_dir/coddy-studio.stripped"
           case "${{ matrix.platform }}" in
-            linux) strip --strip-all -o "$stripped" "$release_dir/bibcode" ;;
-            mac) strip -o "$stripped" "$release_dir/bibcode" ;;
+            linux) strip --strip-all -o "$stripped" "$release_dir/coddy-studio" ;;
+            mac) strip -o "$stripped" "$release_dir/coddy-studio" ;;
           esac
-          if [[ -e "$stripped" ]]; then mv "$stripped" "$release_dir/bibcode"; fi
+          if [[ -e "$stripped" ]]; then mv "$stripped" "$release_dir/coddy-studio"; fi
           # Apple silicon runs only signed code. The linker ad-hoc signs arm64 executables, and
           # the stripped binary must keep a valid signature; Intel executables are not signed.
           if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" == "arm64" ]]; then
-            codesign --verify --verbose=2 "$release_dir/bibcode"
+            codesign --verify --verbose=2 "$release_dir/coddy-studio"
           fi
 
       - name: Build standalone server artifacts
         shell: bash
         run: |
           set -euo pipefail
-          binary="target/${{ matrix.serverArch }}-${{ matrix.platform == 'mac' && 'apple-darwin' || matrix.platform == 'win' && 'pc-windows-msvc' || 'unknown-linux-gnu' }}/release/bibcode"
+          binary="target/${{ matrix.serverArch }}-${{ matrix.platform == 'mac' && 'apple-darwin' || matrix.platform == 'win' && 'pc-windows-msvc' || 'unknown-linux-gnu' }}/release/coddy-studio"
           if [[ "${{ matrix.platform }}" == "win" ]]; then
             binary="$binary.exe"
           fi
@@ -701,7 +701,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          binary="server-release/staging/bibcode-server-v${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}/bibcode"
+          binary="server-release/staging/coddy-studio-server-v${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}/coddy-studio"
           if [[ "${{ matrix.platform }}" == "win" ]]; then
             binary="$binary.exe"
           fi
@@ -741,7 +741,7 @@ jobs:
             server-release/*.rpm
           if-no-files-found: error
 
-  # CLI publishing remains omitted until the `bibcode` package has its own npm
+  # CLI publishing remains omitted until the `coddy-studio` package has its own npm
   # trusted-publisher binding. Configure that binding before restoring the job.
 
   release:
@@ -829,13 +829,13 @@ jobs:
         if: needs.preflight.outputs.is_update_candidate == 'true'
         shell: bash
         run: |
-          cargo run --locked -p bibcode-updater-verifier -- apps/desktop/src-tauri/tauri.release.conf.json release-assets/latest.json release-assets
+          cargo run --locked -p coddy-studio-updater-verifier -- apps/desktop/src-tauri/tauri.release.conf.json release-assets/latest.json release-assets
 
       - name: Assemble validated release assets
         shell: bash
         env:
-          SERVER_SIGNING_PRIVATE_KEY: ${{ secrets.BIBCODE_SERVER_SIGNING_PRIVATE_KEY }}
-          SERVER_SIGNING_PUBLIC_KEY: ${{ secrets.BIBCODE_SERVER_SIGNING_PUBLIC_KEY }}
+          SERVER_SIGNING_PRIVATE_KEY: ${{ secrets.CODDY_STUDIO_SERVER_SIGNING_PRIVATE_KEY }}
+          SERVER_SIGNING_PUBLIC_KEY: ${{ secrets.CODDY_STUDIO_SERVER_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           args=(node scripts/assemble-release-assets.ts \
@@ -851,8 +851,8 @@ jobs:
               exit 1
             fi
             cargo install minisign --version 0.9.1 --locked
-            private_key="$RUNNER_TEMP/bibcode-server-signing.key"
-            public_key="$RUNNER_TEMP/bibcode-server-signing.pub"
+            private_key="$RUNNER_TEMP/coddy-studio-server-signing.key"
+            public_key="$RUNNER_TEMP/coddy-studio-server-signing.pub"
             printf '%s' "$SERVER_SIGNING_PRIVATE_KEY" > "$private_key"
             printf '%s' "$SERVER_SIGNING_PUBLIC_KEY" > "$public_key"
             chmod 600 "$private_key" "$public_key"
@@ -1019,8 +1019,8 @@ jobs:
           cache: true
           run-install: |
             args:
-              - --filter=@bibcode/scripts...
-              - --filter=@bibcode/oxlint-plugin-bibcode...
+              - --filter=@coddy/scripts...
+              - --filter=@coddy/oxlint-plugin...
 
       - id: update_versions
         name: Update version strings

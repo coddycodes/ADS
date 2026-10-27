@@ -1,4 +1,4 @@
-use bibcode_server::diagnostics::TraceDiagnosticsStore;
+use coddy_studio_server::diagnostics::TraceDiagnosticsStore;
 use serde_json::json;
 
 #[test]

@@ -1,4 +1,4 @@
-import { createAuthEnvironmentAtoms } from "@bibcode/client-runtime/state/auth";
+import { createAuthEnvironmentAtoms } from "@coddy/client-runtime/state/auth";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

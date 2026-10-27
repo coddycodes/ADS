@@ -1,4 +1,4 @@
-import { classifyPairingEndpoint } from "@bibcode/shared/advertisedEndpoint";
+import { classifyPairingEndpoint } from "@coddy/shared/advertisedEndpoint";
 
 export type ShareEndpointClass = "loopback" | "off-host" | "unconnectable";
 

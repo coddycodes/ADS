@@ -4,9 +4,9 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
-import { readBiBCodeEnvironmentVariable } from "@bibcode/shared/environmentIdentity";
+import { readCoddyStudioEnvironmentVariable } from "@coddy/shared/environmentIdentity";
 
-export interface BiBCodePublicConfig {
+export interface CoddyStudioPublicConfig {
   readonly clerkPublishableKey: string | undefined;
   readonly clerkJwtTemplate: string | undefined;
   readonly clerkCliOAuthClientId: string | undefined;
@@ -70,48 +70,48 @@ export function loadRepoEnv({
     ...baseEnv,
     ...(config.clerkPublishableKey
       ? {
-          BIBCODE_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
+          CODDY_STUDIO_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
           VITE_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
         }
       : {}),
     ...(config.clerkJwtTemplate
       ? {
-          BIBCODE_CLERK_JWT_TEMPLATE: config.clerkJwtTemplate,
+          CODDY_STUDIO_CLERK_JWT_TEMPLATE: config.clerkJwtTemplate,
           VITE_CLERK_JWT_TEMPLATE: config.clerkJwtTemplate,
         }
       : {}),
     ...(config.clerkCliOAuthClientId
       ? {
-          BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID: config.clerkCliOAuthClientId,
+          CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: config.clerkCliOAuthClientId,
         }
       : {}),
     ...(config.relayUrl
       ? {
-          BIBCODE_RELAY_URL: config.relayUrl,
-          VITE_BIBCODE_RELAY_URL: config.relayUrl,
+          CODDY_STUDIO_RELAY_URL: config.relayUrl,
+          VITE_CODDY_STUDIO_RELAY_URL: config.relayUrl,
         }
       : {}),
   };
   for (const suffix of COMPATIBLE_ENVIRONMENT_SUFFIXES) {
-    env[`BIBCODE_${suffix}`] = readBiBCodeEnvironmentVariable(env, suffix);
+    env[`CODDY_STUDIO_${suffix}`] = readCoddyStudioEnvironmentVariable(env, suffix);
   }
   return env;
 }
 
-export function resolvePublicConfig(...sources: readonly Environment[]): BiBCodePublicConfig {
+export function resolvePublicConfig(...sources: readonly Environment[]): CoddyStudioPublicConfig {
   return {
     clerkPublishableKey: firstNonEmpty(
       sources,
-      "BIBCODE_CLERK_PUBLISHABLE_KEY",
+      "CODDY_STUDIO_CLERK_PUBLISHABLE_KEY",
       "VITE_CLERK_PUBLISHABLE_KEY",
     ),
     clerkJwtTemplate: firstNonEmpty(
       sources,
-      "BIBCODE_CLERK_JWT_TEMPLATE",
+      "CODDY_STUDIO_CLERK_JWT_TEMPLATE",
       "VITE_CLERK_JWT_TEMPLATE",
     ),
-    clerkCliOAuthClientId: firstNonEmpty(sources, "BIBCODE_CLERK_CLI_OAUTH_CLIENT_ID"),
-    relayUrl: firstNonEmpty(sources, "BIBCODE_RELAY_URL", "VITE_BIBCODE_RELAY_URL"),
+    clerkCliOAuthClientId: firstNonEmpty(sources, "CODDY_STUDIO_CLERK_CLI_OAUTH_CLIENT_ID"),
+    relayUrl: firstNonEmpty(sources, "CODDY_STUDIO_RELAY_URL", "VITE_CODDY_STUDIO_RELAY_URL"),
   };
 }
 

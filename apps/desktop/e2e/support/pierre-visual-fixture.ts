@@ -38,7 +38,7 @@ function runGit(projectPath: string, args: ReadonlyArray<string>): string {
       "-C",
       projectPath,
       "-c",
-      "user.name=BiBCode UI Fixture",
+      "user.name=Coddy Studio UI Fixture",
       "-c",
       "user.email=fixture@example.test",
       ...args,

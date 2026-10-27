@@ -1,4 +1,4 @@
-import type { GitManagerMergePreview, GitManagerRefEntry } from "@bibcode/contracts";
+import type { GitManagerMergePreview, GitManagerRefEntry } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

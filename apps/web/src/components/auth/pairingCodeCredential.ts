@@ -1,4 +1,4 @@
-import { parsePairingCode } from "@bibcode/shared/pairingCode";
+import { parsePairingCode } from "@coddy/shared/pairingCode";
 
 /** Extracts the one-time pairing-link token carried by a remote-server code. */
 export function extractEmbeddedPairingToken(code: string): string | null {

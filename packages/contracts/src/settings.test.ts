@@ -160,14 +160,14 @@ describe("ServerSettings automatic Git fetch", () => {
 });
 
 describe("ServerSettings default agent", () => {
-  it("defaults to Codex chat", () => {
+  it("defaults to Coddy chat", () => {
     expect(decodeServerSettings({}).defaultAgent).toEqual({
       kind: "chat",
-      instanceId: "codex",
+      instanceId: "coddy",
     });
     expect(DEFAULT_SERVER_SETTINGS.defaultAgent).toEqual({
       kind: "chat",
-      instanceId: "codex",
+      instanceId: "coddy",
     });
   });
 
@@ -663,12 +663,12 @@ describe("ServerSettingsError", () => {
   it("formats operation failures with optional provider context", () => {
     const cause = new Error("sensitive settings detail");
     const baseError = new ServerSettingsError({
-      settingsPath: "/home/user/.config/bibcode/settings.json",
+      settingsPath: "/home/user/.config/coddy-studio/settings.json",
       operation: "read-file",
       cause,
     });
     const providerError = new ServerSettingsError({
-      settingsPath: "/home/user/.config/bibcode/settings.json",
+      settingsPath: "/home/user/.config/coddy-studio/settings.json",
       operation: "read-secret",
       providerInstanceId: "codex_personal",
       environmentVariable: "OPENAI_API_KEY",
@@ -676,10 +676,10 @@ describe("ServerSettingsError", () => {
     });
 
     expect(baseError.message).toBe(
-      "Server settings read-file failed at /home/user/.config/bibcode/settings.json.",
+      "Server settings read-file failed at /home/user/.config/coddy-studio/settings.json.",
     );
     expect(providerError.message).toBe(
-      "Server settings read-secret failed for provider codex_personal and environment variable OPENAI_API_KEY at /home/user/.config/bibcode/settings.json.",
+      "Server settings read-secret failed for provider codex_personal and environment variable OPENAI_API_KEY at /home/user/.config/coddy-studio/settings.json.",
     );
     expect(providerError.message).not.toContain(cause.message);
   });

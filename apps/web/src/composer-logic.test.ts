@@ -7,7 +7,7 @@ import {
   detectComposerTrigger as detectCapabilityComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
-  parseStandaloneComposerBiBCodeAction,
+  parseStandaloneComposerCoddyStudioAction,
   replaceTextRange,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -29,7 +29,7 @@ function detectComposerTrigger(text: string, cursor: number) {
 
 describe("detectComposerTrigger", () => {
   it("exports the canonical trigger type", () => {
-    const canonicalKind: ComposerTriggerKind = "bibcode-action";
+    const canonicalKind: ComposerTriggerKind = "coddy-studio-action";
     const canonical = {
       kind: canonicalKind,
       query: "plan",
@@ -37,7 +37,7 @@ describe("detectComposerTrigger", () => {
       rangeEnd: 5,
     } satisfies ComposerTrigger;
 
-    expect(canonical.kind).toBe("bibcode-action");
+    expect(canonical.kind).toBe("coddy-studio-action");
   });
 
   it("detects @path trigger at cursor", () => {
@@ -186,16 +186,16 @@ describe("detectComposerTrigger", () => {
     });
     expect(detectCapabilityComposerTrigger("/review", 7, profile)).toBeNull();
     expect(detectCapabilityComposerTrigger("$review", 7, profile)).toBeNull();
-    expect(detectCapabilityComposerTrigger(":plan", 5, profile)?.kind).toBe("bibcode-action");
+    expect(detectCapabilityComposerTrigger(":plan", 5, profile)?.kind).toBe("coddy-studio-action");
   });
 
-  it("detects BiBCode actions independently of provider capabilities", () => {
+  it("detects Coddy Studio actions independently of provider capabilities", () => {
     expect(
       detectCapabilityComposerTrigger(":plan", 5, {
         providerSlash: false,
         providerDollarSkill: false,
       })?.kind,
-    ).toBe("bibcode-action");
+    ).toBe("coddy-studio-action");
   });
 });
 
@@ -549,16 +549,16 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
   });
 });
 
-describe("parseStandaloneComposerBiBCodeAction", () => {
+describe("parseStandaloneComposerCoddyStudioAction", () => {
   it("parses standalone :plan action", () => {
-    expect(parseStandaloneComposerBiBCodeAction(" :plan ")).toBe("plan");
+    expect(parseStandaloneComposerCoddyStudioAction(" :plan ")).toBe("plan");
   });
 
   it("parses standalone :default action", () => {
-    expect(parseStandaloneComposerBiBCodeAction(":default")).toBe("default");
+    expect(parseStandaloneComposerCoddyStudioAction(":default")).toBe("default");
   });
 
   it("ignores actions with extra message text", () => {
-    expect(parseStandaloneComposerBiBCodeAction(":plan explain this")).toBeNull();
+    expect(parseStandaloneComposerCoddyStudioAction(":plan explain this")).toBeNull();
   });
 });

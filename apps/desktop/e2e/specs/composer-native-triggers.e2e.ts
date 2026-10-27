@@ -13,9 +13,9 @@ import {
   setDesktopUiWindowSize,
 } from "../support/ui-state.ts";
 
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
-const projectPath = process.env.BIBCODE_E2E_PROJECT_PATH;
-const providerInputLogPath = process.env.BIBCODE_E2E_PROVIDER_INPUT_LOG;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
+const projectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH;
+const providerInputLogPath = process.env.CODDY_STUDIO_E2E_PROVIDER_INPUT_LOG;
 if (!artifactDirectory || !projectPath || !providerInputLogPath) {
   throw new Error("The packaged desktop composer fixture environment was not prepared.");
 }
@@ -27,7 +27,7 @@ const preparedProviderInputLogPath: string = providerInputLogPath;
 type ComposerProvider = keyof typeof composerProviderProfiles;
 
 const composerGroupLabels = {
-  bibcode: "BiBCode",
+  "coddy-studio": "Coddy Studio",
   commands: "Commands",
   skills: "Skills",
   files: "Files",
@@ -549,17 +549,17 @@ async function assertUnifiedModelPicker(scenario: ProviderScenario): Promise<voi
 
 async function assertColonMenu(provider: ComposerProvider): Promise<void> {
   await setComposerValue(":");
-  await waitForComposerItem("bibcode-action:default");
-  await assertComposerGroups(["bibcode"]);
+  await waitForComposerItem("coddy-studio-action:default");
+  await assertComposerGroups(["coddy-studio"]);
   const ids = await visibleComposerItemIds();
   expect(ids.length).toBeGreaterThan(0);
-  expect(ids.every((id) => id.startsWith("bibcode-action:"))).toBe(true);
+  expect(ids.every((id) => id.startsWith("coddy-studio-action:"))).toBe(true);
   if (provider === "codex") {
     await browser.saveScreenshot(
       NodePath.join(preparedArtifactDirectory, "composer-colon-menu.png"),
     );
   }
-  await clickVisibleComposerItem("bibcode-action:default");
+  await clickVisibleComposerItem("coddy-studio-action:default");
   await waitForComposerValue("");
 }
 
@@ -731,7 +731,7 @@ async function persistedDraftMatches(
 ): Promise<boolean> {
   return browser.execute(
     (threadId, prompt) => {
-      const rawStore = window.localStorage.getItem("bibcode:composer-drafts:v1");
+      const rawStore = window.localStorage.getItem("coddy-studio:composer-drafts:v1");
       if (!rawStore) return false;
       const parsed = JSON.parse(rawStore) as {
         state?: {
@@ -772,7 +772,7 @@ async function persistProviderDraftsAndRestart(): Promise<void> {
   const persistedThreadSelector =
     '//*[@data-thread-item="true" and .//span[normalize-space()="main"]]';
   const openCodePanelThreadId = await browser.execute((hostThreadId) => {
-    const rawStore = window.localStorage.getItem("bibcode:center-panel-state:v1");
+    const rawStore = window.localStorage.getItem("coddy-studio:center-panel-state:v1");
     if (!rawStore) return null;
     const parsed = JSON.parse(rawStore) as {
       state?: {

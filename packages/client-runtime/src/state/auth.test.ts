@@ -1,4 +1,4 @@
-import { AuthSessionId } from "@bibcode/contracts";
+import { AuthSessionId } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
@@ -15,7 +15,7 @@ function desktopSession(sessionId: string, current: boolean) {
     scopes: ["orchestration:read"],
     method: "bearer-access-token",
     client: {
-      label: "BiBCode Tauri Desktop",
+      label: "Coddy Studio Tauri Desktop",
       deviceType: "desktop",
     },
     issuedAt: DateTime.makeUnsafe("2036-04-07T00:00:00.000Z"),

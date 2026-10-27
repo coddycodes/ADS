@@ -1,12 +1,12 @@
 import {
   getChangeRequestTerminologyForKind,
   formatChangeRequestNumber,
-} from "@bibcode/shared/sourceControl";
+} from "@coddy/shared/sourceControl";
 import type {
   PullRequestsContext,
   PullRequestsDetail,
   PullRequestsPermission,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { MoreHorizontalIcon } from "lucide-react";
 import { useContext, useId, useState, type ReactNode } from "react";
 import { writeTextToClipboard } from "../../../hooks/useCopyToClipboard";

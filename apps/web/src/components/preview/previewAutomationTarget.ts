@@ -1,4 +1,4 @@
-import type { PreviewSessionSnapshot } from "@bibcode/contracts";
+import type { PreviewSessionSnapshot } from "@coddy/contracts";
 
 interface PreviewAutomationSessionIndex {
   readonly snapshot: PreviewSessionSnapshot | null;

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { AVAILABLE_CONNECTION_STATE } from "@bibcode/client-runtime/connection";
-import type { ScopedProjectRef, ServerConfig } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { AVAILABLE_CONNECTION_STATE } from "@coddy/client-runtime/connection";
+import type { ScopedProjectRef, ServerConfig } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { act, StrictMode, Suspense, useReducer, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -34,7 +34,7 @@ vi.mock("../../state/pullRequests", () => ({
         "getChecks",
         "getFiles",
         "getVocabulary",
-        // A display-copy read from the BiBCode server, never the host.
+        // A display-copy read from the Coddy Studio server, never the host.
         "readSnapshot",
       ]
         .map((kind) => [kind, (args: unknown) => h.atom(kind, args)])

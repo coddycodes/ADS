@@ -3,8 +3,8 @@ import type {
   PreviewOpenInput,
   PreviewSessionSnapshot,
   ScopedThreadRef,
-} from "@bibcode/contracts";
-import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/contracts";
+import type { AtomCommandResult } from "@coddy/client-runtime/state/runtime";
 
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 

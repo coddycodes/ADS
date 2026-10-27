@@ -1,4 +1,4 @@
-import type { ClientSettings } from "@bibcode/contracts/settings";
+import type { ClientSettings } from "@coddy/contracts/settings";
 import { TriangleAlertIcon } from "lucide-react";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 

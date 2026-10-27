@@ -280,7 +280,7 @@ fn failure(error: &DeviceOpError) -> Value {
 }
 
 pub(super) fn device_tool_descriptors() -> Vec<Value> {
-    let on_server = "The device runs on the BiBCode server, not on this machine.";
+    let on_server = "The device runs on the Coddy Studio server, not on this machine.";
     let kinds = "Android emulators and iOS simulators (macOS servers)";
     let tool = |name: &str, title: &str, description: String, schema: Value, read_only: bool| {
         json!({

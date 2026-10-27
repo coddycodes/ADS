@@ -4,7 +4,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -942,7 +942,7 @@ describe("deriveWorkLogEntries", () => {
   it("preserves MCP server, tool, arguments, and results for expanded display", () => {
     const item = {
       type: "mcpToolCall",
-      server: "bibcode",
+      server: "coddy-studio",
       tool: "preview_status",
       arguments: {},
       status: "completed",
@@ -952,24 +952,24 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "mcp-tool-done",
         kind: "tool.completed",
-        summary: "bibcode · preview_status",
+        summary: "coddy-studio · preview_status",
         payload: {
           itemType: "mcp_tool_call",
-          title: "bibcode · preview_status",
+          title: "coddy-studio · preview_status",
           data: { item },
         },
       }),
     ];
 
     const [entry] = deriveWorkLogEntries(activities);
-    expect(entry?.toolTitle).toBe("bibcode · preview_status");
+    expect(entry?.toolTitle).toBe("coddy-studio · preview_status");
     expect(entry?.toolData).toEqual(item);
   });
 
   it("keeps MCP payloads while collapsing lifecycle updates", () => {
     const item = {
       type: "mcpToolCall",
-      server: "bibcode",
+      server: "coddy-studio",
       tool: "preview_snapshot",
       arguments: { interactiveOnly: true },
       status: "completed",
@@ -978,7 +978,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "mcp-tool-progress",
         kind: "tool.updated",
-        summary: "bibcode · preview_snapshot",
+        summary: "coddy-studio · preview_snapshot",
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
@@ -988,7 +988,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "mcp-tool-complete",
         kind: "tool.completed",
-        summary: "bibcode · preview_snapshot",
+        summary: "coddy-studio · preview_snapshot",
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",

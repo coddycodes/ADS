@@ -1,4 +1,4 @@
-import type { PreviewViewportSetting } from "@bibcode/contracts";
+import type { PreviewViewportSetting } from "@coddy/contracts";
 
 export function reconcileLockedAspectRatio(
   current: number | null,

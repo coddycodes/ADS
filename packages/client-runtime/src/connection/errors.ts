@@ -1,5 +1,5 @@
-import type { EnvironmentId } from "@bibcode/contracts";
-import type { RelayProtectedError } from "@bibcode/contracts/relay";
+import type { EnvironmentId } from "@coddy/contracts";
+import type { RelayProtectedError } from "@coddy/contracts/relay";
 import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
 import {

@@ -1,5 +1,5 @@
-import type { EnvironmentAvailabilityStatus } from "@bibcode/client-runtime/state/shell";
-import type { ScopedThreadRef } from "@bibcode/contracts";
+import type { EnvironmentAvailabilityStatus } from "@coddy/client-runtime/state/shell";
+import type { ScopedThreadRef } from "@coddy/contracts";
 import { useRouter } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,

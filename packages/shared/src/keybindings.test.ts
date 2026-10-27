@@ -1,5 +1,5 @@
-import type { KeybindingRule } from "@bibcode/contracts";
-import { MAX_KEYBINDINGS_COUNT, MAX_WHEN_EXPRESSION_DEPTH } from "@bibcode/contracts";
+import type { KeybindingRule } from "@coddy/contracts";
+import { MAX_KEYBINDINGS_COUNT, MAX_WHEN_EXPRESSION_DEPTH } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   compileResolvedKeybindingRule,

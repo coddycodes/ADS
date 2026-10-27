@@ -5,7 +5,7 @@ import {
   type PreviewAutomationStreamEvent,
   PreviewTabId,
   ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 

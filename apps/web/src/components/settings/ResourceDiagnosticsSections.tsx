@@ -3,7 +3,7 @@ import type {
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryResult,
   ServerProcessSignal,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { cn } from "../../lib/utils";
 import { PROCESS_MEMORY_METRIC_NOTE } from "../status-bar/statusBarFormat";
@@ -489,7 +489,7 @@ function ResourceHistoryChart({
       <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <span className="size-2 rounded-sm bg-blue-500/70" aria-hidden />
-          BiBCode Core average
+          Coddy Studio Core average
         </span>
         <span className="inline-flex items-center gap-1">
           <span className="size-2 rounded-sm bg-violet-500/70" aria-hidden />

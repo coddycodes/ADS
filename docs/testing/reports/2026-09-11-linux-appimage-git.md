@@ -5,7 +5,7 @@ container targets; packaged desktop qualification remains separate.
 
 ## Tested revision and scope
 
-- Repository: BiBCode, isolated worktree `.worktrees/linux-appimage-git`.
+- Repository: Coddy Studio, isolated worktree `.worktrees/linux-appimage-git`.
 - Branch: `codex/linux-appimage-git`.
 - Base HEAD: `5423cf16b291673c756cc28ebade9a973e567140`, plus the uncommitted patch.
 - The original `develop` checkout's staged documentation and untracked outputs

@@ -67,15 +67,16 @@ const FIRST_SCREENSHOT_ATTEMPTS: u32 = 5;
 /// A live screen that has not changed for this long sends its last frame again, so a new
 /// subscriber gets a picture.
 const LIVE_REPEAT_INTERVAL: Duration = Duration::from_secs(1);
-/// Why a simulator whose screen BiBCode could not attach runs view-only.
-const ATTACH_FAILED_REASON: &str = "BiBCode could not attach to this simulator's screen.";
-/// Why a live simulator whose input BiBCode could not reach takes no input.
-const INPUT_ATTACH_FAILED_REASON: &str = "BiBCode could not connect to this simulator's input.";
+/// Why a simulator whose screen Coddy Studio could not attach runs view-only.
+const ATTACH_FAILED_REASON: &str = "Coddy Studio could not attach to this simulator's screen.";
+/// Why a live simulator whose input Coddy Studio could not reach takes no input.
+const INPUT_ATTACH_FAILED_REASON: &str =
+    "Coddy Studio could not connect to this simulator's input.";
 /// How many times, and how far apart, `rotate` reads the orientation back.
 const ROTATION_POLLS: u32 = 5;
 const ROTATION_POLL_INTERVAL: Duration = Duration::from_millis(300);
-pub(crate) const EXTERNAL_SHUTDOWN: &str = "Shutdown outside BiBCode";
-pub(crate) const EXTERNAL_DELETE: &str = "Deleted outside BiBCode";
+pub(crate) const EXTERNAL_SHUTDOWN: &str = "Shutdown outside Coddy Studio";
+pub(crate) const EXTERNAL_DELETE: &str = "Deleted outside Coddy Studio";
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -100,7 +101,7 @@ impl IosBackendConfig {
     /// lists or boots the host's simulators.
     pub(crate) fn from_process(registry: ProcessAttributionRegistry) -> Self {
         let bin = if cfg!(feature = "hermetic-test-guard") {
-            PathBuf::from("/nonexistent/bibcode-hermetic")
+            PathBuf::from("/nonexistent/coddy-studio-hermetic")
         } else {
             PathBuf::from("/usr/bin")
         };
@@ -137,7 +138,7 @@ pub(crate) struct IosBackend {
     xcode: XcodeCache,
     guard: Arc<GuardCache>,
     mode: Mutex<LaunchMode>,
-    /// UDIDs BiBCode booted and has not shut down; only those are never `in_use_elsewhere`.
+    /// UDIDs Coddy Studio booted and has not shut down; only those are never `in_use_elsewhere`.
     booted: Arc<Booted>,
     #[cfg(test)]
     hid_for_tests: Option<HidFactory>,
@@ -171,7 +172,7 @@ impl IosBackend {
     /// Shuts down a simulator `launch` booted, logging a failure.
     async fn shut_down_own(&self, udid: &str, launch: u64) {
         if let Err(error) = self.runner.shutdown(udid).await {
-            tracing::warn!(%error, "could not shut down the simulator BiBCode booted");
+            tracing::warn!(%error, "could not shut down the simulator Coddy Studio booted");
         }
         self.booted.remove(udid, launch);
     }
@@ -399,7 +400,7 @@ impl DeviceBackend for IosBackend {
         Box::pin(self.launch_inner(image_id, on_phase, cancel))
     }
 
-    /// Refuses a simulator that is not `Shutdown`: it runs outside BiBCode.
+    /// Refuses a simulator that is not `Shutdown`: it runs outside Coddy Studio.
     fn check_available<'a>(
         &'a self,
         image_id: &'a str,
@@ -468,7 +469,7 @@ fn paste_failure(error: &SimctlError, chars: usize) -> DeviceOpError {
     DeviceOpError::Emulator(INPUT_FAILED.to_owned())
 }
 
-/// The simulators BiBCode booted, each with the launch that booted it.
+/// The simulators Coddy Studio booted, each with the launch that booted it.
 #[derive(Default)]
 struct Booted {
     next_launch: AtomicU64,
@@ -531,7 +532,7 @@ enum Releasing {
     Owed,
 }
 
-/// A simulator BiBCode booted.
+/// A simulator Coddy Studio booted.
 struct RunningSimulator {
     shared: Arc<Shared>,
 }
@@ -560,7 +561,7 @@ struct Shared {
     runner: Arc<SimctlRunner>,
     /// Its entry in the backend's booted set, which only this launch's stop removes.
     ownership: Ownership,
-    /// Why the simulator ended without BiBCode asking; set by the state poll.
+    /// Why the simulator ended without Coddy Studio asking; set by the state poll.
     exit: Mutex<Option<String>>,
     /// Cancels the state poll.
     poll: CancellationToken,
@@ -684,7 +685,7 @@ impl Shared {
             process.unregister();
         }
         let ended_outside = lock(&self.exit).is_some();
-        // A simulator shut down outside BiBCode may have been booted again by someone else.
+        // A simulator shut down outside Coddy Studio may have been booted again by someone else.
         if !ended_outside && let Err(error) = self.runner.shutdown(&self.udid).await {
             tracing::warn!(%error, "could not shut down the simulator");
         }
@@ -1171,7 +1172,7 @@ impl RunningDevice for RunningSimulator {
             .map_or((0, Instant::now()), |process| {
                 (process.pid, process.started)
             });
-        tracing::warn!(reason, pid, "ios simulator ended outside BiBCode");
+        tracing::warn!(reason, pid, "ios simulator ended outside Coddy Studio");
         report_simulator_exit(pid, started);
     }
 
@@ -1184,7 +1185,7 @@ impl RunningDevice for RunningSimulator {
     }
 }
 
-/// A `subprocess.crash` for a simulator that ended without BiBCode asking. It has no exit
+/// A `subprocess.crash` for a simulator that ended without Coddy Studio asking. It has no exit
 /// status of its own, so it is reported as exit code 1.
 fn report_simulator_exit(pid: u32, started: Instant) {
     use crate::diagnostics::profiler::exits::{self, Exited, Watch};
@@ -2104,17 +2105,20 @@ mod tests {
         wait_state(&manager, &id, DeviceState::Ready).await;
         sim.set_state("UDID-1", "Shutdown");
         let failed = wait_state(&manager, &id, DeviceState::Failed).await;
-        assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BiBCode"));
+        assert_eq!(
+            failed.failure.as_deref(),
+            Some("Shutdown outside Coddy Studio")
+        );
         manager.close(&id).await.unwrap();
         assert!(
             sim.calls().iter().all(|c| !c.starts_with("shutdown")),
-            "BiBCode did not shut it down: {:?}",
+            "Coddy Studio did not shut it down: {:?}",
             sim.calls()
         );
     }
 
     #[tokio::test]
-    async fn an_old_stop_keeps_a_reopened_simulator_owned_by_bibcode() {
+    async fn an_old_stop_keeps_a_reopened_simulator_owned_by_coddy_studio() {
         use super::{IosBackend, IosBackendConfig, guard::GuardCache, guard::GuardResult};
         use crate::device::{backend::DeviceBackend, catalog::AvailabilityKind};
         use tokio_util::sync::CancellationToken;
@@ -2152,7 +2156,7 @@ mod tests {
         };
         assert!(
             !in_use(backend.discover().await),
-            "BiBCode's own simulator is not running outside BiBCode"
+            "Coddy Studio's own simulator is not running outside Coddy Studio"
         );
         second.stop().await;
         sim.set_state("UDID-1", "Booted");
@@ -2221,7 +2225,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_shuts_down_only_what_bibcode_booted() {
+    async fn close_shuts_down_only_what_coddy_studio_booted() {
         let sim = FakeXcrun::new()
             .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
             .device("UDID-2", "iPhone 17e", "iOS 27.0")
@@ -2232,7 +2236,7 @@ mod tests {
         let ready = wait_state(&manager, &id, DeviceState::Ready).await;
         assert_eq!((ready.width, ready.height), (Some(60), Some(130)));
         assert!(!ready.can_rotate);
-        // Booted by BiBCode, so not in use elsewhere; the other one is.
+        // Booted by Coddy Studio, so not in use elsewhere; the other one is.
         manager.refresh_now().await;
         let images = manager.catalog().borrow().platforms[0].images.clone();
         let in_use: Vec<_> = images
@@ -2277,7 +2281,7 @@ mod tests {
         assert_eq!(
             refused,
             Err(DeviceOpError::InvalidInput(
-                "Touch input is off: Xcode 27.0 changed the simulator interfaces BiBCode uses. Simulators open as screenshots without touch input.".into()
+                "Touch input is off: Xcode 27.0 changed the simulator interfaces Coddy Studio uses. Simulators open as screenshots without touch input.".into()
             ))
         );
         // Video tickets are refused at once, so the client shows still images.

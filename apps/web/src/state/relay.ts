@@ -1,4 +1,4 @@
-import { createRelayEnvironmentDiscoveryAtoms } from "@bibcode/client-runtime/state/relay";
+import { createRelayEnvironmentDiscoveryAtoms } from "@coddy/client-runtime/state/relay";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

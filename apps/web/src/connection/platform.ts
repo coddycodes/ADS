@@ -5,7 +5,7 @@ import {
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
   SshEnvironmentGateway,
-} from "@bibcode/client-runtime/platform";
+} from "@coddy/client-runtime/platform";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -23,11 +23,11 @@ import {
   UnavailableConnectionRegistration,
   UnavailableConnectionTarget,
   Wakeups,
-} from "@bibcode/client-runtime/connection";
-import { bootstrapRemoteBearerSession } from "@bibcode/client-runtime/authorization";
-import { fetchRemoteEnvironmentDescriptor } from "@bibcode/client-runtime/environment";
-import { managedRelayAccountChanges, managedRelaySessionAtom } from "@bibcode/client-runtime/relay";
-import { EnvironmentRpcRequestObserver } from "@bibcode/client-runtime/rpc";
+} from "@coddy/client-runtime/connection";
+import { bootstrapRemoteBearerSession } from "@coddy/client-runtime/authorization";
+import { fetchRemoteEnvironmentDescriptor } from "@coddy/client-runtime/environment";
+import { managedRelayAccountChanges, managedRelaySessionAtom } from "@coddy/client-runtime/relay";
+import { EnvironmentRpcRequestObserver } from "@coddy/client-runtime/rpc";
 import {
   AuthStandardClientScopes,
   type DesktopBridge,
@@ -36,7 +36,7 @@ import {
   type DesktopSshEnvironmentTarget,
   EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -190,7 +190,7 @@ function clientMetadata() {
   const desktop = window.desktopBridge !== undefined;
   const platform = navigator.platform.trim();
   return {
-    label: desktop ? "BiBCode Desktop" : "BiBCode Web",
+    label: desktop ? "Coddy Studio Desktop" : "Coddy Studio Web",
     deviceType: "desktop" as const,
     ...(platform === "" ? {} : { os: platform }),
   };
@@ -230,7 +230,7 @@ export function sshPreparationError(cause: unknown) {
   if (SSH_TIMEOUT_PREFIX.test(message)) {
     return new ConnectionTransientError({
       reason: "timeout",
-      detail: `${message.replace(SSH_TIMEOUT_PREFIX, "")} Check the connection; BiBCode keeps trying.`,
+      detail: `${message.replace(SSH_TIMEOUT_PREFIX, "")} Check the connection; Coddy Studio keeps trying.`,
     });
   }
   if (SSH_CANCELLED_PREFIX.test(message)) {
@@ -342,7 +342,7 @@ const capabilitiesLayer = Layer.effectContext(
         if (session === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "Sign in to BiBCode Cloud to connect this environment.",
+            detail: "Sign in to Coddy Studio Cloud to connect this environment.",
           });
         }
         const token = yield* session.readClerkToken().pipe(
@@ -357,7 +357,7 @@ const capabilitiesLayer = Layer.effectContext(
         if (token === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "The BiBCode Cloud session is unavailable.",
+            detail: "The Coddy Studio Cloud session is unavailable.",
           });
         }
         return token;

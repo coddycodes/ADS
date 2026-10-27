@@ -402,7 +402,7 @@ async function main() {
   if (process.env.GITHUB_ACTIONS !== "true") throw new Error("Native browser capture is CI-only.");
   const engine = process.argv[2];
   if (engine !== "chromium" && engine !== "webkitgtk") throw new Error("Capture engine refused.");
-  const source = process.env.BIBCODE_TYPOGRAPHY_SOURCE;
+  const source = process.env.CODDY_STUDIO_TYPOGRAPHY_SOURCE;
   if (!source || !/^[a-f0-9]{40}$/.test(source)) throw new Error("Capture source refused.");
   const output = NodePath.resolve(process.argv[3] ?? `typography-artifacts/${engine}`);
   await NodeFSP.mkdir(output, { recursive: true });

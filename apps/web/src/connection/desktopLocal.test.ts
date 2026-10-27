@@ -2,8 +2,8 @@ import {
   BearerConnectionTarget,
   PrimaryConnectionTarget,
   UnavailableConnectionTarget,
-} from "@bibcode/client-runtime/connection";
-import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@bibcode/contracts";
+} from "@coddy/client-runtime/connection";
+import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

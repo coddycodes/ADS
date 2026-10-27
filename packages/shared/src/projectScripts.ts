@@ -1,4 +1,4 @@
-import type { ProjectScript } from "@bibcode/contracts";
+import type { ProjectScript } from "@coddy/contracts";
 
 interface ProjectScriptLocationInput {
   project: {
@@ -22,11 +22,11 @@ export function projectScriptRuntimeEnv(
   input: ProjectScriptRuntimeEnvInput,
 ): Record<string, string> {
   const env: Record<string, string> = {
-    BIBCODE_PROJECT_ROOT: input.project.cwd,
+    CODDY_STUDIO_PROJECT_ROOT: input.project.cwd,
   };
   const worktreePath = nonEmptyWorktreePath(input);
   if (worktreePath !== undefined) {
-    env.BIBCODE_WORKTREE_PATH = worktreePath;
+    env.CODDY_STUDIO_WORKTREE_PATH = worktreePath;
   }
   if (input.extraEnv) {
     return { ...env, ...input.extraEnv };

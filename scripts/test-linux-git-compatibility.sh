@@ -60,16 +60,16 @@ for image in "${images[@]}"; do
   esac
 
   index=$((index + 1))
-  container="bibcode-git-compat-$$-$index"
+  container="coddy-studio-git-compat-$$-$index"
   printf '\nTesting Git/AppImage isolation on %s\n' "$image"
   if timeout --kill-after=15s 15m "$engine" run --rm \
     --name "$container" \
-    --volume "$binary:/bibcode-git-test:ro,z" \
+    --volume "$binary:/coddy-studio-git-test:ro,z" \
     "$image" sh -eu -c "$install
       cat /etc/os-release
       git --version
-      /bibcode-git-test --list | grep -Fx 'git_subprocesses_ignore_appimage_libraries: test'
-      /bibcode-git-test --exact git_subprocesses_ignore_appimage_libraries --nocapture"; then
+      /coddy-studio-git-test --list | grep -Fx 'git_subprocesses_ignore_appimage_libraries: test'
+      /coddy-studio-git-test --exact git_subprocesses_ignore_appimage_libraries --nocapture"; then
     printf 'PASS %s\n' "$image"
   else
     status=$?

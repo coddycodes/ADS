@@ -1,5 +1,5 @@
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
-import type { EnvironmentId, ScopedProjectRef } from "@bibcode/contracts";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
+import type { EnvironmentId, ScopedProjectRef } from "@coddy/contracts";
 import { memo, useCallback, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";

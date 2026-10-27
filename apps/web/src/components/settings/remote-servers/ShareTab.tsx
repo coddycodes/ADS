@@ -8,13 +8,13 @@ import {
   type AuthClientSession,
   type AuthPairingLink,
   type AdvertisedEndpoint,
-} from "@bibcode/contracts";
-import { findErrorTraceId } from "@bibcode/client-runtime/errors";
+} from "@coddy/contracts";
+import { findErrorTraceId } from "@coddy/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 
 import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../../timestampFormat";
@@ -757,7 +757,7 @@ function CloudLinkSwitch({
 }) {
   const control = (
     <Switch
-      aria-label="Enable BiBCode Connect"
+      aria-label="Enable Coddy Connect"
       checked={checked}
       disabled={disabled}
       {...(onCheckedChange ? { onCheckedChange } : {})}
@@ -790,9 +790,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 
   const reportUpdateFailure = (cause: unknown) => {
     const message =
-      cause instanceof Error ? cause.message : "Could not update BiBCode Connect access.";
+      cause instanceof Error ? cause.message : "Could not update Coddy Connect access.";
     const traceId = findErrorTraceId(cause);
-    console.error("[bibcode-connect] Could not update BiBCode Connect", {
+    console.error("[coddy-connect] Could not update Coddy Connect", {
       message,
       traceId,
       cause,
@@ -800,7 +800,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
     toastManager.add({
       type: "error",
-      title: "Could not update BiBCode Connect",
+      title: "Could not update Coddy Connect",
       description: message,
       data: traceId
         ? {
@@ -830,7 +830,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       return;
     }
     if (enabled && !tokenResult.value) {
-      reportUpdateFailure(new Error("Sign in to BiBCode Connect before linking this environment."));
+      reportUpdateFailure(new Error("Sign in to Coddy Connect before linking this environment."));
       setIsUpdating(false);
       return;
     }
@@ -865,29 +865,29 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 
     toastManager.add({
       type: "success",
-      title: enabled ? "BiBCode Connect linked" : "BiBCode Connect unlinked",
+      title: enabled ? "Coddy Connect linked" : "Coddy Connect unlinked",
       description: enabled
-        ? "This environment is available through BiBCode Connect."
-        : "This environment is no longer available through BiBCode Connect.",
+        ? "This environment is available through Coddy Connect."
+        : "This environment is no longer available through Coddy Connect.",
     });
     setIsUpdating(false);
   };
 
   const disabledReason = !isSignedIn
-    ? "Sign in to BiBCode Connect to manage this environment."
+    ? "Sign in to Coddy Connect to manage this environment."
     : !canManageRelay
-      ? "Your session does not have permission to manage BiBCode Connect access."
+      ? "Your session does not have permission to manage Coddy Connect access."
       : null;
   const linked = primaryCloudLinkState.data?.linked ?? false;
 
   return (
     <>
       <SettingsRow
-        title="BiBCode Connect"
+        title="Coddy Connect"
         description={
           linked
-            ? "This environment is available to your other devices through BiBCode Connect."
-            : "Make this environment available to your other devices through BiBCode Connect."
+            ? "This environment is available to your other devices through Coddy Connect."
+            : "Make this environment available to your other devices through Coddy Connect."
         }
         status={operationError ?? primaryCloudLinkState.error}
         control={
@@ -1326,7 +1326,7 @@ export function ShareTab({
               <AlertDialogHeader>
                 <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  BiBCode will restart the local backend without Tailscale Serve.
+                  Coddy Studio will restart the local backend without Tailscale Serve.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1364,7 +1364,7 @@ export function ShareTab({
               <DialogHeader>
                 <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
                 <DialogDescription>
-                  BiBCode will restart the local backend with Tailscale Serve enabled and ask
+                  Coddy Studio will restart the local backend with Tailscale Serve enabled and ask
                   Tailscale to proxy HTTPS traffic to this backend.
                 </DialogDescription>
               </DialogHeader>

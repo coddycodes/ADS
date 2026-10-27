@@ -16,7 +16,7 @@ use super::{
     StoreOperationGuard, create_verified_backup,
     migrations::{
         ExistingStoreValidationError, apply_migrations, pending_migrations, run_migrations,
-        validate_existing_bibcode_store, validate_existing_bibcode_store_immutable,
+        validate_existing_coddy_studio_store, validate_existing_coddy_studio_store_immutable,
     },
 };
 
@@ -96,7 +96,7 @@ pub enum StoreStartupError {
     DatabaseMissing { database: PathBuf, marker: PathBuf },
     #[error("database {path} is corrupt: {detail}")]
     CorruptDatabase { path: PathBuf, detail: String },
-    #[error("database {path} is not a recognized BiBCode store: {detail}")]
+    #[error("database {path} is not a recognized Coddy Studio store: {detail}")]
     UnrecognizedStore { path: PathBuf, detail: String },
     #[error("database {path} cannot be inspected without side effects: {detail}")]
     UnsafeDatabaseState { path: PathBuf, detail: String },
@@ -331,7 +331,7 @@ pub(crate) async fn validate_existing_store(
     path: &std::path::Path,
 ) -> Result<(), StoreStartupError> {
     validate_with_operation(path.to_path_buf(), |path, cancellation| {
-        validate_existing_bibcode_store(&path, &cancellation)
+        validate_existing_coddy_studio_store(&path, &cancellation)
     })
     .await
 }
@@ -344,9 +344,9 @@ pub(crate) async fn validate_existing_store_for_inspection(
     let has_sidecars = try_exists(&wal)? || try_exists(&shm)?;
     validate_with_operation(path.to_path_buf(), move |path, cancellation| {
         if has_sidecars {
-            validate_existing_bibcode_store(&path, &cancellation)
+            validate_existing_coddy_studio_store(&path, &cancellation)
         } else {
-            validate_existing_bibcode_store_immutable(&path, &cancellation)
+            validate_existing_coddy_studio_store_immutable(&path, &cancellation)
         }
     })
     .await
@@ -650,7 +650,7 @@ mod tests {
             move |path, cancellation| {
                 let mut first_step = Some((step_tx, release_rx));
                 let result =
-                    crate::persistence::migrations::validate_existing_bibcode_store_with_control(
+                    crate::persistence::migrations::validate_existing_coddy_studio_store_with_control(
                         &path,
                         &cancellation,
                         Duration::from_secs(1),
@@ -759,7 +759,7 @@ mod tests {
             validation_path,
             move |path, cancellation| {
                 let mut first_progress = Some((inspection_tx, release_rx));
-                let result = crate::persistence::migrations::validate_existing_bibcode_store_with_inspection_control(
+                let result = crate::persistence::migrations::validate_existing_coddy_studio_store_with_inspection_control(
                     &path,
                     &cancellation,
                     Duration::from_secs(1),
@@ -889,7 +889,7 @@ mod tests {
                     operation_started_tx
                         .send(())
                         .expect("signal queued operation start");
-                    let result = validate_existing_bibcode_store(&path, &cancellation);
+                    let result = validate_existing_coddy_studio_store(&path, &cancellation);
                     let observation = result.as_ref().map_or_else(
                         |error| {
                             (

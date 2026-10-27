@@ -1,8 +1,8 @@
 import {
   type EnvironmentConnectionPresentation,
   isConnectionUnavailable,
-} from "@bibcode/client-runtime/connection";
-import type { EnvironmentId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/connection";
+import type { EnvironmentId } from "@coddy/contracts";
 
 import type { SidebarProjectAvailabilityView } from "../Sidebar.logic";
 import { Button } from "../ui/button";

@@ -16,12 +16,12 @@ const render = (code: number, description: string) =>
 const occurrences = (markup: string, text: string) => markup.split(text).length - 1;
 
 describe("PreviewUnreachable", () => {
-  it("states BiBCode's own reason once, without network tips", () => {
+  it("states Coddy Studio's own reason once, without network tips", () => {
     const reason = "Nothing is listening on port 5173 on Build box.";
     const markup = render(0, reason);
 
     expect(occurrences(markup, reason)).toBe(1);
-    // The site may be fine; BiBCode can't show it here.
+    // The site may be fine; Coddy Studio can't show it here.
     expect(markup).toContain("Can’t show this page here");
     expect(markup).not.toContain("This site can");
     expect(markup).not.toContain("Details");

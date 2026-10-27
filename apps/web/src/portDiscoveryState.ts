@@ -1,4 +1,4 @@
-import type { DiscoveredLocalServer, EnvironmentId, ThreadId } from "@bibcode/contracts";
+import type { DiscoveredLocalServer, EnvironmentId, ThreadId } from "@coddy/contracts";
 import { useMemo } from "react";
 
 import { previewEnvironment } from "./state/preview";

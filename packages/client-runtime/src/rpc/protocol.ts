@@ -1,4 +1,4 @@
-import { WsRpcGroup } from "@bibcode/contracts";
+import { WsRpcGroup } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import { RpcClient } from "effect/rpc";
 import * as RpcMessage from "effect/rpc/RpcMessage";

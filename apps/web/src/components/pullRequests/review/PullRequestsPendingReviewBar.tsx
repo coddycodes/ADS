@@ -1,4 +1,4 @@
-import type { PullRequestsDetail } from "@bibcode/contracts";
+import type { PullRequestsDetail } from "@coddy/contracts";
 import { useState } from "react";
 import { usePullRequestsStore } from "../../../pullRequestsStore";
 import { PermissionButton, constrainPermission } from "../../ui/permission-button";

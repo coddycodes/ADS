@@ -4,7 +4,7 @@ import type {
   ActivityActorSummary,
   ActivitySnapshot,
   ActivityWorkItemSummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

@@ -1,7 +1,7 @@
 packages:
   - apps/*
   - infra/*
-  - oxlint-plugin-bibcode
+  - oxlint-plugin-coddy-studio
   - packages/*
   - scripts
 
@@ -42,7 +42,7 @@ allowBuilds:
 
 overrides:
   # Keep every Clerk consumer on the same stable train. Clerk publishes wallet
-  # auth integrations as required dependencies, but BiBCode does not support
+  # auth integrations as required dependencies, but Coddy Studio does not support
   # wallet auth, so keep that unused dependency tree out of installs.
   "@clerk/backend": "catalog:"
   "@clerk/clerk-js": "catalog:"
@@ -54,7 +54,7 @@ overrides:
   "@effect/atom-react": "catalog:"
   "@effect/platform-node": "catalog:"
   # @effect/platform-node peers node-redis for its optional NodeRedis module.
-  # BiBCode does not use Redis, so do not auto-install that unused client.
+  # Coddy Studio does not use Redis, so do not auto-install that unused client.
   "@effect/platform-node>redis": "-"
   "@effect/platform-node-shared": "catalog:"
   "@effect/sql-d1": "catalog:"

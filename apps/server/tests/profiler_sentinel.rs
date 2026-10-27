@@ -6,7 +6,9 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::diagnostics::profiler::{profiler_dir, runtime::ProfilerRuntime, sentinel};
+use coddy_studio_server::diagnostics::profiler::{
+    profiler_dir, runtime::ProfilerRuntime, sentinel,
+};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
@@ -305,7 +307,10 @@ async fn a_shutdown_that_never_finished_is_info_and_not_a_crash() {
     let runtime = ProfilerRuntime::start(state.path(), rx, vec![]);
     let finding = wait_for_finding(&runtime, "shutdown.incomplete").await;
     assert_eq!(finding["severity"], "info");
-    assert_eq!(finding["title"], "BiBCode did not finish shutting down");
+    assert_eq!(
+        finding["title"],
+        "Coddy Studio did not finish shutting down"
+    );
     let status = runtime.status();
     assert_eq!(kinds(&status), ["shutdown.incomplete"]);
     assert!(status["lastCrashAt"].is_null(), "{status}");
@@ -398,7 +403,7 @@ fn write_session(state: &Path, session_state: &str, boot_id: Option<String>) {
         "state": session_state,
         "pid": 4_000_000_000_u32,
         "bootId": boot_id,
-        "exe": "bibcode-sentinel-test",
+        "exe": "coddy-studio-sentinel-test",
         "version": "0.0.0",
         "startedAt": started_at
             .format(&time::format_description::well_known::Rfc3339)

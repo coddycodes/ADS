@@ -3,8 +3,8 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ProjectId, ThreadId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/environment";
+import { EnvironmentId, ProjectId, ThreadId } from "@coddy/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { createJSONStorage } from "zustand/middleware";
 

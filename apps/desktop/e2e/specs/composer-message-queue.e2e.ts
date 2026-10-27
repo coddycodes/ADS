@@ -15,9 +15,9 @@ import {
   setDesktopUiWindowSize,
 } from "../support/ui-state.ts";
 
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
-const projectPath = process.env.BIBCODE_E2E_PROJECT_PATH;
-const providerInputLogPath = process.env.BIBCODE_E2E_PROVIDER_INPUT_LOG;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
+const projectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH;
+const providerInputLogPath = process.env.CODDY_STUDIO_E2E_PROVIDER_INPUT_LOG;
 if (!artifactDirectory || !projectPath || !providerInputLogPath) {
   throw new Error("The packaged desktop message queue fixture environment was not prepared.");
 }

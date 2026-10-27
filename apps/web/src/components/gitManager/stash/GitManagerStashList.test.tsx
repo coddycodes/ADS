@@ -5,8 +5,8 @@ import type {
   GitManagerDiff,
   GitManagerStashEntry,
   ScopedProjectRef,
-} from "@bibcode/contracts";
-import { GitManagerOperationError } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { GitManagerOperationError } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";

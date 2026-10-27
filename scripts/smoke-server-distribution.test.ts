@@ -26,28 +26,28 @@ it("accepts only the Windows termination exit used by Node child cleanup", () =>
   expect(isExpectedServerShutdownExit("darwin", 1)).toBe(false);
 });
 
-// The fixture stands in for a POSIX `bibcode` binary through a shebang script,
+// The fixture stands in for a POSIX `coddy-studio` binary through a shebang script,
 // which Windows cannot execute directly; the Windows server distribution is
-// smoked against the real `bibcode.exe` by the release smoke instead.
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- The host-only guard samples the platform once for this fixture.
+// smoked against the real `coddy-studio.exe` by the release smoke instead.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- The host-only guard samples the platform once for this fixture.
 const isNativeWindowsHost = process.platform === "win32";
 
 it.skipIf(isNativeWindowsHost)(
   "proves packaged web, descriptor, pairing exchange, and clean shutdown",
   async () => {
-    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-server-smoke-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-server-smoke-"));
     temporaryRoots.push(root);
-    const binary = NodePath.join(root, "bibcode");
+    const binary = NodePath.join(root, "coddy-studio");
     const web = NodePath.join(root, "web");
     NodeFS.mkdirSync(web);
-    NodeFS.writeFileSync(NodePath.join(web, "index.html"), "<main>Packaged BiBCode</main>");
+    NodeFS.writeFileSync(NodePath.join(web, "index.html"), "<main>Packaged Coddy Studio</main>");
     NodeFS.writeFileSync(
       binary,
       `#!/usr/bin/env node
 const http = require("node:http");
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
-  process.stdout.write("bibcode 0.4.3\\n");
+  process.stdout.write("coddy-studio 0.4.3\\n");
   process.exit(0);
 }
 if (args[0] === "pairing") {
@@ -57,10 +57,10 @@ if (args[0] === "pairing") {
 const server = http.createServer((request, response) => {
   if (request.url === "/") {
     response.writeHead(200, { "content-type": "text/html" });
-    response.end("<main>Packaged BiBCode</main>");
+    response.end("<main>Packaged Coddy Studio</main>");
     return;
   }
-  if (request.url === "/.well-known/bibcode/environment") {
+  if (request.url === "/.well-known/coddy-studio/environment") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ environmentId: "fixture-environment" }));
     return;
@@ -100,7 +100,7 @@ process.on("SIGTERM", () => server.close(() => process.exit(0)));
       version: "0.4.3",
       environmentId: "fixture-environment",
       tokenType: "DPoP",
-      webContainsBiBCode: true,
+      webContainsCoddyStudio: true,
       exitCode: 0,
     });
   },

@@ -133,7 +133,7 @@ export const resolveNightlyReleaseMetadata = (
     baseVersion,
     version,
     tag: `v${version}`,
-    name: `BiBCode Nightly ${version} (${shortSha})`,
+    name: `Coddy Studio Nightly ${version} (${shortSha})`,
     shortSha,
   };
 };

@@ -1,5 +1,5 @@
-import type { DeviceAvailabilityKind, DevicePlatform, DeviceSnapshot } from "@bibcode/contracts";
-import { isQueryTransportCutoff } from "@bibcode/client-runtime/state/runtime";
+import type { DeviceAvailabilityKind, DevicePlatform, DeviceSnapshot } from "@coddy/contracts";
+import { isQueryTransportCutoff } from "@coddy/client-runtime/state/runtime";
 
 /** The Settings → Mobile emulators section the pane's "Open settings" lands on, suffixed by environment. */
 export const DEVICE_PREVIEWS_SETTINGS_ANCHOR = "device-previews";
@@ -9,7 +9,7 @@ export const DEVICE_PREVIEWS_OFF_MESSAGE =
   "Device previews are off. Turn them on in Settings → Mobile emulators.";
 
 export const DEVICE_PREVIEWS_UNSUPPORTED_MESSAGE =
-  "This server's BiBCode version has no device previews. Update the server to use them.";
+  "This server's Coddy Studio version has no device previews. Update the server to use them.";
 
 export const DEVICE_PREVIEWS_DESCRIPTION =
   "Android emulators and, on macOS servers, iOS simulators.";
@@ -20,8 +20,8 @@ export const PLATFORM_LABELS: Readonly<Record<DevicePlatform, string>> = {
   ios: "iOS",
 };
 
-/** Appended to an image that already runs outside BiBCode, which the picker lists disabled. */
-export const IN_USE_ELSEWHERE_SUFFIX = " — Running outside BiBCode";
+/** Appended to an image that already runs outside Coddy Studio, which the picker lists disabled. */
+export const IN_USE_ELSEWHERE_SUFFIX = " — Running outside Coddy Studio";
 
 /**
  * The availability kinds whose images still open, as screenshots without input: the platform
@@ -47,7 +47,7 @@ export const PASTE_HINTS: Readonly<Record<DevicePlatform, string>> = {
 
 /** When the browser will not hand the clipboard to the Paste button. */
 export const CLIPBOARD_UNREADABLE_MESSAGE =
-  "BiBCode can't read the clipboard here. Click the screen and paste with Ctrl+V or ⌘V.";
+  "Coddy Studio can't read the clipboard here. Click the screen and paste with Ctrl+V or ⌘V.";
 
 /** Why a toolbar control is disabled; every disabled control says one of these. */
 export const DEVICE_DISABLED_REASONS = {
@@ -180,7 +180,7 @@ export function describeDeviceError(error: unknown, fallback: string): DeviceErr
     case "DeviceBusyError":
       return plain(
         message ??
-          "This device is already running outside BiBCode. Shut it down there, then open it here.",
+          "This device is already running outside Coddy Studio. Shut it down there, then open it here.",
       );
     case "DeviceSdkUnavailableError":
       return plain(message ?? "The Android SDK is not available on this server.");

@@ -2,8 +2,8 @@
 
 /* oxlint-disable react/no-unstable-nested-components */
 
-import { scopeProjectRef, scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { type ProjectId } from "@bibcode/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@coddy/client-runtime/environment";
+import { type ProjectId } from "@coddy/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   ArrowDownIcon,

@@ -1,4 +1,4 @@
-import type { GitManagerBlockedReason, GitManagerInProgressOperation } from "@bibcode/contracts";
+import type { GitManagerBlockedReason, GitManagerInProgressOperation } from "@coddy/contracts";
 
 export interface InProgressOperationPresentation {
   readonly label: string;

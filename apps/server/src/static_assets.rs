@@ -68,7 +68,7 @@ pub fn resolve_static_dir(
     let Some(prefix) = executable_directory.parent() else {
         return Ok(None);
     };
-    let installed = prefix.join("share/bibcode/web");
+    let installed = prefix.join("share/coddy-studio/web");
     Ok(
         is_valid_static_dir(&installed).then_some(ResolvedStaticDir {
             path: installed,

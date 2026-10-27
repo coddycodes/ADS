@@ -8,7 +8,7 @@
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 
 const h = vi.hoisted(() => ({
   effects: [] as Array<() => void | (() => void)>,

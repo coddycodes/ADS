@@ -4,9 +4,9 @@ import { type ReactNode, useSyncExternalStore } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@bibcode/contracts";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@bibcode/contracts/settings";
-import { SshConnectionTarget } from "@bibcode/client-runtime/connection";
+import { EnvironmentId } from "@coddy/contracts";
+import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@coddy/contracts/settings";
+import { SshConnectionTarget } from "@coddy/client-runtime/connection";
 import type { PickHostFolderResult } from "../hostFolderPicker";
 import type { EnvironmentPresentation } from "../../state/environments";
 
@@ -80,7 +80,7 @@ vi.mock("../../hooks/useSettings", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { readonly _tag?: string }) => result._tag === "Interrupted",
   squashAtomCommandFailure: (result: { readonly error?: unknown }) => result.error,
 }));

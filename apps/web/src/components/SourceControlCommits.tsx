@@ -1,4 +1,4 @@
-import type { ScopedThreadRef, VcsCommit } from "@bibcode/contracts";
+import type { ScopedThreadRef, VcsCommit } from "@coddy/contracts";
 import { ChevronDownIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 

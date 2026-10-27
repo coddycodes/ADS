@@ -1,4 +1,4 @@
-import type { PreviewViewportSetting } from "@bibcode/contracts";
+import type { PreviewViewportSetting } from "@coddy/contracts";
 
 type BrowserViewportHandler = (setting: PreviewViewportSetting) => Promise<void>;
 

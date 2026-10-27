@@ -103,7 +103,7 @@ pub fn run() {
     // Before GTK starts: GLib takes one log writer per process.
     #[cfg(target_os = "linux")]
     display_loss::install();
-    bibcode_server::allocator::start_heap_trimmer();
+    coddy_studio_server::allocator::start_heap_trimmer();
     let builder = tauri::Builder::<bridge::DesktopRuntime>::new()
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
         .manage(backend::BackendSupervisor::new())
@@ -161,7 +161,7 @@ pub fn run() {
         {
             use tauri_plugin_deep_link::DeepLinkExt;
             if let Err(error) = app.deep_link().register_all() {
-                tracing::warn!("failed to register bibcode:// deep-link handler: {error}");
+                tracing::warn!("failed to register coddy-studio:// deep-link handler: {error}");
             }
         }
 
@@ -281,13 +281,13 @@ pub fn run() {
     ]);
     builder
         .build(desktop_context())
-        .expect("error while building BiBCode Tauri application")
+        .expect("error while building Coddy Studio Tauri application")
         .run(|app_handle, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 #[cfg(windows)]
                 EXIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
                 // So a quit that never finishes shutting down says so on the next start.
-                bibcode_server::diagnostics::profiler::note_exit("quit", None);
+                coddy_studio_server::diagnostics::profiler::note_exit("quit", None);
                 if let Err(error) =
                     tauri::async_runtime::block_on(prepare_desktop_runtime_for_exit(app_handle))
                 {
@@ -315,14 +315,14 @@ pub fn run() {
 static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Windows ended the session (shut down, signed out, or Restart Manager closed the app) with
-/// BiBCode open. Tao destroys its event loop on `WM_ENDSESSION`, which is how `Exit` arrives
+/// Coddy Studio open. Tao destroys its event loop on `WM_ENDSESSION`, which is how `Exit` arrives
 /// without `ExitRequested`, then keeps dispatching messages until Windows ends the process,
 /// and the next one panics with "cannot move state from Destroyed" (#102). Tao 0.36 exits here
-/// (tauri-apps/tao#1157), but Tauri 2.11 still requires tao 0.35, so BiBCode does it.
+/// (tauri-apps/tao#1157), but Tauri 2.11 still requires tao 0.35, so Coddy Studio does it.
 #[cfg(windows)]
 fn end_session<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> ! {
-    bibcode_server::diagnostics::profiler::note_exit(
-        bibcode_server::diagnostics::profiler::sentinel::SESSION_END,
+    coddy_studio_server::diagnostics::profiler::note_exit(
+        coddy_studio_server::diagnostics::profiler::sentinel::SESSION_END,
         None,
     );
     // What Tauri does after this callback returns: tray icons and the like.
@@ -369,12 +369,12 @@ fn desktop_e2e_logging_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin
                 .map_err(std::io::Error::other)?
                 .join("logs")
                 .join("server.log");
-            bibcode_server::logging::initialize(&server_log)?;
+            coddy_studio_server::logging::initialize(&server_log)?;
             Ok(())
         })
         .on_page_load(move |webview, payload| {
             if let Some(message) = page_loads.message(webview.label(), payload.event()) {
-                tracing::info!(target: "bibcode::desktop_e2e", "{message}");
+                tracing::info!(target: "coddy-studio::desktop_e2e", "{message}");
             }
         })
         .build()

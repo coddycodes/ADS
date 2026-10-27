@@ -12,7 +12,7 @@
  * (`desktopBridge`, `requestAnimationFrame`, `setInterval`), so a window stub is
  * installed per test.
  */
-import type { DesktopSshPasswordPromptRequest } from "@bibcode/contracts";
+import type { DesktopSshPasswordPromptRequest } from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => {

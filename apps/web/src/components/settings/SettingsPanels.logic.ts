@@ -5,8 +5,8 @@ import type {
   ProviderSessionDefault,
   ServerSettings,
   UnifiedSettings,
-} from "@bibcode/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@coddy/contracts/settings";
 
 type ProviderSessionDefaultsMap = ServerSettings["providerSessionDefaults"];
 

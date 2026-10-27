@@ -221,7 +221,7 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "'BiBCode Environment'",
+      "default": "'Coddy Studio Environment'",
       "generated": null,
       "identity": null,
       "name": "environment_label",

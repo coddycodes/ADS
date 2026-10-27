@@ -1,4 +1,4 @@
-import type { UploadAppendInput } from "@bibcode/contracts";
+import type { UploadAppendInput } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import { RpcClientError } from "effect/rpc";
 import { vi } from "vite-plus/test";

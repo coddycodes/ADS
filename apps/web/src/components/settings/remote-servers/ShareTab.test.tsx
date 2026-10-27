@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vite-plus/test";
-import type { AdvertisedEndpoint } from "@bibcode/contracts";
+import type { AdvertisedEndpoint } from "@coddy/contracts";
 
 import { ShareTab } from "./ShareTab";
 import { endpointDefaultPreferenceKey, selectPairingEndpoint } from "./shared";

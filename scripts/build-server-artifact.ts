@@ -100,7 +100,7 @@ function rejectOverlap(outputDir: string, source: string, label: string): void {
 }
 
 function executableName(target: ReleaseTarget): string {
-  return target.platform === "win" ? "bibcode.exe" : "bibcode";
+  return target.platform === "win" ? "coddy-studio.exe" : "coddy-studio";
 }
 
 export function planServerArtifact(
@@ -145,7 +145,7 @@ export function planServerArtifact(
     rejectOverlap(outputDir, source, label);
   }
 
-  const distributionRootName = `bibcode-server-v${input.version}-${target.serverOs}-${target.serverArch}`;
+  const distributionRootName = `coddy-studio-server-v${input.version}-${target.serverOs}-${target.serverArch}`;
   const archiveName = `${distributionRootName}.${target.serverArchive}`;
   const stagingParent = NodePath.join(outputDir, "staging");
   const stagingDir = NodePath.join(stagingParent, distributionRootName);
@@ -179,17 +179,17 @@ export function planServerArtifact(
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; $archive = [IO.Compression.ZipFile]::OpenRead($env:BIBCODE_SERVER_ARCHIVE_DESTINATION); try { $archive.Entries | ForEach-Object { [Console]::Out.WriteLine($_.FullName) } } finally { $archive.Dispose() }",
+            "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; $archive = [IO.Compression.ZipFile]::OpenRead($env:CODDY_STUDIO_SERVER_ARCHIVE_DESTINATION); try { $archive.Entries | ForEach-Object { [Console]::Out.WriteLine($_.FullName) } } finally { $archive.Dispose() }",
           ],
-          env: { BIBCODE_SERVER_ARCHIVE_DESTINATION: archiveName },
+          env: { CODDY_STUDIO_SERVER_ARCHIVE_DESTINATION: archiveName },
         }
       : { command: "tar", args: ["-tf", archiveName] };
   const cargoArgs = [
     "build",
     "-p",
-    "bibcode-server",
+    "coddy-studio-server",
     "--bin",
-    "bibcode",
+    "coddy-studio",
     "--release",
     "--target",
     target.rustTarget,
@@ -204,8 +204,8 @@ export function planServerArtifact(
   const packageArtifacts =
     target.platform === "linux"
       ? [
-          NodePath.join(outputDir, `bibcode-server_${input.version}_${target.debArch}.deb`),
-          NodePath.join(outputDir, `bibcode-server-${input.version}-1.${target.rpmArch}.rpm`),
+          NodePath.join(outputDir, `coddy-studio-server_${input.version}_${target.debArch}.deb`),
+          NodePath.join(outputDir, `coddy-studio-server-${input.version}-1.${target.rpmArch}.rpm`),
         ]
       : [];
   const nfpmExecutable =
@@ -213,8 +213,8 @@ export function planServerArtifact(
       ? planNfpmInstall("linux", target.arch, repositoryRoot).executablePath
       : undefined;
   const packageEnvironment = {
-    BIBCODE_SERVER_PACKAGE_ROOT: stagingDir,
-    BIBCODE_SERVER_PACKAGE_VERSION: input.version,
+    CODDY_STUDIO_SERVER_PACKAGE_ROOT: stagingDir,
+    CODDY_STUDIO_SERVER_PACKAGE_VERSION: input.version,
   };
   const packageCommands =
     target.platform === "linux" && nfpmExecutable !== undefined
@@ -230,7 +230,7 @@ export function planServerArtifact(
               "--target",
               packageArtifacts[0]!,
             ],
-            env: { ...packageEnvironment, BIBCODE_SERVER_PACKAGE_ARCH: target.debArch! },
+            env: { ...packageEnvironment, CODDY_STUDIO_SERVER_PACKAGE_ARCH: target.debArch! },
           },
           {
             command: nfpmExecutable,
@@ -243,7 +243,7 @@ export function planServerArtifact(
               "--target",
               packageArtifacts[1]!,
             ],
-            env: { ...packageEnvironment, BIBCODE_SERVER_PACKAGE_ARCH: target.rpmArch! },
+            env: { ...packageEnvironment, CODDY_STUDIO_SERVER_PACKAGE_ARCH: target.rpmArch! },
           },
         ]
       : [];
@@ -269,7 +269,7 @@ export function planServerArtifact(
     skipBuild: input.skipBuild ?? false,
     verbose: input.verbose ?? false,
     buildCommands: [
-      { command: "vp", args: ["run", "--filter", "@bibcode/web", "build"] },
+      { command: "vp", args: ["run", "--filter", "@coddy/web", "build"] },
       serverBuild,
     ],
   };
@@ -495,9 +495,9 @@ export function parseServerArtifactArguments(
 export async function runBuildServerArtifactMain(isMain: boolean): Promise<boolean> {
   if (!isMain) return false;
   const input = parseServerArtifactArguments(process.argv.slice(2));
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone CLI samples the native host once and keeps planning injectable in tests.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone CLI samples the native host once and keeps planning injectable in tests.
   const hostPlatform = NodeOS.platform();
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone CLI samples the native host once and keeps planning injectable in tests.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone CLI samples the native host once and keeps planning injectable in tests.
   const hostArch = NodeOS.arch();
   const plan = planServerArtifact(input, {
     platform: hostPlatform,

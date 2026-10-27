@@ -5,7 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   TurnId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { act, createRef, type ComponentProps, type ReactNode, type Ref } from "react";
 import type { WorkLogEntry } from "../../session-logic";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -158,7 +158,7 @@ vi.mock("@pierre/diffs/react", () => {
 });
 
 beforeEach(async () => {
-  domWindow = new Window({ url: "https://bibcode.test/" });
+  domWindow = new Window({ url: "https://coddy.test/" });
   vi.stubGlobal("window", domWindow);
   vi.stubGlobal("document", domWindow.document);
   vi.stubGlobal("navigator", domWindow.navigator);
@@ -610,16 +610,16 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
-              changedFiles: ["C:/Users/mike/dev-stuff/bibcode/apps/web/src/session-logic.ts"],
+              changedFiles: ["C:/Users/mike/dev-stuff/coddy-studio/apps/web/src/session-logic.ts"],
             },
           },
         ]}
-        workspaceRoot="C:/Users/mike/dev-stuff/bibcode"
+        workspaceRoot="C:/Users/mike/dev-stuff/coddy-studio"
       />,
     );
 
-    expect(markup).toContain("bibcode/apps/web/src/session-logic.ts");
-    expect(markup).not.toContain("C:/Users/mike/dev-stuff/bibcode/apps/web/src/session-logic.ts");
+    expect(markup).toContain("coddy-studio/apps/web/src/session-logic.ts");
+    expect(markup).not.toContain("C:/Users/mike/dev-stuff/coddy-studio/apps/web/src/session-logic.ts");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", async () => {

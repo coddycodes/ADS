@@ -11,7 +11,7 @@ import {
   type UserInputQuestion,
   type ThreadId,
   type TurnId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import type {
   ChatMessage,

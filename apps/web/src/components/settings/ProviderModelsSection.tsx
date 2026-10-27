@@ -15,8 +15,8 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProviderModel,
-} from "@bibcode/contracts";
-import { normalizeModelSlug } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { normalizeModelSlug } from "@coddy/shared/model";
 
 import { cn } from "../../lib/utils";
 import { sortModelsForProviderInstance } from "../../modelOrdering";

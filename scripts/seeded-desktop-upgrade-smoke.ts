@@ -15,7 +15,7 @@ import {
   REMOTE_UPDATE_DOWNLOAD_BUDGET_MS,
   REMOTE_UPDATE_INSTALL_BUDGET_MS,
   REMOTE_UPDATE_RESTART_BUDGET_MS,
-} from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+} from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 
 import { MOCK_UPDATE_LOOPBACK_HOST, MOCK_UPDATE_READY_PATH } from "./mock-update-server.ts";
 import { requireReleaseTarget, type TauriUpdaterTarget } from "./lib/release-targets.ts";
@@ -196,7 +196,7 @@ export function scopedCleanupPids(
   home: string,
 ): ReadonlyArray<number> {
   return processes
-    .filter((entry) => entry.environ.split("\0").includes(`BIBCODE_HOME=${home}`))
+    .filter((entry) => entry.environ.split("\0").includes(`CODDY_STUDIO_HOME=${home}`))
     .map((entry) => entry.pid);
 }
 
@@ -404,7 +404,7 @@ export function buildLocalUpdaterManifest(input: {
   }
   return {
     version: input.candidateVersion,
-    notes: "BiBCode seeded packaged-upgrade smoke",
+    notes: "Coddy Studio seeded packaged-upgrade smoke",
     pub_date: "2026-01-01T00:00:00Z",
     platforms: {
       [input.target]: {
@@ -509,7 +509,7 @@ async function observe(seed) {
     const descriptorResponse = await new Promise((resolve, reject) => {
       const startedAt = Date.now();
       const poll = () => {
-        fetch(new URL("/.well-known/bibcode/environment", bootstrap.httpBaseUrl))
+        fetch(new URL("/.well-known/coddy-studio/environment", bootstrap.httpBaseUrl))
           .then((response) => {
             if (response.ok) return resolve(response);
             if (Date.now() - startedAt >= 5000) {
@@ -1179,11 +1179,11 @@ export async function observeWindowsInstalledCandidate(input: {
   readonly readMs: number | null;
   readonly tasklistMs: number | null;
 }> {
-  const productName = input.productName ?? "BiBCode";
+  const productName = input.productName ?? "Coddy Studio";
   // tauri-plugin-updater writes the downloaded NSIS bytes as
-  // `{package}-{version}-installer.exe`, the package being `bibcode-desktop`.
+  // `{package}-{version}-installer.exe`, the package being `coddy-studio-desktop`.
   const expectedExes = [
-    `bibcode-desktop-${input.candidateVersion}-installer.exe`,
+    `coddy-studio-desktop-${input.candidateVersion}-installer.exe`,
     `${productName}-${input.candidateVersion}-installer.exe`,
   ];
   const readFile =
@@ -1384,11 +1384,11 @@ foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Childre
     }
   } catch { "  [descendants unavailable: $($_.Exception.Message)]" }
 }`;
-  // The updater's temporary directories, the BiBCode uninstall entries, then process starts
+  // The updater's temporary directories, the Coddy Studio uninstall entries, then process starts
   // and exits from the Security log of the last 20 minutes, newest first and capped (5000
   // read, 300 shown), so the 64 KiB evidence bound keeps the installer handoff. The workflow
   // turns this auditing on. Processes are matched by file name; command lines are kept only
-  // for BiBCode's own executables.
+  // for Coddy Studio's own executables.
   const audit = String.raw`"--- updater temp directories"
 Get-ChildItem $env:TEMP -Directory -Filter '*-updater-*' -ErrorAction SilentlyContinue | ForEach-Object {
   $_.FullName
@@ -1396,7 +1396,7 @@ Get-ChildItem $env:TEMP -Directory -Filter '*-updater-*' -ErrorAction SilentlyCo
 }
 "--- uninstall entries"
 Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
-  Where-Object { $_.DisplayName -like '*BiBCode*' } |
+  Where-Object { $_.DisplayName -like '*Coddy Studio*' } |
   ForEach-Object { "$($_.PSChildName) version=$($_.DisplayVersion) location=$($_.InstallLocation)" }
 "--- process starts and exits, newest first"
 $events = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688, 4689; StartTime = (Get-Date).AddMinutes(-20) } -MaxEvents 5000 -ErrorAction SilentlyContinue
@@ -1408,13 +1408,13 @@ foreach ($event in $events) {
   foreach ($field in ([xml]$event.ToXml()).Event.EventData.Data) { $data[$field.Name] = $field.'#text' }
   if ($event.Id -eq 4688) { $name = $data.NewProcessName; $processId = $data.NewProcessId } else { $name = $data.ProcessName; $processId = $data.ProcessId }
   $leaf = Split-Path $name -Leaf
-  if ($leaf -notmatch '^(bibcode|msedgedriver\.exe$|tauri-driver\.exe$)') { continue }
+  if ($leaf -notmatch '^(coddy-studio|msedgedriver\.exe$|tauri-driver\.exe$)') { continue }
   $shown++
   $time = $event.TimeCreated.ToUniversalTime().ToString('o')
   $processId = [Convert]::ToInt64($processId, 16)
   if ($event.Id -eq 4688) {
     $line = "$time START pid=$processId parent=$([Convert]::ToInt64($data.ProcessId, 16)) $leaf"
-    if ($leaf -match '^bibcode-desktop(-.+-installer)?\.exe$') { $line += " | $($data.CommandLine)" }
+    if ($leaf -match '^coddy-studio-desktop(-.+-installer)?\.exe$') { $line += " | $($data.CommandLine)" }
     $line
   } else { "$time EXIT pid=$processId status=$($data.Status) $leaf" }
 }`;
@@ -1470,7 +1470,7 @@ export interface RemoteUploadCapabilityReceipt {
   readonly relativeUrl: string;
 }
 const uploadDirectoryPattern =
-  /^bibcode-update-witness-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  /^coddy-studio-update-witness-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const privateUploadError = () =>
   new SeededDesktopUpgradeSmokeError("The private upload receipt is invalid or unavailable.");
 function decodeRemoteUploadReceipt(value: unknown): RemoteUploadCapabilityReceipt {
@@ -1604,7 +1604,7 @@ export async function stopRemoteUploadFixture(input: {
       !names.every(
         (name) =>
           name === "protection-witness.txt" ||
-          (name.startsWith(".protection-witness.txt.") && name.endsWith(".bibcode-upload.part")),
+          (name.startsWith(".protection-witness.txt.") && name.endsWith(".coddy-studio-upload.part")),
       )
     ) {
       throw privateUploadError();
@@ -1683,7 +1683,7 @@ const releaseOwnedChild = (child: NodeChildProcess.ChildProcess): void => {
 };
 
 const killOwnedChildTree = (child: NodeChildProcess.ChildProcess): void => {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- taskkill is the Windows host tree signal for this child.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- taskkill is the Windows host tree signal for this child.
   const plan = ownedChildTreeKillCommand(process.platform, child.pid);
   if (plan === undefined) return;
   try {
@@ -1812,7 +1812,7 @@ export function restartedApplicationCleanupPlan(
     };
   }
   return {
-    args: ["-TERM", "-x", "bibcode-desktop"],
+    args: ["-TERM", "-x", "coddy-studio-desktop"],
     command: "pkill",
   };
 }
@@ -1965,7 +1965,7 @@ export async function assertSeededUpgradeBuildVersion(
     await NodeFS.promises.readFile(NodePath.join(input.checkout, releaseCargoLockFile), "utf8"),
   );
   const packages = Array.isArray(lock.package) ? (lock.package as TomlTable[]) : [];
-  for (const name of ["bibcode-desktop", "bibcode-server"]) {
+  for (const name of ["coddy-studio-desktop", "coddy-studio-server"]) {
     const matches = packages.filter((entry) => entry.name === name);
     if (matches.length !== 1) {
       throw new SeededDesktopUpgradeSmokeError(
@@ -2037,7 +2037,7 @@ const buildPackagedApplication = async (input: {
     args: [
       "run",
       "--filter",
-      "@bibcode/desktop",
+      "@coddy/desktop",
       "build",
       "--features",
       "desktop-e2e",
@@ -2112,7 +2112,7 @@ const publishCandidateUpdater = async (input: {
 
 const copyMacApplication = async (dmgPath: string, installRoot: string): Promise<string> => {
   const mount = NodePath.join(installRoot, "mount");
-  const application = NodePath.join(installRoot, "BiBCode.app");
+  const application = NodePath.join(installRoot, "Coddy Studio.app");
   await NodeFS.promises.mkdir(mount, { recursive: true });
   await requireCommandSuccess({
     command: "hdiutil",
@@ -2123,8 +2123,8 @@ const copyMacApplication = async (dmgPath: string, installRoot: string): Promise
   try {
     const source = await findExactlyOne(
       mount,
-      (path) => path.endsWith(".app/Contents/MacOS/bibcode-desktop"),
-      "mounted BiBCode executable",
+      (path) => path.endsWith(".app/Contents/MacOS/coddy-studio-desktop"),
+      "mounted Coddy Studio executable",
     );
     const sourceApplication = source.slice(0, source.indexOf(".app") + ".app".length);
     await NodeFS.promises.cp(sourceApplication, application, { recursive: true });
@@ -2136,7 +2136,7 @@ const copyMacApplication = async (dmgPath: string, installRoot: string): Promise
       timeoutMs: 120_000,
     });
   }
-  return NodePath.join(application, "Contents", "MacOS", "bibcode-desktop");
+  return NodePath.join(application, "Contents", "MacOS", "coddy-studio-desktop");
 };
 
 const installBaselinePackage = async (input: {
@@ -2148,7 +2148,7 @@ const installBaselinePackage = async (input: {
   await NodeFS.promises.mkdir(installRoot, { recursive: true });
   if (input.platform === "mac") return copyMacApplication(input.packagePath, installRoot);
   if (input.platform === "linux") {
-    const application = NodePath.join(installRoot, "BiBCode.AppImage");
+    const application = NodePath.join(installRoot, "Coddy Studio.AppImage");
     await NodeFS.promises.copyFile(input.packagePath, application);
     await NodeFS.promises.chmod(application, 0o700);
     return application;
@@ -2161,8 +2161,8 @@ const installBaselinePackage = async (input: {
   });
   return findExactlyOne(
     installRoot,
-    (path) => /(?:BiBCode|bibcode-desktop)\.exe$/i.test(path),
-    "NSIS-installed BiBCode executable",
+    (path) => /(?:Coddy Studio|coddy-studio-desktop)\.exe$/i.test(path),
+    "NSIS-installed Coddy Studio executable",
   );
 };
 
@@ -2282,13 +2282,13 @@ const runWebDriverPhase = async (input: {
     cwd: NodePath.join(input.repositoryRoot, "apps", "desktop"),
     env: {
       ...process.env,
-      BIBCODE_HOME: input.dataRoot,
-      BIBCODE_PORT: String(input.backendPort),
-      BIBCODE_E2E_PLATFORM: input.platform,
-      RUST_LOG: "bibcode=debug",
+      CODDY_STUDIO_HOME: input.dataRoot,
+      CODDY_STUDIO_PORT: String(input.backendPort),
+      CODDY_STUDIO_E2E_PLATFORM: input.platform,
+      RUST_LOG: "coddy-studio=debug",
       ...(input.wsl
         ? {
-            WSLENV: [process.env.WSLENV, "BIBCODE_HOME/p"].filter(Boolean).join(":"),
+            WSLENV: [process.env.WSLENV, "CODDY_STUDIO_HOME/p"].filter(Boolean).join(":"),
           }
         : {}),
     },
@@ -2358,9 +2358,9 @@ const startMockUpdateServer = async (input: {
       cwd: input.repositoryRoot,
       env: {
         ...process.env,
-        BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: String(input.port),
-        BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG: input.requestLogPath,
-        BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT: input.updaterRoot,
+        CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_PORT: String(input.port),
+        CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG: input.requestLogPath,
+        CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_ROOT: input.updaterRoot,
       },
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
@@ -2458,7 +2458,7 @@ const stopRemoteLaneApplication = async (
   for (const pid of scopedCleanupPids(await linuxLaneProcesses(), dataRoot)) {
     try {
       const environment = await NodeFS.promises.readFile(`/proc/${pid}/environ`, "utf8");
-      if (!environment.split("\0").includes(`BIBCODE_HOME=${dataRoot}`)) continue;
+      if (!environment.split("\0").includes(`CODDY_STUDIO_HOME=${dataRoot}`)) continue;
       process.kill(pid, "SIGTERM");
     } catch (error) {
       if (!["ESRCH", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
@@ -2505,7 +2505,7 @@ const runUpgradeLane = async (input: {
     restartTimeoutMs: input.restartTimeoutMs,
     runRoot: NodePath.dirname(input.layout.dataRoot),
     workspaceRoot: input.wsl
-      ? `/tmp/bibcode-seeded-upgrade-${input.projectId.replaceAll(/[^A-Za-z0-9._-]/g, "-")}`
+      ? `/tmp/coddy-studio-seeded-upgrade-${input.projectId.replaceAll(/[^A-Za-z0-9._-]/g, "-")}`
       : input.layout.workspaceRoot,
     webdriverPort: input.webdriverPort,
     wsl: input.wsl,
@@ -2668,7 +2668,7 @@ export async function runSeededDesktopUpgradeSmoke(
   const workRoot = await canonicalizeSeededUpgradeWorkRoot(input.workRoot);
   const layout = createSeededUpgradeRunLayout(workRoot, runId);
   const runRoot = NodePath.dirname(layout.updaterRoot);
-  const appIdentifier = `dev.bibcode.upgradesmoke.run-${runId
+  const appIdentifier = `dev.coddy.studio.upgradesmoke.run-${runId
     .toLowerCase()
     .replaceAll(/[^a-z0-9-]/g, "-")
     .slice(0, 80)}`;
@@ -2746,7 +2746,7 @@ export async function runSeededDesktopUpgradeSmoke(
     ...process.env,
     TAURI_SIGNING_PRIVATE_KEY: signingKey,
     TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingPassword,
-    VITE_BIBCODE_DESKTOP_E2E: "1",
+    VITE_CODDY_STUDIO_DESKTOP_E2E: "1",
   };
   const requestLogPath = NodePath.join(runRoot, "updater-requests.jsonl");
   let failure: unknown;

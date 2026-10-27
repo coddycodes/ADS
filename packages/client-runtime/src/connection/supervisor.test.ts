@@ -1,4 +1,4 @@
-import { EnvironmentId, type ServerConfig } from "@bibcode/contracts";
+import { EnvironmentId, type ServerConfig } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -10,7 +10,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";

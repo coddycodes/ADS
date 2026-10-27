@@ -10,8 +10,8 @@ import {
   setDesktopUiWindowSize,
 } from "../support/ui-state.ts";
 
-const projectPath = process.env.BIBCODE_E2E_PROJECT_PATH;
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
+const projectPath = process.env.CODDY_STUDIO_E2E_PROJECT_PATH;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
 
 if (!projectPath || !artifactDirectory) {
   throw new Error("The packaged desktop UI fixture environment was not prepared.");

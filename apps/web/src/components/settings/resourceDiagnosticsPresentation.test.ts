@@ -3,7 +3,7 @@ import type {
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryResult,
   ServerProcessResourceHistorySummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
@@ -50,12 +50,12 @@ function liveFixture(
       processKey: "100:1",
       scope: "core",
       kind: "server",
-      label: "BiBCode Server",
+      label: "Coddy Studio Server",
       depth: 0,
       childPids: [200, 300],
       cpuPercent: 2,
       rssBytes: 200 * 1024 ** 2,
-      command: "bibcode server",
+      command: "coddy-studio server",
     }),
     processEntry({
       pid: 200,
@@ -86,10 +86,10 @@ function liveFixture(
       processKey: "300:1",
       scope: "core",
       kind: "ui",
-      label: "BiBCode UI",
+      label: "Coddy Studio UI",
       cpuPercent: 1,
       rssBytes: 120 * 1024 ** 2,
-      command: "BiBCode WebContent",
+      command: "Coddy Studio WebContent",
     }),
     processEntry({
       pid: 400,
@@ -141,11 +141,11 @@ function historySummary(
     processKey: "100:1",
     pid: 100,
     ppid: 1,
-    command: "bibcode server",
+    command: "coddy-studio server",
     depth: 0,
     scope: "core",
     kind: "server",
-    label: "BiBCode Server",
+    label: "Coddy Studio Server",
     confidence: "exact",
     firstSeenAt: T0,
     lastSeenAt: T1,
@@ -220,7 +220,7 @@ function historyFixture(
 }
 
 describe("presentLiveProcesses", () => {
-  it("uses server totals for Combined, BiBCode Core, and External Tooling summaries", () => {
+  it("uses server totals for Combined, Coddy Studio Core, and External Tooling summaries", () => {
     const diagnostics = liveFixture({
       processes: liveFixture().processes.slice(0, 2),
     });
@@ -235,7 +235,7 @@ describe("presentLiveProcesses", () => {
         processCountLabel: "6",
       },
       core: {
-        title: "BiBCode Core",
+        title: "Coddy Studio Core",
         memoryLabel: "320.0 MB",
         cpuLabel: "3.0%",
         processCountLabel: "2",
@@ -765,7 +765,7 @@ describe("presentResourceHistory", () => {
 
     expect(presentation.summary).toEqual({
       combined: { title: "Combined", valueLabel: "1.25m" },
-      core: { title: "BiBCode Core", valueLabel: "1.08m" },
+      core: { title: "Coddy Studio Core", valueLabel: "1.08m" },
       external: { title: "External Tooling", valueLabel: "10.0s" },
     });
   });
@@ -1002,7 +1002,7 @@ describe("presentResourceHistory", () => {
 
     expect(presentation.summary).toEqual({
       combined: { title: "Combined", valueLabel: "Unavailable" },
-      core: { title: "BiBCode Core", valueLabel: "Unavailable" },
+      core: { title: "Coddy Studio Core", valueLabel: "Unavailable" },
       external: { title: "External Tooling", valueLabel: "Unavailable" },
     });
     expect(presentation.rows[0]).toMatchObject({

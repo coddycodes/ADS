@@ -83,7 +83,7 @@ snow = "0.10"
 socket2 = "0.6.5"
 sysinfo = "0.39.6"
 subtle = "2.6.1"
-bibcode-server = { path = "apps/server" }
+coddy-studio-server = { path = "apps/server" }
 tauri = { version = "~2.11.6", features = ["unstable", "devtools", "image-png"] }
 tauri-build = { version = "2.6.3", features = [] }
 tauri-plugin-deep-link = "2.4.10"

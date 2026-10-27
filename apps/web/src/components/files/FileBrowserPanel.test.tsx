@@ -1,5 +1,5 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ThreadId } from "@bibcode/contracts";
-import type { EditorId, ProjectEntry, VcsStatusResult } from "@bibcode/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ThreadId } from "@coddy/contracts";
+import type { EditorId, ProjectEntry, VcsStatusResult } from "@coddy/contracts";
 import { FileTree as FileTreeModel } from "@pierre/trees";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as React from "react";
@@ -167,7 +167,7 @@ vi.mock("@pierre/trees/react", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   // Mutation commands surface interruption as a `Failure` carrying an interrupt
   // marker; the preview flow uses a dedicated `Interrupted` tag. Support both.
   isAtomCommandInterrupted: (result: { _tag: string; interrupted?: boolean }) =>
@@ -193,7 +193,7 @@ vi.mock("~/lib/utils", () => ({
   newProjectId: () => testState.newProjectId,
 }));
 
-vi.mock("~/pierre-icons", () => ({ BIBCODE_PIERRE_ICONS: {} }));
+vi.mock("~/pierre-icons", () => ({ CODDY_STUDIO_PIERRE_ICONS: {} }));
 
 vi.mock("~/previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => testState.isPreviewSupported,
@@ -1318,7 +1318,7 @@ describe("create entry", () => {
 
   it("closes an open mutation dialog and rejects its stale submit after workspace loss", async () => {
     harness.persistRefs = true;
-    const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+    const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
     renderPanel();
 
     rowActionsFor("src", "directory").onNewFile();
@@ -2632,7 +2632,7 @@ describe("background context menu", () => {
   });
 
   it("keeps copy and refresh while removing every file mutation action", () => {
-    const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+    const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
     harness.seedState((initial) => initial === null, null);
     harness.seedState((initial) => initial === null, { x: 5, y: 6 });
     renderPanel(baseProps({ workspaceUnavailable: reason }));

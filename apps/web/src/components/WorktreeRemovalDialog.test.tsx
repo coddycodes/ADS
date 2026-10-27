@@ -7,7 +7,7 @@ import {
   WorktreeRemovalError,
   WorktreeRemovalPlanToken,
   type WorktreeRemovalPlan,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -62,7 +62,7 @@ vi.mock("../state/entities", () => {
 vi.mock("../state/worktrees", () => ({
   worktreeEnvironment: {
     getRemovalPlan: { label: "get-plan" },
-    removeFromBibCode: { label: "detach" },
+    removeFromCoddyStudio: { label: "detach" },
     remove: { label: "remove" },
   },
 }));
@@ -315,7 +315,7 @@ describe("WorktreeRemovalDialog", () => {
 
     expect(container.textContent).toContain("feature/one");
     expect(container.textContent).toContain("/repo/worktrees/feature-one");
-    expect(button("Remove from BiBCode").disabled).toBe(false);
+    expect(button("Remove from Coddy Studio").disabled).toBe(false);
     expect(button("Delete Git worktree and remove").disabled).toBe(false);
     expect(button("Cancel").disabled).toBe(false);
 
@@ -351,7 +351,7 @@ describe("WorktreeRemovalDialog", () => {
       },
     });
 
-    expect(button("Remove from BiBCode").disabled).toBe(false);
+    expect(button("Remove from Coddy Studio").disabled).toBe(false);
     expect(container.textContent).toContain("Loading removal details");
     await act(async () => {
       resolvePlan({
@@ -380,7 +380,7 @@ describe("WorktreeRemovalDialog", () => {
     });
 
     expect(container.textContent).toContain("Registration remains");
-    expect(button("Remove from BiBCode").disabled).toBe(false);
+    expect(button("Remove from Coddy Studio").disabled).toBe(false);
     expect(container.textContent).not.toContain("Delete Git worktree and remove");
     expect(container.textContent).not.toContain("Clean stale Git registration and remove");
   });
@@ -420,7 +420,7 @@ describe("WorktreeRemovalDialog", () => {
     });
     expect(container.textContent).toContain("Kept by another tool");
     expect(container.textContent).not.toContain("Clean stale Git registration and remove");
-    expect(button("Remove from BiBCode").disabled).toBe(false);
+    expect(button("Remove from Coddy Studio").disabled).toBe(false);
   });
 
   it("requires separate dirty and repository-wide prune confirmations", async () => {
@@ -572,7 +572,7 @@ describe("WorktreeRemovalDialog", () => {
 
     expect(onRemoved).toHaveBeenCalledWith(target, removalResult);
     expect(container.textContent).toContain("Second worktree");
-    expect(container.textContent).not.toContain("Removed from BiBCode");
+    expect(container.textContent).not.toContain("Removed from Coddy Studio");
   });
 
   it("reports partial cleanup after the row is removed", async () => {
@@ -609,14 +609,14 @@ describe("WorktreeRemovalDialog", () => {
       expect.objectContaining({ threadId: "thread-one" }),
       expect.objectContaining({ threadRemoved: true, gitOutcome: "failed" }),
     );
-    expect(container.textContent).toContain("Removed from BiBCode");
+    expect(container.textContent).toContain("Removed from Coddy Studio");
     expect(container.textContent).toContain("Run git worktree prune manually.");
   });
 
   it("disables mutation while removal is already in progress", async () => {
     await renderDialog({ target: { ...target, availability: "removing" } });
     expect(container.textContent).toContain("Removal is already in progress");
-    expect(button("Remove from BiBCode").disabled).toBe(true);
+    expect(button("Remove from Coddy Studio").disabled).toBe(true);
   });
 });
 
@@ -634,7 +634,7 @@ describe("WorktreeRemovalDialog while a session runs in the worktree", () => {
     return h.calls.filter((call) => call.label === "remove");
   }
 
-  it("disables deletion and says why in the dialog, keeping Remove from BiBCode available", async () => {
+  it("disables deletion and says why in the dialog, keeping Remove from Coddy Studio available", async () => {
     h.threads = [threadShell(target.threadId, { session: RUNNING })];
     await renderDialog();
 
@@ -643,7 +643,7 @@ describe("WorktreeRemovalDialog while a session runs in the worktree", () => {
     const reason = deletionBlockedReason();
     expect(reason, "the reason is visible text, not a hover-only tooltip").not.toBeNull();
     expect(deleteButton.getAttribute("aria-describedby")).toBe(reason!.id);
-    expect(button("Remove from BiBCode").disabled).toBe(false);
+    expect(button("Remove from Coddy Studio").disabled).toBe(false);
   });
 
   it("re-enables deletion as soon as the session stops", async () => {
@@ -740,6 +740,6 @@ describe("WorktreeRemovalDialog while a session runs in the worktree", () => {
 
     expect(container.textContent).not.toContain("Delete Git worktree and remove");
     expect(deletionBlockedReason()).toBeNull();
-    expect(button("Remove from BiBCode").disabled).toBe(false);
+    expect(button("Remove from Coddy Studio").disabled).toBe(false);
   });
 });

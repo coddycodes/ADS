@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::process::{
+use coddy_studio_server::process::{
     OutputMode, ProcessError, ProcessRunInput, ProcessRunner, TimeoutBehavior,
 };
 #[cfg(unix)]
@@ -15,11 +15,11 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(windows)]
-const WINDOWS_BROKEN_STDIN_FIXTURE: &str = "BIBCODE_PROCESS_RUNNER_BROKEN_STDIN_FIXTURE";
+const WINDOWS_BROKEN_STDIN_FIXTURE: &str = "CODDY_STUDIO_PROCESS_RUNNER_BROKEN_STDIN_FIXTURE";
 #[cfg(windows)]
-const WINDOWS_BROKEN_STDIN_TREE: &str = "BIBCODE_PROCESS_RUNNER_BROKEN_STDIN_TREE";
+const WINDOWS_BROKEN_STDIN_TREE: &str = "CODDY_STUDIO_PROCESS_RUNNER_BROKEN_STDIN_TREE";
 #[cfg(windows)]
-const WINDOWS_BROKEN_STDIN_ARGUMENT_PREFIX: &str = "BIBCODE_PROCESS_RUNNER_BROKEN_STDIN_ARG_";
+const WINDOWS_BROKEN_STDIN_ARGUMENT_PREFIX: &str = "CODDY_STUDIO_PROCESS_RUNNER_BROKEN_STDIN_ARG_";
 
 #[test]
 fn process_run_input_builders_preserve_defaults_and_apply_overrides() {
@@ -111,7 +111,7 @@ async fn process_runner_clears_inherited_environment_before_applying_overrides()
 
     let mut env_vars = BTreeMap::new();
     env_vars.insert(
-        "BIBCODE_PROCESS_RUNNER_INJECTED".to_string(),
+        "CODDY_STUDIO_PROCESS_RUNNER_INJECTED".to_string(),
         "present".to_string(),
     );
     #[cfg(windows)]
@@ -130,7 +130,7 @@ async fn process_runner_clears_inherited_environment_before_applying_overrides()
     assert_eq!(
         child_env
             .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("BIBCODE_PROCESS_RUNNER_INJECTED"))
+            .find(|(name, _)| name.eq_ignore_ascii_case("CODDY_STUDIO_PROCESS_RUNNER_INJECTED"))
             .map(|(_, value)| value.as_str()),
         Some("present")
     );
@@ -895,14 +895,14 @@ param(
     [string]$grandchildSurvivedPath,
     [string]$releasePath
 )
-$env:BIBCODE_PROCESS_RUNNER_CHILD_READY = $childReadyPath
-$env:BIBCODE_PROCESS_RUNNER_GRANDCHILD_READY = $grandchildReadyPath
-$env:BIBCODE_PROCESS_RUNNER_CHILD_SURVIVED = $childSurvivedPath
-$env:BIBCODE_PROCESS_RUNNER_GRANDCHILD_SURVIVED = $grandchildSurvivedPath
-$env:BIBCODE_PROCESS_RUNNER_RELEASE = $releasePath
-$grandchildCommand = 'Set-Content -LiteralPath $env:BIBCODE_PROCESS_RUNNER_GRANDCHILD_READY -Value ready -NoNewline; while (-not (Test-Path -LiteralPath $env:BIBCODE_PROCESS_RUNNER_RELEASE)) {{ Start-Sleep -Milliseconds 25 }}; Set-Content -LiteralPath $env:BIBCODE_PROCESS_RUNNER_GRANDCHILD_SURVIVED -Value survived -NoNewline; Start-Sleep -Seconds 30'
-$childCommand = '$grandchild = Start-Process -FilePath ''{}'' -ArgumentList @(''-NoProfile'', ''-NonInteractive'', ''-Command'', $env:BIBCODE_PROCESS_RUNNER_GRANDCHILD_COMMAND) -PassThru -WindowStyle Hidden; Set-Content -LiteralPath $env:BIBCODE_PROCESS_RUNNER_CHILD_READY -Value ready -NoNewline; while (-not (Test-Path -LiteralPath $env:BIBCODE_PROCESS_RUNNER_RELEASE)) {{ Start-Sleep -Milliseconds 25 }}; Set-Content -LiteralPath $env:BIBCODE_PROCESS_RUNNER_CHILD_SURVIVED -Value survived -NoNewline; Start-Sleep -Seconds 30'
-$env:BIBCODE_PROCESS_RUNNER_GRANDCHILD_COMMAND = $grandchildCommand
+$env:CODDY_STUDIO_PROCESS_RUNNER_CHILD_READY = $childReadyPath
+$env:CODDY_STUDIO_PROCESS_RUNNER_GRANDCHILD_READY = $grandchildReadyPath
+$env:CODDY_STUDIO_PROCESS_RUNNER_CHILD_SURVIVED = $childSurvivedPath
+$env:CODDY_STUDIO_PROCESS_RUNNER_GRANDCHILD_SURVIVED = $grandchildSurvivedPath
+$env:CODDY_STUDIO_PROCESS_RUNNER_RELEASE = $releasePath
+$grandchildCommand = 'Set-Content -LiteralPath $env:CODDY_STUDIO_PROCESS_RUNNER_GRANDCHILD_READY -Value ready -NoNewline; while (-not (Test-Path -LiteralPath $env:CODDY_STUDIO_PROCESS_RUNNER_RELEASE)) {{ Start-Sleep -Milliseconds 25 }}; Set-Content -LiteralPath $env:CODDY_STUDIO_PROCESS_RUNNER_GRANDCHILD_SURVIVED -Value survived -NoNewline; Start-Sleep -Seconds 30'
+$childCommand = '$grandchild = Start-Process -FilePath ''{}'' -ArgumentList @(''-NoProfile'', ''-NonInteractive'', ''-Command'', $env:CODDY_STUDIO_PROCESS_RUNNER_GRANDCHILD_COMMAND) -PassThru -WindowStyle Hidden; Set-Content -LiteralPath $env:CODDY_STUDIO_PROCESS_RUNNER_CHILD_READY -Value ready -NoNewline; while (-not (Test-Path -LiteralPath $env:CODDY_STUDIO_PROCESS_RUNNER_RELEASE)) {{ Start-Sleep -Milliseconds 25 }}; Set-Content -LiteralPath $env:CODDY_STUDIO_PROCESS_RUNNER_CHILD_SURVIVED -Value survived -NoNewline; Start-Sleep -Seconds 30'
+$env:CODDY_STUDIO_PROCESS_RUNNER_GRANDCHILD_COMMAND = $grandchildCommand
 $child = Start-Process -FilePath '{}' -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $childCommand) -PassThru -WindowStyle Hidden
 Set-Content -LiteralPath $parentReadyPath -Value ready -NoNewline
 while (-not (Test-Path -LiteralPath $releasePath)) {{

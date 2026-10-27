@@ -1,4 +1,4 @@
-import type { ServerConfig } from "@bibcode/contracts";
+import type { ServerConfig } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { isProfilerUnsupported, profilerRecording, serverHasProfiler } from "./profilerSupport";

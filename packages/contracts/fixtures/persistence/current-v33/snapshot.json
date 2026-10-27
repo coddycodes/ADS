@@ -33,7 +33,7 @@
         "method": "dpop-access-token",
         "client_label": "Current fixture CLI",
         "client_ip_address": "127.0.0.1",
-        "client_user_agent": "bibcode-fixture/1.0",
+        "client_user_agent": "coddy-studio-fixture/1.0",
         "client_device_type": "desktop",
         "client_os": "FixtureOS 1.0",
         "client_browser": null,

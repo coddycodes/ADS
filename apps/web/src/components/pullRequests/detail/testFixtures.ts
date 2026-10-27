@@ -3,7 +3,7 @@ import type {
   PullRequestsFile,
   PullRequestsPermissions,
   PullRequestsTimelineItem,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { vi } from "vite-plus/test";
 import { context, row } from "../testFixtures";
 import type { PullRequestsNavigation } from "./pullRequestsNavigation";

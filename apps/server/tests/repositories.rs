@@ -1,5 +1,5 @@
-use bibcode_server::orchestration::TurnDeliveryState;
-use bibcode_server::persistence::{
+use coddy_studio_server::orchestration::TurnDeliveryState;
+use coddy_studio_server::persistence::{
     AuthPairingLink, AuthSessionClient, AuthSessionDeliveryState, CheckpointDiffBlob,
     CommandReceipt, Database, EVENT_PAGE_SIZE, NewAuthPairingOffer, NewAuthSession,
     NewOrchestrationEvent, ProjectionCheckpoint, ProjectionPendingApproval,
@@ -2705,7 +2705,7 @@ async fn requeue_provider_turn_is_attempt_conditioned_and_preserves_payload() {
     assert_eq!(row.state, TurnDeliveryState::Queued);
     assert_eq!(
         row.mode,
-        bibcode_server::orchestration::TurnDeliveryMode::Start
+        coddy_studio_server::orchestration::TurnDeliveryMode::Start
     );
     assert_eq!(row.payload, json!({"saved":true}));
     assert_eq!(row.message_id, "message");

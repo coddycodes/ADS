@@ -27,7 +27,7 @@ export function ServerReloadPrompt() {
       role="status"
       className="flex flex-wrap items-center justify-center gap-3 border-b border-border bg-background px-4 py-2 text-sm"
     >
-      <span>BiBCode on this server was updated to v{version}. Reload to use it.</span>
+      <span>Coddy Studio on this server was updated to v{version}. Reload to use it.</span>
       <Button size="xs" onClick={() => window.location.reload()}>
         Reload
       </Button>

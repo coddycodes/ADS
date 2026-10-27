@@ -2,7 +2,7 @@
 // The device video worker: owns the media socket (and its Noise decryption) and the
 // `VideoDecoder`, and transfers each decoded `VideoFrame` to the main thread, which draws and
 // closes it. The logic lives in `deviceVideoPipeline.ts`, where it is tested.
-import { openDeviceMediaSocket } from "@bibcode/client-runtime/device";
+import { openDeviceMediaSocket } from "@coddy/client-runtime/device";
 
 import {
   createDeviceVideoWorkerRuntime,

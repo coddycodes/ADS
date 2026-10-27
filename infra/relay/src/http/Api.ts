@@ -14,7 +14,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpApiError from "effect/http-api/HttpApiError";
-import { encodeOAuthScope } from "@bibcode/shared/oauthScope";
+import { encodeOAuthScope } from "@coddy/shared/oauthScope";
 
 import {
   RelayApi,
@@ -36,8 +36,8 @@ import {
   type RelayEnvironmentConnectRequest,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
-} from "@bibcode/contracts/relay";
-import { normalizeRelayIssuer } from "@bibcode/shared/relayJwt";
+} from "@coddy/contracts/relay";
+import { normalizeRelayIssuer } from "@coddy/shared/relayJwt";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";

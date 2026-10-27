@@ -1,7 +1,7 @@
 import { memo, type ReactNode } from "react";
 import { ArrowUp, Clock, X } from "lucide-react";
-import type { MessageId } from "@bibcode/contracts";
-import type { TimestampFormat } from "@bibcode/contracts/settings";
+import type { MessageId } from "@coddy/contracts";
+import type { TimestampFormat } from "@coddy/contracts/settings";
 import type { ChatMessage } from "../../types";
 import type { QueuedCardStatus } from "../ChatView.logic";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";

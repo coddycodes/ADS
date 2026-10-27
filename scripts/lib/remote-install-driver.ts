@@ -16,12 +16,12 @@ import {
   RemoteUpdateSnapshot,
   RemoteUpdateInstallError,
   ProjectCreateUploadUrlResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   runRemoteUpdate,
   type RemoteUpdatePort,
   type RemoteUpdateRunState,
-} from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+} from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import {
   assertRemoteInstallPort,
   writeRemoteUploadCapabilityReceipt,
@@ -192,7 +192,7 @@ export async function runRemoteInstallDriver(
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       subject_token: input.bootstrapToken,
-      subject_token_type: "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+      subject_token_type: "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
       requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
       client_label: "Remote update verification",
       client_device_type: "desktop",
@@ -381,7 +381,7 @@ export async function runRemoteInstallDriver(
       let reachable = false;
       for (const address of addresses) {
         const observed = yield* client
-          .get(`http://${address.address}:${endpoint.port}/.well-known/bibcode/environment`)
+          .get(`http://${address.address}:${endpoint.port}/.well-known/coddy-studio/environment`)
           .pipe(Effect.flatMap(readWideDescriptor), Effect.timeout(1_000), Effect.option);
         if (
           Option.isSome(observed) &&
@@ -442,7 +442,7 @@ export async function runRemoteInstallDriver(
       )
         throw new Error("Invalid fixture paths");
       const workspace = await NodeFS.promises.realpath(input.workspaceRoot);
-      const relativeDirectory = "bibcode-update-witness-" + NodeCrypto.randomUUID();
+      const relativeDirectory = "coddy-studio-update-witness-" + NodeCrypto.randomUUID();
       const directory = NodePath.join(workspace, relativeDirectory);
       await NodeFS.promises.mkdir(directory, { mode: 0o700 });
       witnessRoot = directory;

@@ -1,11 +1,11 @@
-import { getChangeRequestTerminologyForKind } from "@bibcode/shared/sourceControl";
+import { getChangeRequestTerminologyForKind } from "@coddy/shared/sourceControl";
 import type {
   PullRequestsContext,
   PullRequestsDetail,
   PullRequestsMergeMethod,
   PullRequestsPermission,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { ChevronDownIcon } from "lucide-react";
 import { useContext, useId, useState } from "react";
 import { usePullRequestsStore } from "../../../pullRequestsStore";

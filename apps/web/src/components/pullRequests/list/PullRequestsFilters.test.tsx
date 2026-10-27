@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { PullRequestsVocabulary, PullRequestsVocabularyInput } from "@bibcode/contracts";
+import type { PullRequestsVocabulary, PullRequestsVocabularyInput } from "@coddy/contracts";
 import { act, useEffect, useMemo, useReducer, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

@@ -4,12 +4,12 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use bibcode_server::{
+use clap::Parser;
+use coddy_studio_server::{
     Cli, ConfigError, ServerConfig, ServerRuntime,
     persistence::{BackupTrigger, StatePaths, create_verified_backup, prepare_store},
     resolve_data_root,
 };
-use clap::Parser;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -23,7 +23,7 @@ use tokio::{
 mod hermetic_providers;
 
 /// Writes hermetic provider settings into `config`'s selected state directory
-/// before any boot (in-process or the spawned `bibcode` binary) reads it, so
+/// before any boot (in-process or the spawned `coddy-studio` binary) reads it, so
 /// neither probes a real host provider CLI. A later boot with the same
 /// `--base-dir` and dev URL only reads this file; nothing here re-writes it.
 fn seed_hermetic_settings(config: &ServerConfig) {
@@ -61,7 +61,7 @@ fn hermetic_settings_are_seeded_in_the_selected_state_directory() {
     }
 }
 
-async fn exchange_startup_admin(handle: &bibcode_server::ServerHandle) -> String {
+async fn exchange_startup_admin(handle: &coddy_studio_server::ServerHandle) -> String {
     let startup = handle.startup_access().expect("startup pairing");
     let exchange = reqwest::Client::new()
         .post(format!("http://{}/oauth/token", handle.local_addr()))
@@ -73,7 +73,7 @@ async fn exchange_startup_admin(handle: &bibcode_server::ServerHandle) -> String
             ("subject_token", startup.credential.as_str()),
             (
                 "subject_token_type",
-                "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
             ),
             (
                 "requested_token_type",
@@ -95,10 +95,10 @@ async fn exchange_startup_admin(handle: &bibcode_server::ServerHandle) -> String
 
 #[test]
 fn headless_binary_exposes_the_compatible_serve_flags() {
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["serve", "--help"])
         .output()
-        .expect("run bibcode serve --help");
+        .expect("run coddy-studio serve --help");
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 help output");
@@ -124,7 +124,7 @@ async fn storage_inspect_prints_one_json_document_for_an_offline_store() {
     handle.shutdown();
     handle.join().await.expect("stop inspectable store");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["storage", "inspect", "--base-dir"])
         .arg(root.path())
         .arg("--json")
@@ -199,7 +199,7 @@ async fn storage_restore_prints_json_and_restores_the_selected_verified_generati
     drop(prepared);
     tokio::time::sleep(Duration::from_millis(25)).await;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["storage", "restore", "--base-dir"])
         .arg(root.path())
         .args([
@@ -245,7 +245,7 @@ async fn storage_start_empty_exits_nonzero_without_mutating_a_running_store() {
     let database_before = std::fs::read(&paths.database).expect("active database bytes");
     let marker_before = std::fs::read(&paths.environment_id).expect("active marker bytes");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["storage", "start-empty", "--base-dir"])
         .arg(root.path())
         .arg("--json")
@@ -291,7 +291,7 @@ async fn assert_pairing_issue_exchanges(dev_url: Option<&str>) {
         .expect("start pairing storage owner");
     let http_base_url = format!("http://{}", handle.local_addr());
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_bibcode"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_coddy-studio"));
     command
         .env_remove("VITE_DEV_SERVER_URL")
         .args(["pairing", "issue", "--base-dir"])
@@ -328,7 +328,7 @@ async fn assert_pairing_issue_exchanges(dev_url: Option<&str>) {
             ("subject_token", credential),
             (
                 "subject_token_type",
-                "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
             ),
             (
                 "requested_token_type",
@@ -362,7 +362,7 @@ async fn assert_pairing_issue_exchanges(dev_url: Option<&str>) {
 fn pairing_issue_fails_closed_without_a_data_store() {
     let root = TempDir::new().expect("temporary empty root");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["pairing", "issue", "--base-dir"])
         .arg(root.path())
         .arg("--json")
@@ -371,7 +371,7 @@ fn pairing_issue_fails_closed_without_a_data_store() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("no BiBCode data store"), "{stderr}");
+    assert!(stderr.contains("no Coddy Studio data store"), "{stderr}");
     assert!(
         output.stdout.is_empty(),
         "no credential may be printed on failure"
@@ -381,10 +381,10 @@ fn pairing_issue_fails_closed_without_a_data_store() {
 #[test]
 #[cfg(windows)]
 fn headless_binary_reports_invalid_bootstrap_descriptors_without_panicking() {
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["serve", "--bootstrap-fd", "4"])
         .output()
-        .expect("run bibcode with unsupported bootstrap fd");
+        .expect("run coddy-studio with unsupported bootstrap fd");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("UTF-8 error output");
@@ -397,7 +397,7 @@ fn serve_flags_have_the_same_value_before_or_after_the_subcommand() {
     let temp = TempDir::new().expect("temporary base directory");
     let base_dir = temp.path().to_string_lossy();
     let before = Cli::try_parse_from([
-        "bibcode",
+        "coddy-studio",
         "--host",
         "0.0.0.0",
         "--port",
@@ -410,7 +410,7 @@ fn serve_flags_have_the_same_value_before_or_after_the_subcommand() {
     .into_server_config()
     .expect("configuration before serve");
     let after = Cli::try_parse_from([
-        "bibcode",
+        "coddy-studio",
         "serve",
         "--host",
         "0.0.0.0",
@@ -432,15 +432,15 @@ fn serve_flags_have_the_same_value_before_or_after_the_subcommand() {
 
 #[test]
 fn start_opens_a_browser_unless_disabled_while_serve_is_always_headless() {
-    let start = Cli::try_parse_from(["bibcode", "start"])
+    let start = Cli::try_parse_from(["coddy-studio", "start"])
         .expect("start arguments")
         .into_server_config()
         .expect("start configuration");
-    let disabled = Cli::try_parse_from(["bibcode", "start", "--no-browser"])
+    let disabled = Cli::try_parse_from(["coddy-studio", "start", "--no-browser"])
         .expect("disabled browser arguments")
         .into_server_config()
         .expect("disabled browser configuration");
-    let serve = Cli::try_parse_from(["bibcode", "serve"])
+    let serve = Cli::try_parse_from(["coddy-studio", "serve"])
         .expect("serve arguments")
         .into_server_config()
         .expect("serve configuration");
@@ -456,7 +456,7 @@ fn explicit_static_directory_must_contain_the_web_entry_point() {
     let missing = root.path().join("missing");
 
     let error = Cli::try_parse_from([
-        "bibcode",
+        "coddy-studio",
         "serve",
         "--static-dir",
         missing.to_str().expect("UTF-8 fixture path"),
@@ -471,7 +471,7 @@ fn explicit_static_directory_must_contain_the_web_entry_point() {
 #[tokio::test]
 async fn desktop_bootstrap_rejects_an_empty_shutdown_token() {
     let temp = TempDir::new().expect("temporary base directory");
-    let mut child = TokioCommand::new(env!("CARGO_BIN_EXE_bibcode"))
+    let mut child = TokioCommand::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args([
             "serve",
             "--mode",
@@ -488,7 +488,7 @@ async fn desktop_bootstrap_rejects_an_empty_shutdown_token() {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn bibcode server");
+        .expect("spawn coddy-studio server");
     let bootstrap = json!({
         "mode": "desktop",
         "noBrowser": true,
@@ -546,7 +546,7 @@ fn headless_configuration_reads_an_inherited_nonzero_bootstrap_fd() {
     writeln!(writer, "{bootstrap}").expect("write inherited bootstrap");
     let fd = reader.into_raw_fd().to_string();
 
-    let config = Cli::try_parse_from(["bibcode", "serve", "--bootstrap-fd", fd.as_str()])
+    let config = Cli::try_parse_from(["coddy-studio", "serve", "--bootstrap-fd", fd.as_str()])
         .expect("inherited bootstrap arguments")
         .into_server_config()
         .expect("inherited bootstrap configuration");
@@ -561,7 +561,7 @@ fn headless_configuration_reads_an_inherited_nonzero_bootstrap_fd() {
 async fn headless_binary_reads_desktop_bootstrap_and_shuts_down_over_http() {
     let temp = TempDir::new().expect("temporary base directory");
     seed_hermetic_settings(&ServerConfig::new(temp.path()));
-    let mut child = TokioCommand::new(env!("CARGO_BIN_EXE_bibcode"))
+    let mut child = TokioCommand::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args([
             "serve",
             "--mode",
@@ -578,13 +578,13 @@ async fn headless_binary_reads_desktop_bootstrap_and_shuts_down_over_http() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn bibcode server");
+        .expect("spawn coddy-studio server");
 
     let bootstrap = json!({
         "mode": "desktop",
         "noBrowser": true,
         "port": 0,
-        "bibcodeHome": temp.path(),
+        "coddyStudioHome": temp.path(),
         "host": "127.0.0.1",
         "desktopBootstrapToken": "process-smoke-secret",
         "tailscaleServeEnabled": false,
@@ -613,9 +613,12 @@ async fn headless_binary_reads_desktop_bootstrap_and_shuts_down_over_http() {
 
     let shutdown = reqwest::Client::new()
         .post(format!(
-            "{http_base_url}/.well-known/bibcode/desktop/shutdown"
+            "{http_base_url}/.well-known/coddy-studio/desktop/shutdown"
         ))
-        .header("x-bibcode-desktop-bootstrap-token", "process-smoke-secret")
+        .header(
+            "x-coddy-studio-desktop-bootstrap-token",
+            "process-smoke-secret",
+        )
         .send()
         .await
         .expect("desktop shutdown request");
@@ -649,7 +652,7 @@ async fn assert_pairing_offer_redeems(dev_url: Option<&str>) {
         .await
         .expect("start pairing storage owner");
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_bibcode"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_coddy-studio"));
     command
         .env_remove("VITE_DEV_SERVER_URL")
         .args(["pairing", "offer", "--base-dir"])
@@ -680,13 +683,13 @@ async fn assert_pairing_offer_redeems(dev_url: Option<&str>) {
     );
     let value: Value = serde_json::from_str(stdout.trim()).expect("offer JSON document");
     let code = value["code"].as_str().expect("code string");
-    assert_eq!(value["link"], format!("bibcode://pair?code={code}"));
+    assert_eq!(value["link"], format!("coddy-studio://pair?code={code}"));
     assert_eq!(value["reach"], "another-device");
     assert_eq!(value["endpoint"], "http://192.168.1.20:3773");
     assert_eq!(value["name"], "ai-server");
     assert!(value["expiresAt"].as_str().is_some());
-    let payload =
-        bibcode_server::auth_pairing_code::decode_pairing_code(code).expect("pairing code decodes");
+    let payload = coddy_studio_server::auth_pairing_code::decode_pairing_code(code)
+        .expect("pairing code decodes");
     assert_eq!(payload.name, "ai-server");
 
     // The running server lists pairings from a cached view that its authority
@@ -728,7 +731,7 @@ async fn assert_pairing_offer_redeems(dev_url: Option<&str>) {
 #[test]
 fn pairing_offer_fails_closed_without_a_data_store() {
     let root = TempDir::new().expect("temporary empty root");
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["pairing", "offer", "--base-dir"])
         .arg(root.path())
         .args(["--endpoint", "http://192.168.1.20:3773", "--json"])
@@ -777,7 +780,7 @@ async fn prepare_pairing_store(root: &TempDir, dev_url: Option<&str>) -> (StateP
 }
 
 fn pairing_command(root: &TempDir, subcommand: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_bibcode"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_coddy-studio"));
     command
         .env_remove("VITE_DEV_SERVER_URL")
         .args(["pairing", subcommand, "--base-dir"])
@@ -910,7 +913,7 @@ async fn assert_pairing_commands_select_existing_state(
                 "{subcommand}: {state}"
             );
             if subcommand == "offer" && state == selected_state {
-                let payload = bibcode_server::auth_pairing_code::decode_pairing_code(
+                let payload = coddy_studio_server::auth_pairing_code::decode_pairing_code(
                     value["code"].as_str().expect("pairing code"),
                 )
                 .expect("decode pairing code");
@@ -955,7 +958,7 @@ async fn pairing_offer_rejects_a_loopback_endpoint_for_another_device() {
     let handle = ServerRuntime::start(config)
         .await
         .expect("start pairing storage owner");
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["pairing", "offer", "--base-dir"])
         .arg(root.path())
         .args(["--endpoint", "http://127.0.0.1:3773"])
@@ -976,13 +979,13 @@ async fn pairing_offer_rejects_a_loopback_endpoint_for_another_device() {
 async fn serve_on_loopback_prints_no_startup_pairing_code() {
     let temp = TempDir::new().expect("temporary base directory");
     seed_hermetic_settings(&ServerConfig::new(temp.path()));
-    let mut child = TokioCommand::new(env!("CARGO_BIN_EXE_bibcode"))
+    let mut child = TokioCommand::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["serve", "--host", "127.0.0.1", "--port", "0", "--base-dir"])
         .arg(temp.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn bibcode server");
+        .expect("spawn coddy-studio server");
 
     let stdout = child.stdout.take().expect("child stdout");
     let mut lines = BufReader::new(stdout).lines();
@@ -1004,7 +1007,7 @@ async fn serve_on_loopback_prints_no_startup_pairing_code() {
 
 #[test]
 fn service_help_lists_install_uninstall_and_status() {
-    let output = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["service", "--help"])
         .output()
         .expect("run service help");
@@ -1013,7 +1016,7 @@ fn service_help_lists_install_uninstall_and_status() {
     for expected in ["install", "uninstall", "status"] {
         assert!(stdout.contains(expected), "missing {expected}: {stdout}");
     }
-    let install = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let install = Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["service", "install", "--help"])
         .output()
         .expect("run service install help");

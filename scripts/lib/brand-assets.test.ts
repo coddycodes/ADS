@@ -10,35 +10,35 @@ import {
 } from "./brand-assets.ts";
 
 describe("brand-assets", () => {
-  it("publishes the canonical black desktop and web asset paths", () => {
+  it("publishes the canonical desktop and web asset paths", () => {
     expect(BRAND_ASSET_PATHS).toEqual({
-      macIconPng: "assets/prod/black-macos-1024.png",
-      linuxIconPng: "assets/prod/black-universal-1024.png",
-      macIconIcns: "assets/prod/bibcode-black-macos.icns",
-      windowsIconIco: "assets/prod/bibcode-black-windows.ico",
-      webFaviconIco: "assets/prod/bibcode-black-web-favicon.ico",
-      webFavicon16Png: "assets/prod/bibcode-black-web-favicon-16x16.png",
-      webFavicon32Png: "assets/prod/bibcode-black-web-favicon-32x32.png",
-      webAppleTouchIconPng: "assets/prod/bibcode-black-web-apple-touch-180.png",
+      macIconPng: "assets/prod/coddy-studio-macos-1024.png",
+      linuxIconPng: "assets/prod/coddy-studio-universal-1024.png",
+      macIconIcns: "assets/prod/coddy-studio-macos.icns",
+      windowsIconIco: "assets/prod/coddy-studio-windows.ico",
+      webFaviconIco: "assets/prod/coddy-studio-web-favicon.ico",
+      webFavicon16Png: "assets/prod/coddy-studio-web-favicon-16x16.png",
+      webFavicon32Png: "assets/prod/coddy-studio-web-favicon-32x32.png",
+      webAppleTouchIconPng: "assets/prod/coddy-studio-web-apple-touch-180.png",
     });
   });
 
-  it("maps every brand to the canonical black web icons", () => {
+  it("maps every brand to the canonical web icons", () => {
     const expected = [
       {
-        sourceRelativePath: "assets/prod/bibcode-black-web-favicon.ico",
+        sourceRelativePath: "assets/prod/coddy-studio-web-favicon.ico",
         targetRelativePath: "dist/client/favicon.ico",
       },
       {
-        sourceRelativePath: "assets/prod/bibcode-black-web-favicon-16x16.png",
+        sourceRelativePath: "assets/prod/coddy-studio-web-favicon-16x16.png",
         targetRelativePath: "dist/client/favicon-16x16.png",
       },
       {
-        sourceRelativePath: "assets/prod/bibcode-black-web-favicon-32x32.png",
+        sourceRelativePath: "assets/prod/coddy-studio-web-favicon-32x32.png",
         targetRelativePath: "dist/client/favicon-32x32.png",
       },
       {
-        sourceRelativePath: "assets/prod/bibcode-black-web-apple-touch-180.png",
+        sourceRelativePath: "assets/prod/coddy-studio-web-apple-touch-180.png",
         targetRelativePath: "dist/client/apple-touch-icon.png",
       },
     ];

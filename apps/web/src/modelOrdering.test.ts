@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId } from "@bibcode/contracts";
+import { ProviderInstanceId } from "@coddy/contracts";
 
 import {
   providerModelKey,

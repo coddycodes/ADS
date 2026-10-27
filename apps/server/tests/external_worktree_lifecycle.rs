@@ -10,8 +10,8 @@ use std::{fs, path::Path, process::Command, time::Duration};
 use std::path::PathBuf;
 
 #[cfg(unix)]
-use bibcode_server::persistence::Repositories;
-use bibcode_server::{
+use coddy_studio_server::persistence::Repositories;
+use coddy_studio_server::{
     RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     git::GitRepository,
     orchestration::{EngineOptions, OrchestrationEngine},
@@ -335,12 +335,12 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
         json!({
             "threadId":thread_id,
             "terminalId":"lifecycle-terminal",
-            "data":"printf 'BIBCODE_ACTUAL_CWD=%s\\n' \"$PWD\"\r"
+            "data":"printf 'CODDY_STUDIO_ACTUAL_CWD=%s\\n' \"$PWD\"\r"
         }),
     )
     .await;
     success(&mut socket, "30").await;
-    let expected_cwd = format!("BIBCODE_ACTUAL_CWD={}", adopted_path.to_string_lossy());
+    let expected_cwd = format!("CODDY_STUDIO_ACTUAL_CWD={}", adopted_path.to_string_lossy());
     // A Chunk can carry several events, and a PTY read can split a line between them.
     let mut transcript = String::new();
     timeout(Duration::from_secs(15), async {
@@ -779,7 +779,7 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     request(
         &mut socket,
         "18",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({
             "commandId":"detach-missing-external",
             "projectId":"project-1",
@@ -905,7 +905,7 @@ async fn detach_succeeds_when_cleanup_cannot_complete() {
     request(
         &mut socket,
         "3",
-        "worktree.removeFromBibCode",
+        "worktree.removeFromCoddyStudio",
         json!({
             "commandId":"detach-cleanup-pending",
             "projectId":"project-1",
@@ -934,7 +934,8 @@ impl WorktreeRemovalQuiescer for PendingCleanup {
     fn live_session_thread_ids(
         &self,
         _thread_ids: Vec<String>,
-    ) -> bibcode_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture {
+    ) -> coddy_studio_server::production::worktree_catalog_rpc::WorktreeRemovalLiveSessionsFuture
+    {
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -970,12 +971,12 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 cwd=$(pwd)
-printf '%s\n' "$$" > "__BIBCODE_PID_FILE__"
+printf '%s\n' "$$" > "__CODDY_STUDIO_PID_FILE__"
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"fixture"}}\n' "$id" ;;
-    *'"method":"thread/start"'*) printf '%s\n' "$cwd" > "__BIBCODE_CWD_FIFO__"; printf '{"id":%s,"result":{"cwd":"%s","model":"gpt-5","thread":{"id":"%s"}}}\n' "$id" "$cwd" "$cwd" ;;
+    *'"method":"thread/start"'*) printf '%s\n' "$cwd" > "__CODDY_STUDIO_CWD_FIFO__"; printf '{"id":%s,"result":{"cwd":"%s","model":"gpt-5","thread":{"id":"%s"}}}\n' "$id" "$cwd" "$cwd" ;;
     *'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id" ;;
     *'"method":"thread/goal/set"'*) printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id" ;;
     *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"fixture-turn"}}}\n{"method":"item/started","emittedAtMs":1001,"params":{"threadId":"%s","turnId":"fixture-turn","item":{"id":"cwd-observer","type":"collabAgentToolCall","tool":"spawnAgent","status":"inProgress","senderThreadId":"%s","receiverThreadIds":["cwd-observer"],"agentsStates":{"cwd-observer":{"status":"running","message":null}}},"startedAtMs":1001}}\n' "$id" "$cwd" "$cwd" ;;
@@ -984,8 +985,8 @@ while IFS= read -r line; do
   esac
 done
 "#
-    .replace("__BIBCODE_CWD_FIFO__", &cwd_fifo.to_string_lossy())
-    .replace("__BIBCODE_PID_FILE__", &pid_file.to_string_lossy());
+    .replace("__CODDY_STUDIO_CWD_FIFO__", &cwd_fifo.to_string_lossy())
+    .replace("__CODDY_STUDIO_PID_FILE__", &pid_file.to_string_lossy());
     executable_fixture::write_executable(&executable, script);
     executable
 }
@@ -1161,7 +1162,7 @@ async fn failure_tag(socket: &mut TestSocket, request_id: &str, tag: &str) {
             } if actual.as_str() == request_id => {
                 assert!(
                     cause.iter().any(|item| match item {
-                        bibcode_server::CauseItem::Fail { error } => error["_tag"] == tag,
+                        coddy_studio_server::CauseItem::Fail { error } => error["_tag"] == tag,
                         _ => false,
                     }),
                     "expected {tag} in {cause:?}"

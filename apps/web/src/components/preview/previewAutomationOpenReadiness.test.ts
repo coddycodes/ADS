@@ -1,4 +1,4 @@
-import type { PreviewAutomationOpenInput, PreviewSessionSnapshot } from "@bibcode/contracts";
+import type { PreviewAutomationOpenInput, PreviewSessionSnapshot } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { previewAutomationOpenNeedsOverlay } from "./previewAutomationOpenReadiness";

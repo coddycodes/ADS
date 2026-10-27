@@ -8,7 +8,9 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use bibcode_server::{ROUTE_INVENTORY, RpcRegistry, ServerConfig, ServerHandle, ServerRuntime};
+use coddy_studio_server::{
+    ROUTE_INVENTORY, RpcRegistry, ServerConfig, ServerHandle, ServerRuntime,
+};
 use futures_util::{SinkExt, StreamExt};
 use p256::ecdsa::{Signature, SigningKey, signature::hazmat::PrehashSigner};
 use reqwest::{Client, Response, StatusCode, header};
@@ -28,7 +30,7 @@ use websocket_frames::next_frame_past_heartbeat;
 const DESKTOP_BOOTSTRAP: &str = "desktop-bootstrap-fixture";
 const TOKEN_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
-const BOOTSTRAP_TOKEN_TYPE: &str = "urn:bibcode:params:oauth:token-type:environment-bootstrap";
+const BOOTSTRAP_TOKEN_TYPE: &str = "urn:coddy-studio:params:oauth:token-type:environment-bootstrap";
 
 #[test]
 fn language_neutral_auth_fixtures_match_the_rust_http_inventory() {
@@ -100,7 +102,7 @@ async fn desktop_bootstrap_creates_cookie_and_bearer_sessions() {
     );
     assert_eq!(
         unauthenticated["auth"]["sessionCookieName"],
-        "bibcode_session_0"
+        "coddy_studio_session_0"
     );
 
     let browser_response = client
@@ -120,7 +122,7 @@ async fn desktop_bootstrap_creates_cookie_and_bearer_sessions() {
         .next()
         .expect("cookie pair")
         .to_owned();
-    assert!(cookie.starts_with("bibcode_session_0="));
+    assert!(cookie.starts_with("coddy_studio_session_0="));
     let browser_session = get_json(browser_response, StatusCode::OK).await;
     assert_eq!(browser_session["authenticated"], true);
     assert_eq!(browser_session["sessionMethod"], "browser-session-cookie");
@@ -567,7 +569,7 @@ async fn browser_pairing_session_keeps_off_host_exposure_until_revoked() {
         StatusCode::OK,
     )
     .await;
-    let payload = bibcode_server::auth_pairing_code::decode_pairing_code(
+    let payload = coddy_studio_server::auth_pairing_code::decode_pairing_code(
         offer["code"].as_str().expect("pairing code"),
     )
     .expect("pairing code decodes");
@@ -1282,7 +1284,7 @@ async fn websocket_authorizes_rpc_scopes_and_streams_auth_access_changes() {
     for (id, tag) in [
         ("114", "activity.cancelSubtree"),
         ("115", "activity.retrySubtreeCancellation"),
-        // Scan reads CLI transcripts outside BiBCode's data on the server host.
+        // Scan reads CLI transcripts outside Coddy Studio's data on the server host.
         ("116", "agentSessions.scan"),
         ("117", "agentSessions.import"),
     ] {
@@ -1672,13 +1674,14 @@ async fn pairing_offer_mints_the_spec_payload_with_pinned_host_identity() {
     assert!(offer["expiresAt"].as_str().is_some_and(|at| !at.is_empty()));
 
     let code = offer["code"].as_str().expect("offer code");
-    let payload = bibcode_server::auth_pairing_code::decode_pairing_code(code).expect("decodes");
+    let payload =
+        coddy_studio_server::auth_pairing_code::decode_pairing_code(code).expect("decodes");
     assert_eq!(payload.v, 1);
     assert_eq!(payload.name, "AI-SERVER");
     assert_eq!(payload.endpoint, "http://192.168.1.20:3773");
     assert_eq!(
         payload.reach,
-        bibcode_server::auth_pairing_code::RemotePairingReach::AnotherDevice
+        coddy_studio_server::auth_pairing_code::RemotePairingReach::AnotherDevice
     );
     assert!(!payload.token.is_empty());
     assert_eq!(payload.host_key.len(), 43);
@@ -2769,7 +2772,11 @@ async fn desktop_app_origins_do_not_pass_cookie_checks() {
     let cookie = browser_session_cookie(&client, &handle).await;
 
     // The desktop app authenticates with a bearer token, never the cookie.
-    for origin in ["bibcode://app", "bibcode-dev://app", "bibcode-other://app"] {
+    for origin in [
+        "coddy-studio://app",
+        "coddy-studio-dev://app",
+        "coddy-studio-other://app",
+    ] {
         let response = client
             .post(http_url(&handle, "/api/orchestration/dispatch"))
             .header(header::COOKIE, &cookie)
@@ -2795,7 +2802,7 @@ async fn a_loopback_proxy_forwarded_host_is_the_cookie_origin() {
             .post(http_url(&handle, "/api/orchestration/dispatch"))
             .header(header::COOKIE, &cookie)
             // nginx's default `proxy_set_header Host $proxy_host`.
-            .header("x-forwarded-host", "bibcode.example.test")
+            .header("x-forwarded-host", "coddy-studio.example.test")
             .header("x-forwarded-proto", "https")
             .header(header::ORIGIN, origin)
             .json(&json!({}))
@@ -2803,7 +2810,7 @@ async fn a_loopback_proxy_forwarded_host_is_the_cookie_origin() {
     };
 
     // The test client is a loopback peer, like a reverse proxy on this machine.
-    let proxied = dispatch("https://bibcode.example.test".to_owned())
+    let proxied = dispatch("https://coddy-studio.example.test".to_owned())
         .await
         .expect("proxied dispatch");
     assert_ne!(proxied.status(), StatusCode::FORBIDDEN);

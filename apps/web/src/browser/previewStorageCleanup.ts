@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 
 /**
  * Deletes a removed environment's preview storage on the desktop. Best effort:

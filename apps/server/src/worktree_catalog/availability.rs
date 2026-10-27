@@ -1645,7 +1645,7 @@ fn unavailable(entry: &GuardEntry) -> WorkspaceUnavailable {
                 "The workspace is no longer registered as a Git worktree.".to_owned()
             }
             WorkspaceGuardState::Removing => {
-                "The workspace is being removed from BiBCode.".to_owned()
+                "The workspace is being removed from Coddy Studio.".to_owned()
             }
         },
         thread_id: entry.thread_id.clone(),

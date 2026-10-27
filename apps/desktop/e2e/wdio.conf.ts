@@ -15,13 +15,13 @@ import {
 } from "./support/test-project.ts";
 import { normalizeWebDriverRequest } from "./support/webdriver-request.ts";
 
-// oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone WDIO config detects the host once and passes it to pure adapters.
+// oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone WDIO config detects the host once and passes it to pure adapters.
 const hostPlatform = process.platform;
 const platform: DesktopUiPlatform =
-  process.env.BIBCODE_E2E_PLATFORM === "mac" ||
-  process.env.BIBCODE_E2E_PLATFORM === "linux" ||
-  process.env.BIBCODE_E2E_PLATFORM === "win"
-    ? process.env.BIBCODE_E2E_PLATFORM
+  process.env.CODDY_STUDIO_E2E_PLATFORM === "mac" ||
+  process.env.CODDY_STUDIO_E2E_PLATFORM === "linux" ||
+  process.env.CODDY_STUDIO_E2E_PLATFORM === "win"
+    ? process.env.CODDY_STUDIO_E2E_PLATFORM
     : hostPlatform === "darwin"
       ? "mac"
       : hostPlatform === "win32"
@@ -32,7 +32,7 @@ const appBinaryPath = resolveDesktopAppPath({
   platform,
   environment: process.env,
 });
-const requestedSpec = process.env.BIBCODE_E2E_SPEC?.trim();
+const requestedSpec = process.env.CODDY_STUDIO_E2E_SPEC?.trim();
 const desktopUiSpecFiles =
   requestedSpec && requestedSpec.length > 0
     ? [requestedSpec]
@@ -50,7 +50,7 @@ const desktopUiSpecFiles =
 const desktopUiSpecs = requestedSpec ? desktopUiSpecFiles : [desktopUiSpecFiles];
 
 if (!NodeFS.existsSync(appBinaryPath)) {
-  throw new Error(`Packaged BiBCode application does not exist: ${appBinaryPath}`);
+  throw new Error(`Packaged Coddy Studio application does not exist: ${appBinaryPath}`);
 }
 
 const screenshotPath = (title: string): string =>
@@ -73,7 +73,7 @@ async function resetDesktopUiConnectionCache(): Promise<void> {
         settled = true;
         done({ error });
       };
-      const openRequest = indexedDB.open("bibcode:connection-runtime", 2);
+      const openRequest = indexedDB.open("coddy-studio:connection-runtime", 2);
       openRequest.addEventListener("error", () => {
         finish(String(openRequest.error ?? "Could not open the E2E connection catalog."));
       });
@@ -115,7 +115,7 @@ export const config = {
         appBinaryPath,
         driverProvider: "embedded",
         captureBackendLogs: true,
-        embeddedPort: Number(process.env.BIBCODE_E2E_WEBDRIVER_PORT ?? 4_445),
+        embeddedPort: Number(process.env.CODDY_STUDIO_E2E_WEBDRIVER_PORT ?? 4_445),
         startTimeout: 90_000,
         statusPollTimeout: 10_000,
         commandTimeout: 60_000,

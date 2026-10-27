@@ -1353,14 +1353,15 @@ mod tests {
         const CASE: &str = "provider-maintenance-path-precedence";
         const TEST_NAME: &str = "production::provider_maintenance::tests::maintenance_instance_path_outranks_ambient_path_in_an_isolated_process";
         const SENTINEL: &str =
-            "BIBCODE_TEST_ISOLATED_CASE_DONE=provider-maintenance-path-precedence";
+            "CODDY_STUDIO_TEST_ISOLATED_CASE_DONE=provider-maintenance-path-precedence";
 
         if TestSandbox::is_isolated_case(CASE, TEST_NAME) {
             let instance = std::path::PathBuf::from(
-                std::env::var_os("BIBCODE_TEST_INSTANCE_PATH").expect("isolated instance PATH"),
+                std::env::var_os("CODDY_STUDIO_TEST_INSTANCE_PATH")
+                    .expect("isolated instance PATH"),
             );
             let ambient_executable = std::path::PathBuf::from(
-                std::env::var_os("BIBCODE_TEST_AMBIENT_EXECUTABLE")
+                std::env::var_os("CODDY_STUDIO_TEST_AMBIENT_EXECUTABLE")
                     .expect("isolated ambient executable"),
             );
             assert_eq!(
@@ -1404,9 +1405,9 @@ mod tests {
             TEST_NAME,
             &[
                 ("PATH", ambient.as_os_str()),
-                ("BIBCODE_TEST_INSTANCE_PATH", instance.as_os_str()),
+                ("CODDY_STUDIO_TEST_INSTANCE_PATH", instance.as_os_str()),
                 (
-                    "BIBCODE_TEST_AMBIENT_EXECUTABLE",
+                    "CODDY_STUDIO_TEST_AMBIENT_EXECUTABLE",
                     ambient_executable.as_os_str(),
                 ),
             ],

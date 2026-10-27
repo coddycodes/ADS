@@ -1,5 +1,5 @@
-import { VcsCloneStoppedError } from "@bibcode/client-runtime/state/vcs";
-import { EnvironmentId, GitCloneOperationError } from "@bibcode/contracts";
+import { VcsCloneStoppedError } from "@coddy/client-runtime/state/vcs";
+import { EnvironmentId, GitCloneOperationError } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

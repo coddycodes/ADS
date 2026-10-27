@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { ProviderInstanceId } from "@bibcode/contracts";
+import { ProviderInstanceId } from "@coddy/contracts";
 import { act, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -99,8 +99,8 @@ function fileItem(id = "file-1"): ComposerCommandItem {
 function actionItem(id = "action-1"): ComposerCommandItem {
   return {
     id,
-    type: "bibcode-action",
-    group: "bibcode",
+    type: "coddy-studio-action",
+    group: "coddy-studio",
     action: "plan",
     label: ":plan",
     description: "Switch to plan mode",
@@ -247,7 +247,7 @@ describe("ComposerCommandMenu grouping", () => {
       Array.from(mounted.container.querySelectorAll("[data-command-group-label]"), (node) =>
         node.textContent?.trim(),
       ),
-    ).toEqual(["BiBCode", "Commands", "Skills", "Files", "Agents"]);
+    ).toEqual(["Coddy Studio", "Commands", "Skills", "Files", "Agents"]);
     expect(mounted.container.querySelectorAll("[data-command-separator]")).toHaveLength(4);
   });
 
@@ -268,7 +268,7 @@ describe("ComposerCommandMenu grouping", () => {
     );
 
     for (const [id, label] of [
-      ["bibcode", "BiBCode"],
+      ["coddy-studio", "Coddy Studio"],
       ["commands", "Commands"],
       ["skills", "Skills"],
       ["files", "Files"],

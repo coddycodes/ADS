@@ -56,7 +56,7 @@ function HostedStaticOnboardingState() {
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
                 {cloudEnabled
-                  ? "Sign in to BiBCode Connect to connect a linked environment through its managed tunnel, or add a reachable server manually."
+                  ? "Sign in to Coddy Connect to connect a linked environment through its managed tunnel, or add a reachable server manually."
                   : "Add a reachable server manually to start working from this browser."}
               </EmptyDescription>
               <div className="mt-6 flex justify-center">

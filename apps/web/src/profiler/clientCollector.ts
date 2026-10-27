@@ -2,14 +2,14 @@ import {
   type ProfilerClientBatch,
   PROFILER_CLIENT_BATCH_LIMITS,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { APP_VERSION } from "../branding";
 import { randomHex } from "../lib/utils";
 import { isProfilerUnsupported, profilerRefused, rememberProfilerRefused } from "./profilerSupport";
 
 /** The server joins a request to its own timing by this header (`CORRELATION_HEADER`). */
-export const PROFILER_CORRELATION_HEADER = "x-bibcode-profiler-rid";
+export const PROFILER_CORRELATION_HEADER = "x-coddy-studio-profiler-rid";
 /** Must match `BUCKET_GROWTH` and `BUCKETS` in the server's `latency.rs`. */
 const BUCKET_GROWTH = 1.12;
 const BUCKETS = 100;

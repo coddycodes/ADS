@@ -1,5 +1,5 @@
 //! Worktree audit: removal outcomes, and a read-only scan every 10 minutes that compares the
-//! worktree catalog with the filesystem, Git and the processes BiBCode owns.
+//! worktree catalog with the filesystem, Git and the processes Coddy Studio owns.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -39,7 +39,7 @@ const BIND_RETRY: Duration = Duration::from_secs(1);
 const SCAN_BUDGET: Duration = Duration::from_secs(30);
 /// A project whose `git worktree list` takes longer leaves its managed directory uncompared.
 const GIT_DEADLINE: Duration = Duration::from_secs(8);
-/// Reading the working directories of BiBCode's processes taking longer (on macOS it touches
+/// Reading the working directories of Coddy Studio's processes taking longer (on macOS it touches
 /// each directory, which a hung network mount can stall) leaves them unread for the scan.
 const PROCESS_DEADLINE: Duration = Duration::from_secs(5);
 /// Entries read from each managed worktree directory.
@@ -53,7 +53,7 @@ const STUCK_AFTER: Duration = Duration::from_secs(10 * 60);
 #[cfg(unix)]
 const DELETED_MARKER: &str = " (deleted)";
 
-/// Records one `worktree.remove` or `worktree.removeFromBibCode` outcome: a `worktree.removal`
+/// Records one `worktree.remove` or `worktree.removeFromCoddyStudio` outcome: a `worktree.removal`
 /// event, and a `worktree.removal-failed` finding for a failure that is not the protocol
 /// working as designed. `outcome` carries the error's kebab-case `reason`, and `cancelled`
 /// says the client interrupted the request. Does nothing while the profiler is off.
@@ -277,7 +277,7 @@ const LIMITS: ScanLimits = ScanLimits {
     processes: PROCESS_DEADLINE,
 };
 
-/// Reads the working directory of each process BiBCode owns, given the registered pids:
+/// Reads the working directory of each process Coddy Studio owns, given the registered pids:
 /// `process_cwds`, or a stand-in in tests.
 type ProcessReader = fn(Vec<u32>, &CancellationToken) -> Vec<(PathBuf, u32)>;
 
@@ -293,7 +293,7 @@ fn processes_read(read: bool, platform_reads: bool) -> Option<bool> {
 /// Which parts of a scan's facts were read in full. The rest of the scan is still audited.
 #[derive(Clone, Copy, Debug)]
 struct Coverage {
-    /// The working directories of BiBCode's processes.
+    /// The working directories of Coddy Studio's processes.
     processes: bool,
     /// The comparison with the filesystem and Git.
     compared: bool,
@@ -588,7 +588,7 @@ fn resolve(
     {
         let path = physical(&path);
         // A leftover is registered in a complete managed directory while its directory is
-        // gone. One still on disk is the user's own: "Remove from BiBCode" keeps it.
+        // gone. One still on disk is the user's own: "Remove from Coddy Studio" keeps it.
         let leftover = prunable
             && path
                 .parent()
@@ -621,7 +621,7 @@ async fn blocking<T: Send + 'static>(
     .ok()
 }
 
-/// The working directory of each process BiBCode owns: the registered roots, and the
+/// The working directory of each process Coddy Studio owns: the registered roots, and the
 /// descendants of this process (a build under a terminal, say).
 fn process_cwds(registered: Vec<u32>, cancel: &CancellationToken) -> Vec<(PathBuf, u32)> {
     let mut pids: HashSet<u32> = descendants_of(Pid::from_u32(std::process::id()))
@@ -756,7 +756,7 @@ pub struct AuditFacts {
     pub git_registrations: HashMap<PathBuf, bool>,
     /// Each catalog path held in `removing`, and for how long.
     pub removing_since: Vec<(PathBuf, Duration)>,
-    /// The working directory of each process BiBCode owns, with its pid. One that was removed
+    /// The working directory of each process Coddy Studio owns, with its pid. One that was removed
     /// ends in `(deleted)`.
     pub held_open: Vec<(PathBuf, u32)>,
     /// The managed worktree directories.
@@ -801,7 +801,7 @@ pub fn audit(facts: &AuditFacts) -> Vec<FindingInput> {
         }
     }
     for dir in &facts.base_dirs {
-        // BiBCode names no worktree with a leading dot; such an entry is another tool's, like
+        // Coddy Studio names no worktree with a leading dot; such an entry is another tool's, like
         // Orca's `.orca-worktree-trash`, which was reported every audit (#105).
         let hidden = dir
             .file_name()
@@ -994,7 +994,7 @@ mod tests {
             "worktree.orphan-dir",
             vec!["unowned-unregistered".to_owned()]
         )));
-        // Another tool's hidden entry is not BiBCode's leftover (#105).
+        // Another tool's hidden entry is not Coddy Studio's leftover (#105).
         facts
             .base_dirs
             .push(PathBuf::from("/base/repo/.orca-worktree-trash"));
@@ -1018,7 +1018,7 @@ mod tests {
             git_registrations: HashMap::from([
                 (PathBuf::from("/base/repo/owned"), false),
                 (PathBuf::from("/base/repo/leftover"), true),
-                // Detached with "Remove from BiBCode": still on disk, the user's own.
+                // Detached with "Remove from Coddy Studio": still on disk, the user's own.
                 (PathBuf::from("/base/repo/detached"), false),
             ]),
             ..AuditFacts::default()
@@ -1055,7 +1055,7 @@ mod tests {
                 (PathBuf::from("/wt/stuck-other"), 45),
                 // Removed under the process, in a managed directory.
                 (PathBuf::from("/base/repo/removed/src (deleted)"), 46),
-                // Removed, but not in a managed directory: not BiBCode's worktree.
+                // Removed, but not in a managed directory: not Coddy Studio's worktree.
                 (PathBuf::from("/elsewhere/tmp (deleted)"), 47),
             ],
             ..AuditFacts::default()
@@ -1283,7 +1283,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (sources, _removal) = stalled_repository(root.path()).await;
         // A leftover directory the stalled registrations would have to be compared with.
-        std::fs::create_dir_all(root.path().join(".bibcode-worktrees/main/orphan")).unwrap();
+        std::fs::create_dir_all(root.path().join(".coddy-studio-worktrees/main/orphan")).unwrap();
         let limits = ScanLimits {
             budget: Duration::from_secs(10),
             git: Duration::from_millis(100),

@@ -1,4 +1,4 @@
-use bibcode_server::provider::{OptionRefusal, opencode};
+use coddy_studio_server::provider::{OptionRefusal, opencode};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -22,13 +22,13 @@ use axum::{
     },
     routing::{delete, get, post},
 };
-use bibcode_server::activity::{
+use coddy_studio_server::activity::{
     ActivityCapabilities, ActivityEntryKind, ActivityHistoryRecovery, ActivityLifecycle,
     ActivityObservationState, ActivityProjection, ActivityRecordKind, ActivityRepository,
     ActivityRosterBucket, ActivityScopeSeed, ActivitySection, ActivitySectionObservationState,
     ProviderActivityMutation,
 };
-use bibcode_server::persistence::{Database, run_migrations};
+use coddy_studio_server::persistence::{Database, run_migrations};
 use futures_util::{Stream, StreamExt, stream};
 use opencode::{
     OpenCodeActivityFixtureAdapter, OpenCodeSessionRuntime, build_inventory_snapshot,
@@ -1861,7 +1861,7 @@ async fn opencode_runtime_authenticates_with_configured_server_password() {
 }
 
 #[tokio::test]
-async fn opencode_runtime_registers_the_bibcode_mcp_server() {
+async fn opencode_runtime_registers_the_coddy_studio_mcp_server() {
     let app = Router::new().route("/mcp", post(register_mcp));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let address: SocketAddr = listener.local_addr().expect("addr");
@@ -1876,15 +1876,15 @@ async fn opencode_runtime_registers_the_bibcode_mcp_server() {
     );
 
     runtime
-        .add_mcp_server("bibcode", "http://127.0.0.1:3773/mcp", "Bearer secret")
+        .add_mcp_server("coddy-studio", "http://127.0.0.1:3773/mcp", "Bearer secret")
         .await
         .expect("register MCP");
     server.abort();
 }
 
-/// OpenCode 1 does not replay asks made while BiBCode was away: a resumed session reads its
+/// OpenCode 1 does not replay asks made while Coddy Studio was away: a resumed session reads its
 /// pending permissions and questions, shows each of this session once (marked `recovered`, so one
-/// BiBCode already recorded is not added again), and they can be answered. An ask created between
+/// Coddy Studio already recorded is not added again), and they can be answered. An ask created between
 /// the resume's read and the subscription is found by reading again once subscribed.
 #[tokio::test]
 async fn a_resumed_opencode_1_session_shows_the_asks_it_was_waiting_on() {
@@ -2041,7 +2041,7 @@ async fn opencode_runtime_failure_boundaries_reject_invalid_sessions_and_http_st
     assert_eq!(runtime.resume("session-1").await.unwrap(), "session-1");
     assert!(
         runtime
-            .add_mcp_server("bibcode", "http://localhost/mcp", "Bearer token")
+            .add_mcp_server("coddy-studio", "http://localhost/mcp", "Bearer token")
             .await
             .is_err()
     );
@@ -2175,7 +2175,7 @@ async fn opencode_runtime_maps_transport_loss_across_every_live_operation() {
     assert!(runtime.resume("transport-session").await.is_err());
     assert!(
         runtime
-            .add_mcp_server("bibcode", "http://localhost/mcp", "Bearer token")
+            .add_mcp_server("coddy-studio", "http://localhost/mcp", "Bearer token")
             .await
             .is_err()
     );
@@ -2708,7 +2708,7 @@ async fn opencode_runtime_surfaces_session_errors_and_removes_the_unanswered_pro
     // The fixture closes its SSE stream at the end of the scenario, and the pump
     // reports that teardown as `session.exited`. That event is required, not
     // merely tolerated: without it a crashed opencode server goes back to
-    // looking like a hung BiBCode. Nothing else may follow it, because idle
+    // looking like a hung Coddy Studio. Nothing else may follow it, because idle
     // after an error must not emit a second successful completion.
     let mut saw_exit = false;
     while !saw_exit {
@@ -5496,7 +5496,7 @@ async fn reconciliation_batches_apply_through_production_projection_from_none_sc
         roster.records.iter().any(|record| {
             matches!(
                 record,
-                bibcode_server::activity::ActivityRecordSummary::Actor(actor)
+                coddy_studio_server::activity::ActivityRecordSummary::Actor(actor)
                     if actor.id == "opencode:session:child"
             )
         }),
@@ -6965,7 +6965,7 @@ async fn register_mcp(
     assert_eq!(
         body,
         json!({
-            "name": "bibcode",
+            "name": "coddy-studio",
             "config": {
                 "type": "remote",
                 "url": "http://127.0.0.1:3773/mcp",
@@ -6974,7 +6974,7 @@ async fn register_mcp(
             }
         })
     );
-    Json(json!({ "bibcode": { "status": "connected" } }))
+    Json(json!({ "coddy-studio": { "status": "connected" } }))
 }
 
 async fn create_authenticated_session(

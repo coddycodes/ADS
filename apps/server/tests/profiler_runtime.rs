@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::diagnostics::{
+use coddy_studio_server::diagnostics::{
     ProcessAttributionRegistry,
     profiler::{
         self, client, crash,
@@ -76,7 +76,7 @@ fn crash_finding() -> FindingInput {
 async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence() {
     rapid_toggles_never_run_two_detector_sets().await;
     without_a_crash_hook_no_monitor_starts().await;
-    // From here on this process has its crash hook, as every BiBCode binary does.
+    // From here on this process has its crash hook, as every Coddy Studio binary does.
     crash::attach();
     rapid_toggles_never_leave_a_crash_monitor_behind().await;
     a_dropped_setting_reaps_the_monitor_before_follow_returns().await;
@@ -137,7 +137,7 @@ async fn without_a_crash_hook_no_monitor_starts() {
     let profiler_dir = profiler::profiler_dir(dir.path());
     let (_tx, rx) = watch::channel(true);
     let detector = crash::MonitorDetector::new(profiler_dir.clone(), "server")
-        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+        .with_executable(env!("CARGO_BIN_EXE_coddy-studio").into());
     let runtime = ProfilerRuntime::start(dir.path(), rx, vec![Box::new(detector)]);
     let expected = if cfg!(all(windows, target_arch = "aarch64")) {
         "disabled"
@@ -155,8 +155,8 @@ async fn without_a_crash_hook_no_monitor_starts() {
 }
 
 /// Review Focus 2: off, on, off in quick succession ends with no monitor child. The test
-/// binary cannot be the monitor, so the detector re-executes `bibcode`, whose `main`
-/// dispatches `--crash-monitor` first, as every BiBCode binary does.
+/// binary cannot be the monitor, so the detector re-executes `coddy-studio`, whose `main`
+/// dispatches `--crash-monitor` first, as every Coddy Studio binary does.
 async fn rapid_toggles_never_leave_a_crash_monitor_behind() {
     let dir = tempfile::tempdir().unwrap();
     let profiler_dir = profiler::profiler_dir(dir.path());
@@ -170,7 +170,7 @@ async fn rapid_toggles_never_leave_a_crash_monitor_behind() {
     }
     let (tx, rx) = watch::channel(true);
     let detector = crash::MonitorDetector::new(profiler_dir.clone(), "server")
-        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+        .with_executable(env!("CARGO_BIN_EXE_coddy-studio").into());
     let runtime = ProfilerRuntime::start(dir.path(), rx, vec![Box::new(detector)]);
     let disabled = cfg!(all(windows, target_arch = "aarch64"));
     let expected = if disabled { "disabled" } else { "available" };
@@ -213,7 +213,7 @@ async fn a_dropped_setting_reaps_the_monitor_before_follow_returns() {
     let profiler_dir = profiler::profiler_dir(dir.path());
     let (tx, rx) = watch::channel(true);
     let detector = crash::MonitorDetector::new(profiler_dir.clone(), "desktop")
-        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+        .with_executable(env!("CARGO_BIN_EXE_coddy-studio").into());
     let follower = tokio::spawn(crash::follow(detector, rx));
     wait_until("the monitor is connected", || {
         native_dumps(&profiler_dir) == "available" && monitor_children().len() == 1
@@ -236,7 +236,7 @@ async fn a_stuck_runtime_still_replaces_a_hung_monitor() {
     let profiler_dir = profiler::profiler_dir(dir.path());
     let (_tx, rx) = watch::channel(true);
     let detector = crash::MonitorDetector::new(profiler_dir.clone(), "server")
-        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+        .with_executable(env!("CARGO_BIN_EXE_coddy-studio").into());
     let runtime = ProfilerRuntime::start(dir.path(), rx, vec![Box::new(detector)]);
     wait_until("the monitor is connected", || {
         native_dumps(&profiler_dir) == "available" && monitor_children().len() == 1

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { GitManagerSignalEvent } from "@bibcode/contracts";
+import type { GitManagerSignalEvent } from "@coddy/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { createSignalWithDegradedFocusRefresh } from "./gitManagerRefresh.ts";

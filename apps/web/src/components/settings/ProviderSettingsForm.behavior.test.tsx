@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { makeProviderSettingsSchema, ProviderDriverKind } from "@bibcode/contracts";
+import { makeProviderSettingsSchema, ProviderDriverKind } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

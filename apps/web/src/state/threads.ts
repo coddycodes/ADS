@@ -6,8 +6,8 @@ import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
-} from "@bibcode/client-runtime/state/threads";
-import type { EnvironmentId, ThreadId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/threads";
+import type { EnvironmentId, ThreadId } from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 

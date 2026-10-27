@@ -16,19 +16,19 @@ const decodePackageJson = Schema.decodeUnknownEffect(PackageJson);
 
 const rustPackages = [
   {
-    cargoPackage: "bibcode-desktop",
+    cargoPackage: "coddy-studio-desktop",
     memberPath: "apps/desktop/src-tauri",
     packageJsonPath: "apps/desktop/package.json",
     cargoSelectedScriptNames: ["dev", "test", "typecheck"],
   },
   {
-    cargoPackage: "bibcode-server",
+    cargoPackage: "coddy-studio-server",
     memberPath: "apps/server",
     packageJsonPath: "apps/server/package.json",
     cargoSelectedScriptNames: ["build", "start", "test", "typecheck"],
   },
   {
-    cargoPackage: "bibcode-updater-verifier",
+    cargoPackage: "coddy-studio-updater-verifier",
     memberPath: "tools/updater-verifier",
   },
 ] as const;

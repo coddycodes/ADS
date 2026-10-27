@@ -1,5 +1,5 @@
-import type { DesktopWslState, EnvironmentId, LocalApi } from "@bibcode/contracts";
-import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@bibcode/contracts";
+import type { DesktopWslState, EnvironmentId, LocalApi } from "@coddy/contracts";
+import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@coddy/contracts";
 
 import {
   applyWslEnvironmentConfiguration,

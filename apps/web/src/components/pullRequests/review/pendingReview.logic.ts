@@ -1,4 +1,4 @@
-import type { PullRequestsActionResult } from "@bibcode/contracts";
+import type { PullRequestsActionResult } from "@coddy/contracts";
 import type { PendingInlineComment } from "../../../pullRequestsStore";
 export function reviewComments(comments: readonly PendingInlineComment[]) {
   return comments.map(({ path, line, startLine, side, body }) => ({

@@ -23,7 +23,7 @@ afterEach(() => {
 
 describe("provider input log", () => {
   it("appends one JSON object per line and preserves provider input order", () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-provider-log-"));
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-provider-log-"));
     temporaryDirectories.push(directory);
     const path = NodePath.join(directory, "nested", "provider-input.jsonl");
     const entries: ProviderInputLogEntry[] = [
@@ -52,14 +52,14 @@ describe("provider input log", () => {
   });
 
   it("returns an empty inventory before a provider records input", () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-provider-log-"));
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-provider-log-"));
     temporaryDirectories.push(directory);
 
     expect(readProviderInputLog(NodePath.join(directory, "missing.jsonl"))).toEqual([]);
   });
 
   it("waits for one exact appended provider entry", async () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-provider-log-"));
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-provider-log-"));
     temporaryDirectories.push(directory);
     const path = NodePath.join(directory, "provider-input.jsonl");
     const entry: ProviderInputLogEntry = {
@@ -85,7 +85,7 @@ describe("provider input log", () => {
   });
 
   it("rejects duplicate, mismatched, or malformed provider entries with diagnostics", async () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-provider-log-"));
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-provider-log-"));
     temporaryDirectories.push(directory);
     const path = NodePath.join(directory, "provider-input.jsonl");
     const entry: ProviderInputLogEntry = {
@@ -140,7 +140,7 @@ describe("provider input log", () => {
   });
 
   it("distinguishes a steer from a new start with the same prompt", async () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-provider-log-"));
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-provider-log-"));
     temporaryDirectories.push(directory);
     const path = NodePath.join(directory, "provider-input.jsonl");
     const entry: ProviderInputLogEntry = {

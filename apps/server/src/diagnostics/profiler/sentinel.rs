@@ -191,7 +191,7 @@ impl Dump {
         evidence
     }
 
-    /// The `crash.native` finding of a dump written while BiBCode kept running, such as one a
+    /// The `crash.native` finding of a dump written while Coddy Studio kept running, such as one a
     /// Windows invalid-parameter handler asked for.
     pub fn running_finding(&self) -> FindingInput {
         self.finding(format!(
@@ -591,7 +591,7 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
             Severity::Error,
             Vec::new(),
             "Previous run was likely killed for using too much memory".to_owned(),
-            "The user session's oom_kill count rose while BiBCode was running, and no crash \
+            "The user session's oom_kill count rose while Coddy Studio was running, and no crash \
              record matched it."
                 .to_owned(),
             json!({}),
@@ -616,7 +616,7 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
                 context.note.iter().map(|note| note.cause.clone()).collect(),
                 title.to_owned(),
                 format!(
-                    "BiBCode stopped without shutting down and no OS crash record matched \
+                    "Coddy Studio stopped without shutting down and no OS crash record matched \
                      (crash records: {facility}).{} {cause}.",
                     context.describe()
                 ),
@@ -628,7 +628,8 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
             Severity::Info,
             Vec::new(),
             "Previous run ended with the system".to_owned(),
-            "The computer restarted, crashed or lost power while BiBCode was running.".to_owned(),
+            "The computer restarted, crashed or lost power while Coddy Studio was running."
+                .to_owned(),
             json!({}),
         ),
         // Not a `crash.*` kind: it never sets the last crash.
@@ -636,7 +637,7 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
             "shutdown.incomplete",
             Severity::Info,
             Vec::new(),
-            "BiBCode did not finish shutting down".to_owned(),
+            "Coddy Studio did not finish shutting down".to_owned(),
             format!(
                 "The previous run began shutting down and stopped before it finished, and no \
                  crash record matched it.{} Quitting while work was still stopping, or a forced \
@@ -791,7 +792,7 @@ pub fn unrecorded_crash_finding(
     }
 }
 
-/// The BiBCode version of the latest run that used `dir`, running now or not (#98). The
+/// The Coddy Studio version of the latest run that used `dir`, running now or not (#98). The
 /// sentinel is written with the profiler off too, so this is not necessarily the version that
 /// recorded the events: `session.start` events and findings name that.
 pub(super) fn recorded_version(dir: &Path) -> Option<String> {
@@ -833,7 +834,7 @@ mod tests {
             pid,
             signal: 7,
             time_micros: 1_791_000_000_000_000,
-            exe: "/tmp/.mount_abc/usr/bin/bibcode-desktop".to_owned(),
+            exe: "/tmp/.mount_abc/usr/bin/coddy-studio-desktop".to_owned(),
         };
         let first = unrecorded_crash_finding(&crash(10), "coredump-10-1".to_owned());
         let second = unrecorded_crash_finding(&crash(11), "coredump-11-1".to_owned());
@@ -844,7 +845,7 @@ mod tests {
         assert!(
             first
                 .title
-                .starts_with("bibcode-desktop crashed with signal 7")
+                .starts_with("coddy-studio-desktop crashed with signal 7")
         );
         assert!(first.evidence["crashedAt"].as_str().is_some());
     }
@@ -854,7 +855,7 @@ mod tests {
             state: "running".into(),
             pid: 42,
             boot_id: Some("b1".into()),
-            exe: "bibcode".into(),
+            exe: "coddy-studio".into(),
             version: "0.9.0".into(),
             started_at: "2026-10-09T10:00:00Z".into(),
             oom_kill_baseline: Some(3),
@@ -938,8 +939,8 @@ mod tests {
         let record = OsCrashRecord {
             source: "coredump",
             signal_or_code: "SIGSEGV".into(),
-            module: Some("bibcode".into()),
-            frames: vec!["main (bibcode + 0x10)".into()],
+            module: Some("coddy-studio".into()),
+            frames: vec!["main (coddy-studio + 0x10)".into()],
             raw_ref: "coredumpctl info 42".into(),
         };
         // Another boot and a risen OOM count since: the dump still says what happened.
@@ -956,12 +957,12 @@ mod tests {
         // The record's own-module frames tell crashes apart, as without a dump.
         let recorded = finding_for(&prev, PreviousRun::Crash(record)).unwrap();
         assert_eq!(input.fingerprint_fields, recorded.fingerprint_fields);
-        assert_eq!(input.fingerprint_fields[2], "bibcode");
+        assert_eq!(input.fingerprint_fields[2], "coddy-studio");
         assert_eq!(input.evidence["crashId"], "6f1c");
         assert_eq!(input.evidence["crashIds"], json!(["6f1c"]));
         assert_eq!(input.evidence["source"], "minidump");
         assert_eq!(input.evidence["recordSource"], "coredump");
-        assert_eq!(input.evidence["frames"][0], "main (bibcode + 0x10)");
+        assert_eq!(input.evidence["frames"][0], "main (coddy-studio + 0x10)");
         assert_eq!(input.evidence["pid"], 42);
         assert!(input.title.contains("SIGSEGV"), "{}", input.title);
 
@@ -984,7 +985,7 @@ mod tests {
             sidecar: sidecar(id, 42, "2026-10-09T10:02:00Z", Some("b1")),
             reason: Some("SIGSEGV / SEGV_MAPERR".into()),
             fault: Some(Fault {
-                module: "bibcode".into(),
+                module: "coddy-studio".into(),
                 offset,
             }),
         };
@@ -994,7 +995,7 @@ mod tests {
                 "server",
                 "minidump",
                 "SIGSEGV / SEGV_MAPERR",
-                "bibcode",
+                "coddy-studio",
                 "0x1234"
             ]
         );
@@ -1098,7 +1099,7 @@ mod tests {
         let input = finding_for(&prev, run).unwrap();
         assert_eq!(input.kind, "shutdown.incomplete");
         assert_eq!(input.severity, Severity::Info);
-        assert_eq!(input.title, "BiBCode did not finish shutting down");
+        assert_eq!(input.title, "Coddy Studio did not finish shutting down");
         assert_eq!(input.evidence["pid"], 42);
 
         let dump = Dump {
@@ -1168,7 +1169,7 @@ mod tests {
         let mut frames: Vec<String> = (0..5)
             .map(|n| format!("n/a (libc.so.6 + 0x{n}a17c)"))
             .collect();
-        frames.push(format!("{own_frame} (bibcode + 0x1234)"));
+        frames.push(format!("{own_frame} (coddy-studio + 0x1234)"));
         OsCrashRecord {
             source: "coredump",
             signal_or_code: "SIGABRT".into(),
@@ -1188,8 +1189,8 @@ mod tests {
             super::super::findings::fingerprint(input.kind, &input.fingerprint_fields)
         };
         assert_ne!(fingerprint(&first), fingerprint(&second));
-        assert_eq!(first.evidence["module"], "bibcode");
-        assert!(first.summary.contains("bibcode"), "{}", first.summary);
+        assert_eq!(first.evidence["module"], "coddy-studio");
+        assert!(first.summary.contains("coddy-studio"), "{}", first.summary);
         // No frame in our module: the top frames and the record's module stand.
         let mut foreign = abort_in("parse_a");
         foreign.frames.pop();
@@ -1204,8 +1205,8 @@ mod tests {
             source: "ips",
             signal_or_code: "SIGSEGV".into(),
             module: Some("libx.dylib".into()),
-            frames: vec![fault.to_owned(), "main (bibcode + 0x1234)".into()],
-            raw_ref: "bibcode pid 42".into(),
+            frames: vec![fault.to_owned(), "main (coddy-studio + 0x1234)".into()],
+            raw_ref: "coddy-studio pid 42".into(),
         };
         let fingerprint = |record| {
             let input = finding_for(&previous(), PreviousRun::Crash(record)).unwrap();
@@ -1258,7 +1259,8 @@ mod tests {
         };
         assert_eq!(context.note, prev.exit);
         context.journal = vec![
-            "bibcode-desktop.service: Main process exited, code=exited, status=1/FAILURE".into(),
+            "coddy-studio-desktop.service: Main process exited, code=exited, status=1/FAILURE"
+                .into(),
         ];
         context.gone_at = Some("2026-10-09T10:05:01Z".into());
         let input = finding_for(&prev, PreviousRun::UncleanExit { facility, context }).unwrap();
@@ -1312,7 +1314,7 @@ mod tests {
         );
     }
 
-    /// #102: Windows ending the session with BiBCode open is no crash, also across the reboot
+    /// #102: Windows ending the session with Coddy Studio open is no crash, also across the reboot
     /// that follows; a crash record of the same run still wins.
     #[test]
     fn a_run_the_os_ended_with_its_session_is_clean() {
@@ -1334,7 +1336,7 @@ mod tests {
                 &ended,
                 Some("b1"),
                 Some(3),
-                Some(abort_in("bibcode_desktop")),
+                Some(abort_in("coddy_studio_desktop")),
                 None
             ),
             PreviousRun::Crash(_)
@@ -1342,7 +1344,7 @@ mod tests {
     }
 
     fn prev_journal_line() -> &'static str {
-        "bibcode-desktop.service: Main process exited, code=exited, status=1/FAILURE"
+        "coddy-studio-desktop.service: Main process exited, code=exited, status=1/FAILURE"
     }
 
     #[test]

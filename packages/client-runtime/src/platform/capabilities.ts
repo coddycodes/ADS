@@ -4,7 +4,7 @@ import {
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   EnvironmentId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
@@ -26,7 +26,7 @@ export class CloudSession extends Context.Service<
   {
     readonly clerkToken: Effect.Effect<string, ConnectionAttemptError>;
   }
->()("@bibcode/client-runtime/platform/capabilities/CloudSession") {}
+>()("@coddy/client-runtime/platform/capabilities/CloudSession") {}
 
 export class ClientPresentation extends Context.Service<
   ClientPresentation,
@@ -34,14 +34,14 @@ export class ClientPresentation extends Context.Service<
     readonly metadata: AuthClientPresentationMetadata;
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   }
->()("@bibcode/client-runtime/platform/capabilities/ClientPresentation") {}
+>()("@coddy/client-runtime/platform/capabilities/ClientPresentation") {}
 
 export class PrimaryEnvironmentAuth extends Context.Service<
   PrimaryEnvironmentAuth,
   {
     readonly bearerToken: Effect.Effect<Option.Option<string>, ConnectionAttemptError>;
   }
->()("@bibcode/client-runtime/platform/capabilities/PrimaryEnvironmentAuth") {}
+>()("@coddy/client-runtime/platform/capabilities/PrimaryEnvironmentAuth") {}
 
 export interface SshEnvironmentConnectionInput {
   readonly connectionId: string;
@@ -71,4 +71,4 @@ export class SshEnvironmentGateway extends Context.Service<
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, ConnectionAttemptError>;
   }
->()("@bibcode/client-runtime/platform/capabilities/SshEnvironmentGateway") {}
+>()("@coddy/client-runtime/platform/capabilities/SshEnvironmentGateway") {}

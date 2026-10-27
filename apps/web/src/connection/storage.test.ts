@@ -11,7 +11,7 @@ import {
   ProfileStore,
   type PreparedConnection,
   verifyPreparedStorageIdentity,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   AcceptedStorageIdentityStore,
   ConnectionCatalogDocument,
@@ -20,8 +20,8 @@ import {
   ConnectionRegistrationStore,
   ConnectionTargetStore,
   EnvironmentCacheStore,
-} from "@bibcode/client-runtime/platform";
-import { TokenStore } from "@bibcode/client-runtime/authorization";
+} from "@coddy/client-runtime/platform";
+import { TokenStore } from "@coddy/client-runtime/authorization";
 import {
   EnvironmentId,
   type OrchestrationShellSnapshot,
@@ -29,8 +29,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-} from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -357,7 +357,7 @@ const remoteToken = new TokenStore.RemoteDpopAccessToken({
   endpoint: {
     httpBaseUrl: "https://relay.example/",
     wsBaseUrl: "wss://relay.example/",
-    providerKind: "bibcode_relay",
+    providerKind: "coddy_studio_relay",
   },
   accessToken: "remote-access-token",
   expiresAtEpochMs: 1_000,

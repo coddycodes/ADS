@@ -41,7 +41,7 @@ pub struct Image {
     /// The AVD name or the simulator UDID.
     pub id: String,
     pub display_name: String,
-    /// Already running outside BiBCode; serialized only when true.
+    /// Already running outside Coddy Studio; serialized only when true.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub in_use_elsewhere: bool,
 }

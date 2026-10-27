@@ -4,4 +4,4 @@ export {
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
-} from "@bibcode/client-runtime/state/thread-sort";
+} from "@coddy/client-runtime/state/thread-sort";

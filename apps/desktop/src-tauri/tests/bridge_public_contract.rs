@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_desktop_lib::{
+use coddy_studio_desktop_lib::{
     desktop_bridge_bootstrap_ssh_bearer_session, desktop_bridge_fetch_environment_descriptor,
     desktop_bridge_fetch_ssh_session_state, desktop_bridge_issue_ssh_web_socket_ticket,
 };
@@ -86,7 +86,7 @@ async fn public_remote_bridge_commands_route_and_decode_environment_requests() {
         requests
             .recv()
             .expect("descriptor request")
-            .starts_with("GET /.well-known/bibcode/environment HTTP/1.1")
+            .starts_with("GET /.well-known/coddy-studio/environment HTTP/1.1")
     );
 
     let (base_url, requests) = spawn_json_server("200 OK", r#"{"status":"authenticated"}"#);

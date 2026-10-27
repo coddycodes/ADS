@@ -3241,8 +3241,8 @@ mod tests {
         fs::create_dir(&repository).expect("temporary Git repository");
         for args in [
             &["init", "--quiet", "-b", "main"][..],
-            &["config", "user.name", "BiBCode Test"][..],
-            &["config", "user.email", "bibcode@example.invalid"][..],
+            &["config", "user.name", "Coddy Studio Test"][..],
+            &["config", "user.email", "coddy-studio@example.invalid"][..],
         ] {
             let output = Command::new(command)
                 .args(args)

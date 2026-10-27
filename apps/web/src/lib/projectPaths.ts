@@ -14,4 +14,4 @@ export {
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
   resolveProjectPathForDispatch,
-} from "@bibcode/client-runtime/state/projects";
+} from "@coddy/client-runtime/state/projects";

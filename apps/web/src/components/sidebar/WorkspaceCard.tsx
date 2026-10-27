@@ -1,4 +1,4 @@
-import type { ProviderDriverKind } from "@bibcode/contracts";
+import type { ProviderDriverKind } from "@coddy/contracts";
 import {
   CircleAlertIcon,
   CircleHelpIcon,

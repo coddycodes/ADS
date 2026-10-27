@@ -14,8 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_server::persistence::{Database, run_migrations};
-use bibcode_server::pull_requests::{
+use coddy_studio_server::persistence::{Database, run_migrations};
+use coddy_studio_server::pull_requests::{
     ContextRead, PullRequestsService,
     host::HostCommandRunner,
     model::{Changed, Context, ListQuery, SubscribeInput},
@@ -77,11 +77,11 @@ struct Phase {
 
 #[tokio::test]
 async fn gitlab_list_and_merge_request_loads_record_requests_and_wall_time() {
-    let rtt_ms = std::env::var("BIBCODE_GITLAB_HARNESS_RTT_MS")
+    let rtt_ms = std::env::var("CODDY_STUDIO_GITLAB_HARNESS_RTT_MS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(200);
-    let runs = std::env::var("BIBCODE_GITLAB_HARNESS_RUNS")
+    let runs = std::env::var("CODDY_STUDIO_GITLAB_HARNESS_RUNS")
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|runs: &usize| *runs > 0)
@@ -166,8 +166,8 @@ async fn gitlab_list_and_merge_request_loads_record_requests_and_wall_time() {
     });
     let rendered = serde_json::to_string_pretty(&report).expect("report json");
     println!("HARNESS_JSON {rendered}");
-    let report_path = std::env::var("BIBCODE_GITLAB_HARNESS_REPORT")
-        .unwrap_or_else(|_| "/tmp/bibcode-gitlab-mr-load.json".to_owned());
+    let report_path = std::env::var("CODDY_STUDIO_GITLAB_HARNESS_REPORT")
+        .unwrap_or_else(|_| "/tmp/coddy-studio-gitlab-mr-load.json".to_owned());
     fs::write(&report_path, &rendered).expect("write report");
 
     for sample in &samples {

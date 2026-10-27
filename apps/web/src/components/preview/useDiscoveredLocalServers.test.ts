@@ -1,4 +1,4 @@
-import type { DiscoveredLocalServer } from "@bibcode/contracts";
+import type { DiscoveredLocalServer } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { mergeServers, type PreviewableServer } from "./useDiscoveredLocalServers";

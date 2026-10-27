@@ -33,7 +33,7 @@ const ComparedMemoProbe = memo(function ComparedMemoProbe({ value, subscribe }: 
 
 const MemoProbe = memo(function MemoProbe({ value, subscribe }: ProbeProps) {
   const subscribeOnMount = useRef(subscribe);
-  // oxlint-disable-next-line bibcode/no-effect-event-in-memo-or-forward-ref -- Pins the SimpleMemoComponent defect.
+  // oxlint-disable-next-line coddy/no-effect-event-in-memo-or-forward-ref -- Pins the SimpleMemoComponent defect.
   const readValue = useEffectEvent(() => value);
   useEffect(() => {
     subscribeOnMount.current(readValue);
@@ -46,7 +46,7 @@ const ForwardRefProbe = forwardRef<HTMLOutputElement, ProbeProps>(function Forwa
   ref,
 ) {
   const subscribeOnMount = useRef(subscribe);
-  // oxlint-disable-next-line bibcode/no-effect-event-in-memo-or-forward-ref -- Pins the ForwardRef defect.
+  // oxlint-disable-next-line coddy/no-effect-event-in-memo-or-forward-ref -- Pins the ForwardRef defect.
   const readValue = useEffectEvent(() => value);
   useEffect(() => {
     subscribeOnMount.current(readValue);
@@ -60,7 +60,7 @@ const ComparedForwardRefProbe = memo(
     ref,
   ) {
     const subscribeOnMount = useRef(subscribe);
-    // oxlint-disable-next-line bibcode/no-effect-event-in-memo-or-forward-ref -- A comparator does not repair ForwardRef.
+    // oxlint-disable-next-line coddy/no-effect-event-in-memo-or-forward-ref -- A comparator does not repair ForwardRef.
     const readValue = useEffectEvent(() => value);
     useEffect(() => {
       subscribeOnMount.current(readValue);
@@ -123,7 +123,7 @@ describe(`Effect Event subscriptions on react-dom ${version}`, () => {
         `react-dom ${version} still keeps stale Effect Events in memo(C), forwardRef(C), and ` +
           `memo(forwardRef(C), compare); ${form} should return ${retainedValue}. ` +
           "When a prohibited form returns the new value after an upgrade, re-check every form " +
-          "and remove bibcode/no-effect-event-in-memo-or-forward-ref only once all of them recover.",
+          "and remove coddy/no-effect-event-in-memo-or-forward-ref only once all of them recover.",
       ).toBe(retainedValue);
     },
   );

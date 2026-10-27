@@ -283,7 +283,7 @@ const testDeployOperations = (): RelayDeployOperations["Service"] =>
       return Effect.succeed({
         actions: {},
         bindings: {},
-        name: "BiBCodeRelay",
+        name: "CoddyStudioRelay",
         output: {},
         resources: {},
         services: Layer.empty,
@@ -428,18 +428,18 @@ describe("hasDeployChanges", () => {
 describe("reconcileRootEnvRelayUrl", () => {
   it("adds the relay URL to an empty root env file", () => {
     expect(reconcileRootEnvRelayUrl("", "https://relay.example.test")).toBe(
-      "BIBCODE_RELAY_URL=https://relay.example.test\n",
+      "CODDY_STUDIO_RELAY_URL=https://relay.example.test\n",
     );
   });
 
   it("preserves unrelated root env entries while replacing a previous relay URL", () => {
     expect(
       reconcileRootEnvRelayUrl(
-        "BIBCODE_CLERK_PUBLISHABLE_KEY=pk_test_example\nBIBCODE_RELAY_URL=https://old.example.test\n",
+        "CODDY_STUDIO_CLERK_PUBLISHABLE_KEY=pk_test_example\nCODDY_STUDIO_RELAY_URL=https://old.example.test\n",
         "https://relay.example.test",
       ),
     ).toBe(
-      "BIBCODE_CLERK_PUBLISHABLE_KEY=pk_test_example\nBIBCODE_RELAY_URL=https://relay.example.test\n",
+      "CODDY_STUDIO_CLERK_PUBLISHABLE_KEY=pk_test_example\nCODDY_STUDIO_RELAY_URL=https://relay.example.test\n",
     );
   });
 
@@ -447,7 +447,7 @@ describe("reconcileRootEnvRelayUrl", () => {
     expect(() =>
       reconcileRootEnvRelayUrl(
         "",
-        "https://relay.example.test\nBIBCODE_RELAY_URL=https://unexpected.example.test",
+        "https://relay.example.test\nCODDY_STUDIO_RELAY_URL=https://unexpected.example.test",
       ),
     ).toThrow("Relay deployment environment values cannot contain line breaks.");
   });
@@ -567,10 +567,10 @@ describe("deploy", () => {
       );
 
       expect(deployHarness.stateRequests).toEqual([
-        { stack: "BiBCodeRelay", stage: "override-stage" },
+        { stack: "CoddyStudioRelay", stage: "override-stage" },
       ]);
       expect(fileSystem.files.get(rootEnvPath)).toContain(
-        "BIBCODE_RELAY_URL=https://relay.example.test",
+        "CODDY_STUDIO_RELAY_URL=https://relay.example.test",
       );
     }),
   );
@@ -627,7 +627,7 @@ describe("deploy", () => {
       yield* runDeploy(deployOptions({ readState: true }), fileSystem);
 
       expect(deployHarness.stateRequests).toEqual([
-        { stack: "BiBCodeRelay", stage: "default-stage" },
+        { stack: "CoddyStudioRelay", stage: "default-stage" },
       ]);
     }),
   );
@@ -640,7 +640,7 @@ describe("deploy", () => {
       yield* runDeploy(deployOptions({ readState: true }), fileSystem);
 
       expect(deployHarness.stateRequests).toEqual([
-        { stack: "BiBCodeRelay", stage: "environment-stage" },
+        { stack: "CoddyStudioRelay", stage: "environment-stage" },
       ]);
     }),
   );
@@ -674,7 +674,7 @@ describe("deploy", () => {
         fileSystem,
       );
 
-      expect(deployHarness.stateRequests).toEqual([{ stack: "BiBCodeRelay", stage: "flag-stage" }]);
+      expect(deployHarness.stateRequests).toEqual([{ stack: "CoddyStudioRelay", stage: "flag-stage" }]);
     }),
   );
 
@@ -688,7 +688,7 @@ describe("deploy", () => {
       yield* runDeploy(deployOptions({ readState: true }), fileSystem);
 
       expect(deployHarness.stateRequests).toEqual([
-        { stack: "BiBCodeRelay", stage: "dev_relay-tester" },
+        { stack: "CoddyStudioRelay", stage: "dev_relay-tester" },
       ]);
     }),
   );
@@ -705,8 +705,8 @@ describe("deploy", () => {
       yield* runDeploy(deployOptions({ readState: true }), virtualFileSystem());
 
       expect(deployHarness.stateRequests).toEqual([
-        { stack: "BiBCodeRelay", stage: "dev_windows-relay-tester" },
-        { stack: "BiBCodeRelay", stage: "dev_unknown" },
+        { stack: "CoddyStudioRelay", stage: "dev_windows-relay-tester" },
+        { stack: "CoddyStudioRelay", stage: "dev_unknown" },
       ]);
     }),
   );
@@ -777,7 +777,7 @@ describe("deploy", () => {
       expect(deployHarness.promptMessages).toEqual(["Apply this relay deployment?"]);
       expect(deployHarness.applyCount).toBe(1);
       expect(fileSystem.files.get(rootEnvPath)).toBe(
-        ["UNRELATED=value", "BIBCODE_RELAY_URL=https://relay.example.test", ""].join("\n"),
+        ["UNRELATED=value", "CODDY_STUDIO_RELAY_URL=https://relay.example.test", ""].join("\n"),
       );
       expect(fileSystem.files.get(githubOutputPath)).toBe(
         "prior=true\nchanged=true\nresult=applied\nrelay_url=https://relay.example.test\n",
@@ -1029,7 +1029,7 @@ describe("relay deploy CLI", () => {
 
       expect(result.coveredDeployScript).toBe(true);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Deploy the BiBCode relay through Alchemy.");
+      expect(result.stdout).toContain("Deploy the Coddy Studio relay through Alchemy.");
       expect(result.stdout).toContain("--env-file string");
       expect(result.stderr).toBe("");
     }).pipe(Effect.provide(NodeServices.layer)),

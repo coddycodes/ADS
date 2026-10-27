@@ -15,8 +15,8 @@ import {
   EnvironmentId,
   type ServerConfig,
   WS_METHODS,
-} from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
@@ -24,8 +24,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { EnvironmentRegistry, EnvironmentSupervisor } from "@bibcode/client-runtime/connection";
-import { createServerEnvironmentAtoms } from "@bibcode/client-runtime/state/server";
+import { EnvironmentRegistry, EnvironmentSupervisor } from "@coddy/client-runtime/connection";
+import { createServerEnvironmentAtoms } from "@coddy/client-runtime/state/server";
 
 const h = vi.hoisted(() => ({
   persisted: null as Record<string, unknown> | null,
@@ -112,7 +112,7 @@ vi.mock("~/state/use-atom-command", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/errors", () => ({
+vi.mock("@coddy/client-runtime/errors", () => ({
   safeErrorLogAttributes: () => ({}),
 }));
 

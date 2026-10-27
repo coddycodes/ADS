@@ -1,4 +1,4 @@
-import type { GitManagerImageDiffSide } from "@bibcode/contracts";
+import type { GitManagerImageDiffSide } from "@coddy/contracts";
 
 export type GitManagerImageDiffMode = "two-up" | "swipe" | "onion" | "difference";
 

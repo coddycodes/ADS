@@ -1197,7 +1197,7 @@ impl SimulatorVideo {
             let requests = requests.clone();
             let failed = failed.clone();
             thread::Builder::new()
-                .name("bibcode-ios-encoder".to_owned())
+                .name("coddy-studio-ios-encoder".to_owned())
                 .spawn(move || {
                     let mut encode = make_encode();
                     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -1372,7 +1372,7 @@ mod tests {
     fn sps_dimensions_apply_cropping() {
         // Main profile, 1206x2622: 76x164 macroblocks cropped by 10 columns and 2 rows,
         // as VideoToolbox writes it for the iPhone 17 Pro framebuffer size
-        // (recorded with `BIBCODE_RECORD_VT_FIXTURES=1`).
+        // (recorded with `CODDY_STUDIO_RECORD_VT_FIXTURES=1`).
         let sps = include_bytes!("fixtures/vt-sps-1206x2622.bin");
         assert_eq!(sps_dimensions(sps), Some((1206, 2622)));
         let mut config = vec![0, 0, 0, 1];
@@ -1569,7 +1569,7 @@ mod tests {
         let opened = drain(&mut units);
         assert_eq!(kinds(&opened), [UnitKind::Config, UnitKind::Key]);
         assert_eq!(sps_dimensions(&opened[0].data), Some((128, 256)));
-        if std::env::var_os("BIBCODE_RECORD_VT_FIXTURES").is_some() {
+        if std::env::var_os("CODDY_STUDIO_RECORD_VT_FIXTURES").is_some() {
             let mut avcc = Vec::new();
             let mut rest = &opened[1].data[..];
             while !rest.is_empty() {

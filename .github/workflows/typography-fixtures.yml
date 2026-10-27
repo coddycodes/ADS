@@ -19,7 +19,7 @@ jobs:
     name: Typography ${{ matrix.engine }} ${{ matrix.group }}
     runs-on: ubuntu-24.04
     env:
-      BIBCODE_TYPOGRAPHY_SOURCE: ${{ github.event.pull_request.head.sha }}
+      CODDY_STUDIO_TYPOGRAPHY_SOURCE: ${{ github.event.pull_request.head.sha }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -59,7 +59,7 @@ jobs:
     container: ubuntu:24.04
     timeout-minutes: 15
     env:
-      BIBCODE_TYPOGRAPHY_SOURCE: ${{ github.event.pull_request.head.sha }}
+      CODDY_STUDIO_TYPOGRAPHY_SOURCE: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Install native tools inside the owned container
         run: |

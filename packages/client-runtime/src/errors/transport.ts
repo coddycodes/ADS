@@ -2,7 +2,7 @@ const TRANSPORT_ERROR_PATTERNS = [
   /\bSocketCloseError\b/i,
   /\bSocketOpenError\b/i,
   /\bSocket is not connected\b/i,
-  /Unable to connect to the BiBCode server WebSocket\./i,
+  /Unable to connect to the Coddy Studio server WebSocket\./i,
   /\bis not connected\.$/i,
   /\bdisconnected\.$/i,
   /^No data from .+ for \d+ seconds\./i,

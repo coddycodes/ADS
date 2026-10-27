@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { managedRelaySessionAtom } from "@bibcode/client-runtime/relay";
+import { managedRelaySessionAtom } from "@coddy/client-runtime/relay";
 import { useEffect } from "react";
 
 import { useAtomCommand } from "../state/use-atom-command";
@@ -45,7 +45,7 @@ export async function relinkOncePerSession(deps: {
   });
   if (result._tag !== "Success") {
     console.warn(
-      "[bibcode-connect] Could not refresh the BiBCode Connect tunnel; retrying next session.",
+      "[coddy-connect] Could not refresh the Coddy Connect tunnel; retrying next session.",
     );
     return;
   }
@@ -53,7 +53,7 @@ export async function relinkOncePerSession(deps: {
 }
 
 /**
- * Re-links the primary environment once per session when its BiBCode Connect tunnel needs
+ * Re-links the primary environment once per session when its Coddy Connect tunnel needs
  * provisioning again (no preview hostnames yet, or the server moved to another port) and
  * is linked to the signed-in account. A sign-in after mount retries.
  */

@@ -56,7 +56,7 @@ impl ServiceLocations {
                     .join("systemd")
                     .join("user")
                     .join(SYSTEMD_UNIT_NAME),
-                log_path: home.join(".bibcode").join("service.log"),
+                log_path: home.join(".coddy/studio").join("service.log"),
                 uid: current_uid(),
             },
             ServicePlatform::MacOs => Self {
@@ -64,12 +64,15 @@ impl ServiceLocations {
                     .join("Library")
                     .join("LaunchAgents")
                     .join(format!("{LAUNCHD_LABEL}.plist")),
-                log_path: home.join("Library").join("Logs").join("bibcode-server.log"),
+                log_path: home
+                    .join("Library")
+                    .join("Logs")
+                    .join("coddy-studio-server.log"),
                 uid: current_uid(),
             },
             ServicePlatform::Windows => Self {
                 definition_path: PathBuf::from(WINDOWS_TASK_NAME),
-                log_path: home.join(".bibcode").join("service.log"),
+                log_path: home.join(".coddy/studio").join("service.log"),
                 uid: None,
             },
         })
@@ -258,7 +261,7 @@ fn remove_definition(path: &PathBuf) -> Result<(), ServiceError> {
 const LINUX_MANUAL_STEPS: [&str; 3] = [
     "loginctl enable-linger",
     "systemctl --user daemon-reload",
-    "systemctl --user enable --now bibcode.service",
+    "systemctl --user enable --now coddy-studio.service",
 ];
 
 fn report(
@@ -535,7 +538,7 @@ mod tests {
 
     fn spec() -> ServiceSpec {
         ServiceSpec {
-            executable: PathBuf::from("/usr/bin/bibcode"),
+            executable: PathBuf::from("/usr/bin/coddy-studio"),
             host: "100.105.196.60".to_owned(),
             port: 3773,
             base_dir: None,
@@ -547,7 +550,7 @@ mod tests {
     fn locations(temp: &tempfile::TempDir, file: &str) -> ServiceLocations {
         ServiceLocations {
             definition_path: temp.path().join("nested").join(file),
-            log_path: temp.path().join("bibcode-server.log"),
+            log_path: temp.path().join("coddy-studio-server.log"),
             uid: Some(1000),
         }
     }
@@ -569,7 +572,7 @@ mod tests {
         let _process_runner = ProcessCommandRunner;
         let _unsupported = ServiceError::UnsupportedPlatform;
         let temp = tempfile::tempdir().expect("temp");
-        let locations = locations(&temp, "bibcode.service");
+        let locations = locations(&temp, "coddy-studio.service");
         let runner = FakeRunner::new();
         let report: ServiceReport =
             install(&spec(), ServicePlatform::Linux, &locations, &runner).expect("install");
@@ -578,7 +581,7 @@ mod tests {
             vec![
                 "loginctl enable-linger",
                 "systemctl --user daemon-reload",
-                "systemctl --user enable --now bibcode.service",
+                "systemctl --user enable --now coddy-studio.service",
             ]
         );
         let unit = std::fs::read_to_string(&locations.definition_path).expect("unit written");
@@ -591,7 +594,7 @@ mod tests {
     #[test]
     fn linux_install_reports_manual_steps_when_the_user_bus_is_unreachable() {
         let temp = tempfile::tempdir().expect("temp");
-        let locations = locations(&temp, "bibcode.service");
+        let locations = locations(&temp, "coddy-studio.service");
         let runner = FakeRunner::new().failing(
             "systemctl --user daemon-reload",
             "Failed to connect to bus: No medium found",
@@ -612,7 +615,7 @@ mod tests {
             vec![
                 "loginctl enable-linger",
                 "systemctl --user daemon-reload",
-                "systemctl --user enable --now bibcode.service",
+                "systemctl --user enable --now coddy-studio.service",
             ]
         );
         assert!(stderr.contains("Failed to connect to bus"));
@@ -625,7 +628,7 @@ mod tests {
     #[test]
     fn linux_linger_failure_is_a_note_not_an_error() {
         let temp = tempfile::tempdir().expect("temp");
-        let locations = locations(&temp, "bibcode.service");
+        let locations = locations(&temp, "coddy-studio.service");
         let runner = FakeRunner::new().failing(
             "loginctl enable-linger",
             "Interactive authentication required.",
@@ -644,7 +647,7 @@ mod tests {
     #[test]
     fn linux_uninstall_disables_removes_and_reloads() {
         let temp = tempfile::tempdir().expect("temp");
-        let locations = locations(&temp, "bibcode.service");
+        let locations = locations(&temp, "coddy-studio.service");
         std::fs::create_dir_all(locations.definition_path.parent().unwrap()).unwrap();
         std::fs::write(&locations.definition_path, "unit").unwrap();
         let runner = FakeRunner::new();
@@ -652,7 +655,7 @@ mod tests {
         assert_eq!(
             runner.calls(),
             vec![
-                "systemctl --user disable --now bibcode.service",
+                "systemctl --user disable --now coddy-studio.service",
                 "systemctl --user daemon-reload",
             ]
         );
@@ -663,9 +666,11 @@ mod tests {
     #[test]
     fn linux_status_reads_is_active_and_reports_missing_definitions() {
         let temp = tempfile::tempdir().expect("temp");
-        let locations = locations(&temp, "bibcode.service");
-        let runner =
-            FakeRunner::new().printing("systemctl --user is-active bibcode.service", "active\n");
+        let locations = locations(&temp, "coddy-studio.service");
+        let runner = FakeRunner::new().printing(
+            "systemctl --user is-active coddy-studio.service",
+            "active\n",
+        );
         let report = status(ServicePlatform::Linux, &locations, &runner).expect("status");
         assert_eq!(report.state, ServiceState::NotInstalled);
         assert!(
@@ -677,8 +682,10 @@ mod tests {
         std::fs::write(&locations.definition_path, "unit").unwrap();
         let report = status(ServicePlatform::Linux, &locations, &runner).expect("status");
         assert_eq!(report.state, ServiceState::Active);
-        let inactive =
-            FakeRunner::new().failing("systemctl --user is-active bibcode.service", "inactive");
+        let inactive = FakeRunner::new().failing(
+            "systemctl --user is-active coddy-studio.service",
+            "inactive",
+        );
         let report = status(ServicePlatform::Linux, &locations, &inactive).expect("status");
         assert_eq!(report.state, ServiceState::Inactive);
     }
@@ -686,9 +693,9 @@ mod tests {
     #[test]
     fn macos_install_bootstraps_the_launch_agent_for_the_gui_domain() {
         let temp = tempfile::tempdir().expect("temp");
-        let locations = locations(&temp, "com.bibcode.server.plist");
+        let locations = locations(&temp, "com.coddy.studio.server.plist");
         let runner = FakeRunner::new().failing(
-            "launchctl bootout gui/1000/com.bibcode.server",
+            "launchctl bootout gui/1000/com.coddy.studio.server",
             "No such process",
         );
         let report =
@@ -696,7 +703,7 @@ mod tests {
         assert_eq!(
             runner.calls(),
             vec![
-                "launchctl bootout gui/1000/com.bibcode.server".to_owned(),
+                "launchctl bootout gui/1000/com.coddy.studio.server".to_owned(),
                 format!(
                     "launchctl bootstrap gui/1000 {}",
                     locations.definition_path.display()
@@ -721,8 +728,9 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(calls.len(), 2, "{calls:?}");
         assert!(
-            calls[0]
-                .starts_with("schtasks /Create /F /TN BiBCode Server /SC ONLOGON /RL LIMITED /TR "),
+            calls[0].starts_with(
+                "schtasks /Create /F /TN Coddy Studio Server /SC ONLOGON /RL LIMITED /TR "
+            ),
             "{}",
             calls[0]
         );
@@ -731,7 +739,7 @@ mod tests {
             "{}",
             calls[0]
         );
-        assert_eq!(calls[1], "schtasks /Run /TN BiBCode Server");
+        assert_eq!(calls[1], "schtasks /Run /TN Coddy Studio Server");
         assert_eq!(report.state, ServiceState::Active);
         assert!(
             report.notes.iter().any(|note| note.contains("logon")),
@@ -739,17 +747,20 @@ mod tests {
             report.notes
         );
         let report = uninstall(ServicePlatform::Windows, &locations, &runner).expect("uninstall");
-        assert_eq!(runner.calls()[2], "schtasks /Delete /F /TN BiBCode Server");
+        assert_eq!(
+            runner.calls()[2],
+            "schtasks /Delete /F /TN Coddy Studio Server"
+        );
         assert_eq!(report.state, ServiceState::Removed);
     }
 
     #[test]
     fn command_failures_other_than_the_bus_are_errors_with_context() {
         let temp = tempfile::tempdir().expect("temp");
-        let locations = locations(&temp, "bibcode.service");
+        let locations = locations(&temp, "coddy-studio.service");
         let runner = FakeRunner::new().failing(
-            "systemctl --user enable --now bibcode.service",
-            "Failed to enable unit: Unit file bibcode.service does not exist.",
+            "systemctl --user enable --now coddy-studio.service",
+            "Failed to enable unit: Unit file coddy-studio.service does not exist.",
         );
         let error = install(&spec(), ServicePlatform::Linux, &locations, &runner)
             .expect_err("enable failed");

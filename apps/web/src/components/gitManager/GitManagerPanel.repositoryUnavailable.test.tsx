@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
-import { AVAILABLE_CONNECTION_STATE } from "@bibcode/client-runtime/connection";
-import type { GitManagerRefsSnapshot, ScopedProjectRef, VcsStatusResult } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { AVAILABLE_CONNECTION_STATE } from "@coddy/client-runtime/connection";
+import type { GitManagerRefsSnapshot, ScopedProjectRef, VcsStatusResult } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import * as Cause from "effect/Cause";
 import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as Socket from "effect/socket/Socket";

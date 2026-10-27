@@ -1,12 +1,12 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@bibcode/contracts";
-import type { RemoteUpdateRunState } from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+import type { EnvironmentId } from "@coddy/contracts";
+import type { RemoteUpdateRunState } from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import {
   IDLE_REMOTE_UPDATE_CHECK_STATE,
   type RemoteUpdateCheckState,
   createRemoteUpdateEnvironmentAtoms,
-} from "@bibcode/client-runtime/state/remoteUpdates";
-import { runAtomCommand } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/remoteUpdates";
+import { runAtomCommand } from "@coddy/client-runtime/state/runtime";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import { useCallback, useContext } from "react";
 

@@ -22,7 +22,7 @@ import {
 import {
   WorktreeAdoptInput,
   WorktreeGetRemovalPlanInput,
-  WorktreeRemoveFromBibCodeInput,
+  WorktreeRemoveFromCoddyStudioInput,
   WorktreeRemoveInput,
 } from "./rpc.ts";
 
@@ -53,10 +53,10 @@ const decodeAdoptInput = Schema.decodeUnknownSync(WorktreeAdoptInput);
 const encodeAdoptInput = Schema.encodeSync(WorktreeAdoptInput);
 const decodeAdoptResult = Schema.decodeUnknownSync(WorktreeAdoptResult);
 const decodeGetRemovalPlanInput = Schema.decodeUnknownSync(WorktreeGetRemovalPlanInput);
-const decodeRemoveFromBibCodeInput = Schema.decodeUnknownSync(WorktreeRemoveFromBibCodeInput);
+const decodeRemoveFromCoddyStudioInput = Schema.decodeUnknownSync(WorktreeRemoveFromCoddyStudioInput);
 const decodeRemoveInput = Schema.decodeUnknownSync(WorktreeRemoveInput);
 const encodeGetRemovalPlanInput = Schema.encodeSync(WorktreeGetRemovalPlanInput);
-const encodeRemoveFromBibCodeInput = Schema.encodeSync(WorktreeRemoveFromBibCodeInput);
+const encodeRemoveFromCoddyStudioInput = Schema.encodeSync(WorktreeRemoveFromCoddyStudioInput);
 const encodeRemoveInput = Schema.encodeSync(WorktreeRemoveInput);
 const decodeCatalogRefreshInput = Schema.decodeUnknownSync(WorktreeCatalogRefreshInput);
 const decodeDiscoveryPolicyUpdateInput = Schema.decodeUnknownSync(
@@ -89,8 +89,8 @@ describe("worktree catalog schemas", () => {
       ),
     ).toEqual({ projectId: "project-1", threadId: "thread-1" });
     expect(
-      encodeRemoveFromBibCodeInput(
-        decodeRemoveFromBibCodeInput({
+      encodeRemoveFromCoddyStudioInput(
+        decodeRemoveFromCoddyStudioInput({
           commandId: "detach-command-1",
           projectId: "project-1",
           threadId: "thread-1",

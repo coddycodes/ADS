@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { encodePairingCode } from "@bibcode/shared/pairingCode";
+import { encodePairingCode } from "@coddy/shared/pairingCode";
 
 const captured = vi.hoisted(() => ({
   pairingProps: null as Record<string, unknown> | null,

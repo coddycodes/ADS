@@ -2,7 +2,7 @@ import type {
   DesktopBackendRecovery,
   DesktopUpdateActionResult,
   DesktopUpdateState,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -13,11 +13,11 @@ export function hasDesktopBackendRecovery(state: DesktopUpdateState | null): boo
 export function getDesktopBackendRecoveryMessage(entry: DesktopBackendRecovery): string {
   const server =
     entry.environmentId === "primary"
-      ? "BiBCode's local server"
-      : `BiBCode's ${entry.label} server`;
+      ? "Coddy Studio's local server"
+      : `Coddy Studio's ${entry.label} server`;
   return entry.reason === "port-in-use"
     ? `${server} couldn't restart: port ${entry.port} is in use by another program. Quit that program, then choose Restart server.`
-    : `${server} couldn't restart. Choose Restart server. If that fails, restart BiBCode.`;
+    : `${server} couldn't restart. Choose Restart server. If that fails, restart Coddy Studio.`;
 }
 
 export function getDesktopUpdateErrorMessage(error: unknown, fallback: string): string {
@@ -71,24 +71,24 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 
   const action = resolveDesktopUpdateButtonAction(state);
   if (action === "download") {
-    return "This Mac has Apple Silicon, but BiBCode is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
+    return "This Mac has Apple Silicon, but Coddy Studio is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
   }
   if (action === "install") {
-    return "This Mac has Apple Silicon, but BiBCode is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
+    return "This Mac has Apple Silicon, but Coddy Studio is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
   }
-  return "This Mac has Apple Silicon, but BiBCode is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
+  return "This Mac has Apple Silicon, but Coddy Studio is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
   const recovery = state.backendRecovery ?? [];
   if (recovery.length > 1) {
-    return "Update not installed: some of BiBCode's servers are stopped.";
+    return "Update not installed: some of Coddy Studio's servers are stopped.";
   }
   const stoppedServer = recovery[0];
   if (stoppedServer) {
     return stoppedServer.environmentId === "primary"
-      ? "Update not installed: BiBCode's local server is stopped."
-      : `Update not installed: BiBCode's ${stoppedServer.label} server is stopped.`;
+      ? "Update not installed: Coddy Studio's local server is stopped."
+      : `Update not installed: Coddy Studio's ${stoppedServer.label} server is stopped.`;
   }
   if (state.status === "available") {
     return `Update ${state.availableVersion ?? "available"} ready to download`;
@@ -117,7 +117,7 @@ export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
-  return `Install update${version ? ` ${version}` : ""} and restart BiBCode?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
+  return `Install update${version ? ` ${version}` : ""} and restart Coddy Studio?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {

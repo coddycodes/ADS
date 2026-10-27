@@ -1,5 +1,5 @@
-//! The open-URL hook. Agents and terminals get `BROWSER=bibcode-open-url` and a `PATH` entry
-//! holding that shim; the shim runs `<exe> open-url <url>`, which hands the URL to the BiBCode
+//! The open-URL hook. Agents and terminals get `BROWSER=coddy-studio-open-url` and a `PATH` entry
+//! holding that shim; the shim runs `<exe> open-url <url>`, which hands the URL to the Coddy Studio
 //! client showing the thread through `POST /api/preview/open-url`.
 
 use std::{
@@ -13,16 +13,16 @@ use std::{
 
 use crate::production::connect_mcp::ConnectMcpService;
 
-pub const SHIM_NAME: &str = "bibcode-open-url";
+pub const SHIM_NAME: &str = "coddy-studio-open-url";
 /// Not `*_TOKEN`: Codex's default `shell_environment_policy` drops variables whose names
 /// contain `KEY`, `SECRET`, or `TOKEN` from the commands it runs.
-pub const TOKEN_ENV: &str = "BIBCODE_OPEN_URL_AUTH";
-pub const ENDPOINT_ENV: &str = "BIBCODE_OPEN_URL_ENDPOINT";
+pub const TOKEN_ENV: &str = "CODDY_STUDIO_OPEN_URL_AUTH";
+pub const ENDPOINT_ENV: &str = "CODDY_STUDIO_OPEN_URL_ENDPOINT";
 const POST_TIMEOUT: Duration = Duration::from_secs(5);
 const PATH_SEPARATOR: char = if cfg!(windows) { ';' } else { ':' };
 
-/// Puts `bibcode-open-url` into `dir`, running `exe`. POSIX gets a sh shim (mode 0755)
-/// that runs `exe open-url "$1"`. Windows gets `bibcode-open-url.exe`, an alias of `exe`
+/// Puts `coddy-studio-open-url` into `dir`, running `exe`. POSIX gets a sh shim (mode 0755)
+/// that runs `exe open-url "$1"`. Windows gets `coddy-studio-open-url.exe`, an alias of `exe`
 /// that [`open_url_invocation`] recognizes by name: a batch shim would hand the URL to the
 /// `cmd.exe` parser, and callers that skip the shell never find a `.cmd` anyway. Shims that
 /// are already current are left alone.
@@ -60,7 +60,7 @@ fn posix_shim(exe: &str) -> String {
     // Single quotes keep every byte of the path literal; an embedded quote closes, escapes, reopens.
     let exe = format!("'{}'", exe.replace('\'', r"'\''"));
     format!(
-        "#!/bin/sh\n# BiBCode open-url shim: hands one URL to the BiBCode client showing this thread.\nexec {exe} open-url \"$1\"\n"
+        "#!/bin/sh\n# Coddy Studio open-url shim: hands one URL to the Coddy Studio client showing this thread.\nexec {exe} open-url \"$1\"\n"
     )
 }
 
@@ -112,7 +112,7 @@ pub fn current_open_url_invocation() -> Option<String> {
 
 /// The URL to open when this process is an open-url invocation, checked before anything
 /// else starts: `<exe> open-url <url>` (the POSIX shim), or the Windows alias
-/// `bibcode-open-url[.exe] <url>`, recognized by `argv[0]` or by `exe_stem`, the running
+/// `coddy-studio-open-url[.exe] <url>`, recognized by `argv[0]` or by `exe_stem`, the running
 /// executable's file stem (argv[0] is whatever the caller chose). A missing URL yields `""`,
 /// which [`run_open_url`] rejects with exit 2.
 #[must_use]
@@ -280,9 +280,9 @@ impl OpenUrlEnvironment {
     }
 }
 
-/// `bibcode open-url <url>`: asks the BiBCode client showing this session's thread to open
+/// `coddy-studio open-url <url>`: asks the Coddy Studio client showing this session's thread to open
 /// `url`. Returns the process exit code. A tool calling `$BROWSER` must never fail because
-/// BiBCode is unreachable, so every failure after validation prints the URL and exits 0, and
+/// Coddy Studio is unreachable, so every failure after validation prints the URL and exits 0, and
 /// so does a request no client could see (or one refused because too many are pending).
 pub async fn run_open_url(url: &str) -> i32 {
     let endpoint = std::env::var(ENDPOINT_ENV).ok();
@@ -292,7 +292,7 @@ pub async fn run_open_url(url: &str) -> i32 {
 
 async fn open_url(url: &str, endpoint: Option<&str>, token: Option<&str>) -> i32 {
     if !url::Url::parse(url).is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https")) {
-        eprintln!("bibcode open-url: expected an http(s) URL");
+        eprintln!("coddy-studio open-url: expected an http(s) URL");
         return 2;
     }
     let (Some(endpoint), Some(token)) = (
@@ -307,13 +307,13 @@ async fn open_url(url: &str, endpoint: Option<&str>, token: Option<&str>) -> i32
         Ok(false) => println!("{url}"),
         Err(error) => {
             println!("{url}");
-            eprintln!("bibcode open-url: {error}");
+            eprintln!("coddy-studio open-url: {error}");
         }
     }
     0
 }
 
-/// Whether a BiBCode client received the request.
+/// Whether a Coddy Studio client received the request.
 async fn post_open_request(url: &str, endpoint: &str, token: &str) -> Result<bool, String> {
     // The endpoint is this machine's own server; a user's HTTP proxy must not intercept it.
     let client = reqwest::Client::builder()
@@ -329,7 +329,7 @@ async fn post_open_request(url: &str, endpoint: &str, token: &str) -> Result<boo
         .await
         .map_err(|error| error.to_string())?;
     if response.status() != reqwest::StatusCode::ACCEPTED {
-        return Err(format!("BiBCode answered {}", response.status()));
+        return Err(format!("Coddy Studio answered {}", response.status()));
     }
     let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
     Ok(body["delivered"].as_bool().unwrap_or(false))
@@ -391,17 +391,17 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         // A batch shim left by an earlier build is removed.
         std::fs::write(temp.path().join(format!("{SHIM_NAME}.cmd")), "@echo off").unwrap();
-        write_shims(temp.path(), Path::new("/opt/bibcode/bibcode")).unwrap();
+        write_shims(temp.path(), Path::new("/opt/coddy-studio/coddy-studio")).unwrap();
         let shim = temp.path().join(SHIM_NAME);
         let first = std::fs::metadata(&shim).unwrap().modified().unwrap();
         std::thread::sleep(Duration::from_millis(20));
-        write_shims(temp.path(), Path::new("/opt/bibcode/bibcode")).unwrap();
+        write_shims(temp.path(), Path::new("/opt/coddy-studio/coddy-studio")).unwrap();
         assert_eq!(std::fs::metadata(&shim).unwrap().modified().unwrap(), first);
 
-        write_shims(temp.path(), Path::new("/opt/100%/bibcode")).unwrap();
+        write_shims(temp.path(), Path::new("/opt/100%/coddy-studio")).unwrap();
         assert_eq!(
             std::fs::read_to_string(&shim).unwrap(),
-            "#!/bin/sh\n# BiBCode open-url shim: hands one URL to the BiBCode client showing this thread.\nexec '/opt/100%/bibcode' open-url \"$1\"\n"
+            "#!/bin/sh\n# Coddy Studio open-url shim: hands one URL to the Coddy Studio client showing this thread.\nexec '/opt/100%/coddy-studio' open-url \"$1\"\n"
         );
         // Only the shim remains: no batch shim, no temporary file.
         let names = std::fs::read_dir(temp.path())
@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn windows_gets_an_exe_alias_and_no_batch_shim() {
         let temp = tempfile::tempdir().unwrap();
-        let exe = temp.path().join("bibcode.exe");
+        let exe = temp.path().join("coddy-studio.exe");
         std::fs::write(&exe, b"not really an executable").unwrap();
         let shims = temp.path().join("shims");
         std::fs::create_dir(&shims).unwrap();
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn alias_is_written_atomically_and_replaced_only_when_stale() {
         let temp = tempfile::tempdir().unwrap();
-        let exe = temp.path().join("bibcode");
+        let exe = temp.path().join("coddy-studio");
         std::fs::write(&exe, b"version one").unwrap();
         let shims = temp.path().join("shims");
         std::fs::create_dir(&shims).unwrap();
@@ -494,13 +494,16 @@ mod tests {
         let args = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
         let url = "http://h/?a=$(x)&b=\"c\"";
         assert_eq!(
-            open_url_invocation(&args(&["/opt/bibcode/bibcode", "open-url", url]), None),
+            open_url_invocation(
+                &args(&["/opt/coddy-studio/coddy-studio", "open-url", url]),
+                None
+            ),
             Some(url.to_owned())
         );
         for alias in [
-            "bibcode-open-url",
-            "/state/runtime/open-url/bibcode-open-url.exe",
-            "/state/runtime/open-url/BIBCODE-OPEN-URL.EXE",
+            "coddy-studio-open-url",
+            "/state/runtime/open-url/coddy-studio-open-url.exe",
+            "/state/runtime/open-url/CODDY_STUDIO-OPEN-URL.EXE",
         ] {
             assert_eq!(
                 open_url_invocation(&args(&[alias, url]), None),
@@ -510,27 +513,33 @@ mod tests {
         }
         // A missing URL still runs open-url, which exits 2 with its usage message.
         assert_eq!(
-            open_url_invocation(&args(&["bibcode-open-url.exe"]), None),
+            open_url_invocation(&args(&["coddy-studio-open-url.exe"]), None),
             Some(String::new())
         );
         assert_eq!(
-            open_url_invocation(&args(&["bibcode", "open-url"]), None),
+            open_url_invocation(&args(&["coddy-studio", "open-url"]), None),
             Some(String::new())
         );
         // Anything else starts the program normally.
         assert_eq!(
-            open_url_invocation(&args(&["bibcode", "serve"]), None),
+            open_url_invocation(&args(&["coddy-studio", "serve"]), None),
             None
         );
-        assert_eq!(open_url_invocation(&args(&["bibcode-desktop"]), None), None);
         assert_eq!(
-            open_url_invocation(&args(&["bibcode-desktop", "bibcode://pair?code=x"]), None),
+            open_url_invocation(&args(&["coddy-studio-desktop"]), None),
+            None
+        );
+        assert_eq!(
+            open_url_invocation(
+                &args(&["coddy-studio-desktop", "coddy-studio://pair?code=x"]),
+                None
+            ),
             None
         );
         assert_eq!(open_url_invocation(&[], None), None);
 
         // The running executable's name counts too: a caller may pass any argv[0].
-        let alias_stem = Some(OsStr::new("Bibcode-Open-Url"));
+        let alias_stem = Some(OsStr::new("Coddy-Studio-Open-Url"));
         assert_eq!(
             open_url_invocation(&args(&["browser", url]), alias_stem),
             Some(url.to_owned())
@@ -540,7 +549,10 @@ mod tests {
             Some(String::new())
         );
         assert_eq!(
-            open_url_invocation(&args(&["bibcode", "serve"]), Some(OsStr::new("bibcode"))),
+            open_url_invocation(
+                &args(&["coddy-studio", "serve"]),
+                Some(OsStr::new("coddy-studio"))
+            ),
             None
         );
     }
@@ -558,15 +570,18 @@ mod tests {
         assert_eq!(
             env,
             BTreeMap::from([
-                ("BIBCODE_OPEN_URL_AUTH".to_owned(), "token-1".to_owned()),
                 (
-                    "BIBCODE_OPEN_URL_ENDPOINT".to_owned(),
+                    "CODDY_STUDIO_OPEN_URL_AUTH".to_owned(),
+                    "token-1".to_owned()
+                ),
+                (
+                    "CODDY_STUDIO_OPEN_URL_ENDPOINT".to_owned(),
                     "http://127.0.0.1:3773/api/preview/open-url".to_owned()
                 ),
-                ("BROWSER".to_owned(), "bibcode-open-url".to_owned()),
+                ("BROWSER".to_owned(), "coddy-studio-open-url".to_owned()),
                 (
                     "BRAINSTORM_OPEN_CMD".to_owned(),
-                    "bibcode-open-url".to_owned()
+                    "coddy-studio-open-url".to_owned()
                 ),
                 (
                     "PATH".to_owned(),
@@ -593,7 +608,7 @@ mod tests {
             ("KEEP".to_owned(), "1".to_owned()),
         ]);
         session.apply(&mut env);
-        assert_eq!(env["BROWSER"], "bibcode-open-url");
+        assert_eq!(env["BROWSER"], "coddy-studio-open-url");
         assert_eq!(env["PATH"], format!("/shims{PATH_SEPARATOR}/custom/bin"));
         assert!(!env.contains_key("Path"));
         assert_eq!(env["KEEP"], "1");

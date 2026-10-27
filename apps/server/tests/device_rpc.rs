@@ -8,7 +8,7 @@ mod hermetic_providers;
 
 use std::time::Duration;
 
-use bibcode_server::{ServerConfig, ServerRuntime};
+use coddy_studio_server::{ServerConfig, ServerRuntime};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tempfile::TempDir;

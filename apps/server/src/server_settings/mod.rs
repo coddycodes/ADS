@@ -10,14 +10,17 @@ use thiserror::Error;
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 use uuid::Uuid;
 
+pub(crate) mod policy;
+
 /// The one source both settings readers fill missing built-in provider fields from.
 pub(crate) fn built_in_provider_defaults() -> Value {
     serde_json::json!({
-        "codex": { "enabled": true, "binaryPath": "codex", "homePath": "", "shadowHomePath": "", "customModels": [] },
-        "claudeAgent": { "enabled": true, "binaryPath": "claude", "homePath": "", "customModels": [], "launchArgs": "" },
-        "cursor": { "enabled": true, "binaryPath": "cursor-agent", "apiEndpoint": "", "customModels": [] },
+        "codex": { "enabled": false, "binaryPath": "codex", "homePath": "", "shadowHomePath": "", "customModels": [] },
+        "claudeAgent": { "enabled": false, "binaryPath": "claude", "homePath": "", "customModels": [], "launchArgs": "" },
+        "coddy": { "enabled": true, "binaryPath": "coddy", "serverUrl": "", "dataDir": "" },
+        "cursor": { "enabled": false, "binaryPath": "cursor-agent", "apiEndpoint": "", "customModels": [] },
         "grok": { "enabled": false, "binaryPath": "grok", "customModels": [] },
-        "opencode": { "enabled": true, "binaryPath": "opencode", "serverUrl": "", "serverPassword": "", "customModels": [] },
+        "opencode": { "enabled": false, "binaryPath": "opencode", "serverUrl": "", "serverPassword": "", "customModels": [] },
     })
 }
 
@@ -49,6 +52,29 @@ pub struct ProviderBinarySettingsState {
     pub server_url: String,
     #[serde(default)]
     pub server_password: String,
+    /// Optional data root for drivers whose CLI accepts one (Coddy's `-D`).
+    #[serde(default)]
+    pub data_dir: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CoddyProviderSettingsState {
+    pub enabled: bool,
+    pub binary_path: String,
+    pub server_url: String,
+    pub data_dir: String,
+}
+
+impl Default for CoddyProviderSettingsState {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary_path: "coddy".to_owned(),
+            server_url: String::new(),
+            data_dir: String::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -56,6 +82,7 @@ pub struct ProviderBinarySettingsState {
 pub struct ProvidersState {
     pub codex: ProviderBinarySettingsState,
     pub claude_agent: ProviderBinarySettingsState,
+    pub coddy: CoddyProviderSettingsState,
     pub cursor: ProviderBinarySettingsState,
     pub grok: ProviderBinarySettingsState,
     pub opencode: ProviderBinarySettingsState,
@@ -66,6 +93,8 @@ impl ProvidersState {
         let mut defaults = built_in_provider_defaults();
         // Decode entries separately: ProvidersState's container-level serde
         // default would recurse back here even for a complete document.
+        let coddy = serde_json::from_value(defaults["coddy"].take())
+            .expect("built-in coddy defaults must decode");
         let mut provider = |driver: &str| {
             serde_json::from_value(defaults[driver].take())
                 .expect("built-in provider defaults must decode")
@@ -73,6 +102,7 @@ impl ProvidersState {
         Self {
             codex: provider("codex"),
             claude_agent: provider("claudeAgent"),
+            coddy,
             cursor: provider("cursor"),
             grok: provider("grok"),
             opencode: provider("opencode"),
@@ -184,12 +214,14 @@ pub struct ProviderSettingsPatch {
     pub binary_path: Option<String>,
     pub server_url: Option<String>,
     pub server_password: Option<String>,
+    pub data_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ProvidersPatch {
     pub codex: Option<ProviderSettingsPatch>,
     pub claude_agent: Option<ProviderSettingsPatch>,
+    pub coddy: Option<ProviderSettingsPatch>,
     pub cursor: Option<ProviderSettingsPatch>,
     pub grok: Option<ProviderSettingsPatch>,
     pub opencode: Option<ProviderSettingsPatch>,
@@ -334,8 +366,12 @@ impl ProviderSettingsStore {
         if let Some(providers) = settings.get_mut("providers") {
             merge_missing(providers, &built_in_provider_defaults());
         }
-        serde_json::from_value(settings)
-            .map_err(|source| ServerSettingsReadError::Decode { path, source })
+        let mut settings: ProviderSettingsState = serde_json::from_value(settings)
+            .map_err(|source| ServerSettingsReadError::Decode { path, source })?;
+        let policy = policy::StudioPolicy::load(&self.root);
+        policy.apply_enablement(&mut settings.providers);
+        policy::init(policy);
+        Ok(settings)
     }
 
     async fn materialize_and_persist(
@@ -482,6 +518,7 @@ fn apply_patch(
             providers.claude_agent,
             "claude",
         );
+        apply_coddy_patch(&mut current.providers.coddy, providers.coddy);
         apply_provider_patch(
             &mut current.providers.cursor,
             providers.cursor,
@@ -546,8 +583,7 @@ fn apply_provider_patch(
     current: &mut ProviderBinarySettingsState,
     patch: Option<ProviderSettingsPatch>,
     default_binary: &str,
-) {
-    let Some(patch) = patch else {
+) {    let Some(patch) = patch else {
         return;
     };
     if let Some(enabled) = patch.enabled {
@@ -566,6 +602,32 @@ fn apply_provider_patch(
     }
     if let Some(server_password) = patch.server_password {
         current.server_password = server_password.trim().to_owned();
+    }
+}
+
+fn apply_coddy_patch(
+    current: &mut CoddyProviderSettingsState,
+    patch: Option<ProviderSettingsPatch>,
+) {
+    let Some(patch) = patch else {
+        return;
+    };
+    if let Some(enabled) = patch.enabled {
+        current.enabled = enabled;
+    }
+    if let Some(binary_path) = patch.binary_path {
+        let trimmed = binary_path.trim();
+        current.binary_path = if trimmed.is_empty() {
+            "coddy".to_owned()
+        } else {
+            trimmed.to_owned()
+        };
+    }
+    if let Some(server_url) = patch.server_url {
+        current.server_url = server_url.trim().to_owned();
+    }
+    if let Some(data_dir) = patch.data_dir {
+        current.data_dir = data_dir.trim().to_owned();
     }
 }
 
@@ -635,11 +697,12 @@ mod tests {
     use super::*;
 
     const BUILTIN_DEFAULTS: &[(&str, bool, &str)] = &[
-        ("codex", true, "codex"),
-        ("claudeAgent", true, "claude"),
-        ("cursor", true, "cursor-agent"),
+        ("codex", false, "codex"),
+        ("claudeAgent", false, "claude"),
+        ("coddy", true, "coddy"),
+        ("cursor", false, "cursor-agent"),
         ("grok", false, "grok"),
-        ("opencode", true, "opencode"),
+        ("opencode", false, "opencode"),
     ];
 
     #[tokio::test]
@@ -840,6 +903,7 @@ mod tests {
                 binary_path: Some(" custom ".to_owned()),
                 server_url: Some(" http://localhost ".to_owned()),
                 server_password: Some(" secret ".to_owned()),
+                data_dir: None,
             }),
             "default",
         );
@@ -852,5 +916,29 @@ mod tests {
             strip_defaults(&Value::String("value".to_owned()), &Value::Null),
             Some(Value::String("value".to_owned()))
         );
+    }
+
+    #[tokio::test]
+    async fn coddy_defaults_fill_partial_documents() {
+        let temp = tempfile::tempdir().expect("settings root");
+        fs::write(
+            temp.path().join("settings.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "providers": { "coddy": { "binaryPath": "/opt/coddy" } }
+            }))
+            .expect("partial coddy settings JSON"),
+        )
+        .await
+        .expect("partial coddy settings file");
+
+        let settings = ProviderSettingsStore::new(temp.path())
+            .get()
+            .await
+            .expect("partial coddy settings load");
+
+        assert_eq!(settings.providers.coddy.binary_path, "/opt/coddy");
+        assert_eq!(settings.providers.coddy.data_dir, "");
+        assert_eq!(settings.providers.coddy.server_url, "");
+        assert!(settings.providers.coddy.enabled);
     }
 }

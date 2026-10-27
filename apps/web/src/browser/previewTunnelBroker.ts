@@ -1,12 +1,12 @@
-import type { EnvironmentSupervisor } from "@bibcode/client-runtime/connection";
-import { request, runStream } from "@bibcode/client-runtime/rpc";
-import { runInEnvironment } from "@bibcode/client-runtime/state/runtime";
+import type { EnvironmentSupervisor } from "@coddy/client-runtime/connection";
+import { request, runStream } from "@coddy/client-runtime/rpc";
+import { runInEnvironment } from "@coddy/client-runtime/state/runtime";
 import {
   EnvironmentId,
   WS_METHODS,
   type DesktopPreviewTunnelBridge,
   type DesktopPreviewTunnelRequest,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";

@@ -8,7 +8,7 @@
  * reason. Grok remains an internal compatibility driver and is intentionally
  * excluded from user-facing agent and terminal actions.
  */
-import { ProviderDriverKind } from "@bibcode/contracts";
+import { ProviderDriverKind } from "@coddy/contracts";
 
 import {
   isProviderInstancePickerReady,

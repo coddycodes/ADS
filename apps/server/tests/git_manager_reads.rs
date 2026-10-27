@@ -5,10 +5,10 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::production::git_manager_rpc::{
+use coddy_studio_server::production::git_manager_rpc::{
     GitManagerRpcServices, register_git_manager_rpc,
 };
-use bibcode_server::{
+use coddy_studio_server::{
     RpcRegistry, ServerConfig, ServerHandle, ServerRuntime,
     git::{
         GitRepository,
@@ -30,7 +30,7 @@ use websocket_frames::next_frame_past_heartbeat;
 const DESKTOP_BOOTSTRAP: &str = "git-manager-read-bootstrap";
 const TOKEN_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
-const BOOTSTRAP_TOKEN_TYPE: &str = "urn:bibcode:params:oauth:token-type:environment-bootstrap";
+const BOOTSTRAP_TOKEN_TYPE: &str = "urn:coddy-studio:params:oauth:token-type:environment-bootstrap";
 
 #[tokio::test]
 async fn unchanged_refs_reads_keep_the_same_generation() {
@@ -238,12 +238,12 @@ async fn read_scoped_git_manager_rpcs_preserve_worktree_history_and_diff_state()
         .as_str()
         .expect("occupied branch reports its worktree path");
     assert_eq!(
-        bibcode_server::git::canonical_worktree_path_key(std::path::Path::new(
+        coddy_studio_server::git::canonical_worktree_path_key(std::path::Path::new(
             reported_worktree_path
         ))
         .await
         .expect("reported worktree key"),
-        bibcode_server::git::canonical_worktree_path_key(&linked_worktree)
+        coddy_studio_server::git::canonical_worktree_path_key(&linked_worktree)
             .await
             .expect("fixture worktree key")
     );

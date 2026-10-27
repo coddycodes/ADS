@@ -1,4 +1,4 @@
-import type { GitManagerSignalEvent } from "@bibcode/contracts";
+import type { GitManagerSignalEvent } from "@coddy/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 /** Explicitly retains the platform wakeup subscription for this repository's fallback. */

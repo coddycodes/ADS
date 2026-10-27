@@ -2,13 +2,13 @@ import type {
   PreviewAutomationResizeInput,
   PreviewViewportPresetId,
   PreviewViewportSetting,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PREVIEW_VIEWPORT_MAX_DIMENSION,
   PREVIEW_VIEWPORT_MIN_DIMENSION,
   PREVIEW_VIEWPORT_PRESET_IDS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 export interface PreviewViewportPreset {
   readonly id: PreviewViewportPresetId;

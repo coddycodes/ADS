@@ -4,7 +4,7 @@
 
 ## Tested revision
 
-- Repository: BiBCode (`https://github.com/mubeda/BibCode.git`)
+- Repository: Coddy Studio (`https://github.com/mubeda/BibCode.git`)
 - Remote: `origin`; requested publication branch `develop`
 - Branch or requested revision: local `mubeda/develop`; adversarial-remediation
   range `e3cd9d81b4cee897fb42709f88ca9f1509c85ba1..f3eb0ab763e4a521ad5efbdccce365991f66fdfd`
@@ -133,7 +133,7 @@ writable tmpfs.
 | Packaged remote sharing/update UI | Unavailable   | Source-level behavior and runbook coverage only; no screenshot claim. |
 
 The exact executable exercised outside Cargo's test harness was this checkout's
-`target/debug/bibcode`. No installed BiBCode copy was launched.
+`target/debug/bibcode`. No installed Coddy Studio copy was launched.
 
 ## Process and temporary-root cleanup
 

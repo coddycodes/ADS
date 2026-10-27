@@ -1,5 +1,5 @@
-import type { ActivityEntry } from "@bibcode/contracts";
-import type { TimestampFormat } from "@bibcode/contracts/settings";
+import type { ActivityEntry } from "@coddy/contracts";
+import type { TimestampFormat } from "@coddy/contracts/settings";
 import {
   ActivityIcon,
   CheckCircle2Icon,

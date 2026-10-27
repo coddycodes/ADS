@@ -9,21 +9,21 @@
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   parseScopedProjectKey,
   scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
-import type { EnvironmentId, ScopedProjectRef } from "@bibcode/contracts";
+} from "@coddy/client-runtime/environment";
+import type { EnvironmentId, ScopedProjectRef } from "@coddy/contracts";
 import {
   DEFAULT_DEFAULT_AGENT_SELECTION,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 

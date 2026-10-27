@@ -1,4 +1,4 @@
-import type { DiscoveredLocalServer, ScopedThreadRef } from "@bibcode/contracts";
+import type { DiscoveredLocalServer, ScopedThreadRef } from "@coddy/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const h = vi.hoisted(() => ({

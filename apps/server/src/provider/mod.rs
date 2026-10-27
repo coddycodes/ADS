@@ -2,6 +2,7 @@ pub(crate) mod acp_mode;
 pub(crate) mod attachments;
 pub mod claude;
 pub mod codex;
+pub mod coddy;
 pub mod cursor;
 pub(crate) mod environment;
 pub mod grok;
@@ -75,11 +76,11 @@ pub(crate) fn model_unavailable_refusal(model: &str, provider_label: &str) -> St
     format!("{model} is not available in {provider_label}.")
 }
 
-/// The session's own option configuration is one BiBCode can't work with, so no option can be
+/// The session's own option configuration is one Coddy Studio can't work with, so no option can be
 /// applied to it. The configuration is protocol detail the user can't act on, so the sentence
 /// stays generic and names what the user can do instead.
 pub(crate) fn unusable_options_refusal() -> String {
-    "BiBCode can't apply these options to the selected model. Choose another model, or turn these \
+    "Coddy Studio can't apply these options to the selected model. Choose another model, or turn these \
      options off."
         .to_owned()
 }
@@ -108,7 +109,7 @@ impl RefusedOption {
         }
     }
 
-    /// A refusal caused by a session configuration BiBCode can't work with rather than by the
+    /// A refusal caused by a session configuration Coddy Studio can't work with rather than by the
     /// request, shown as [`unusable_options_refusal`].
     pub(crate) fn unusable(detail: impl Into<String>) -> Self {
         Self::new(detail, unusable_options_refusal())

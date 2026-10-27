@@ -1,8 +1,8 @@
-import { ClientSettingsSchema, type ClientSettings } from "@bibcode/contracts";
+import { ClientSettingsSchema, type ClientSettings } from "@coddy/contracts";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
-export const CLIENT_SETTINGS_STORAGE_KEY = "bibcode:client-settings:v1";
+export const CLIENT_SETTINGS_STORAGE_KEY = "coddy-studio:client-settings:v1";
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";

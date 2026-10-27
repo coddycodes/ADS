@@ -720,7 +720,7 @@ pub fn is_supported() -> bool {
 /// The SHA-256 of an environment's preview partition key.
 fn preview_partition_hash(environment_id: &str) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    Sha256::digest(format!("bibcode-preview:{environment_id}")).into()
+    Sha256::digest(format!("coddy-studio-preview:{environment_id}")).into()
 }
 
 /// The preview profile directory, relative to the app data directory, for an

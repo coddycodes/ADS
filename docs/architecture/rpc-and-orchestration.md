@@ -1,6 +1,6 @@
 # RPC and orchestration
 
-BiBCode uses Effect RPC over one authenticated WebSocket per connected
+Coddy Studio uses Effect RPC over one authenticated WebSocket per connected
 environment. The same protocol is used by browser and Tauri clients; the
 desktop bridge is reserved for host-native capabilities.
 
@@ -38,7 +38,7 @@ See [provider capability ownership and lifecycle](./providers.md#workspace-capab
 `agentSessions.import { projectId, sessions: [{ provider, sessionId }] }` are
 unary RPCs that both require `orchestration:operate`, because scan returns
 transcript content (first prompts as titles) from the server host's home
-directory, outside BiBCode's own data. They are owned by
+directory, outside Coddy Studio's own data. They are owned by
 [`agent_sessions_rpc`](../../apps/server/src/production/agent_sessions_rpc.rs);
 the bounded transcript reader is
 [`agent_sessions`](../../apps/server/src/agent_sessions/mod.rs). Both fail with
@@ -53,9 +53,9 @@ carries title, last activity and visible message count. `alreadyImported` is set
 once thread `import:<instanceId>:<sessionId>` was deleted or its history command
 was accepted, and `threadId` names that thread while it is live; an import
 interrupted before its history committed stays selectable. Sessions another
-BiBCode thread already runs (a `provider_turn_outbox.provider_session_id` or a
+Coddy Studio thread already runs (a `provider_turn_outbox.provider_session_id` or a
 `provider_session_runtime` cursor owned by a thread other than their import)
-are left out, because BiBCode's own conversations write into the same homes;
+are left out, because Coddy Studio's own conversations write into the same homes;
 import skips them too. The scan keeps only metadata; import reads the
 transcript again.
 
@@ -185,7 +185,7 @@ the client's own 30 s monitor ends it first); E2EE requests travel in records.
 releases on E2EE sessions.
 
 A plain `/ws` client may offer the WebSocket subprotocol
-`bibcode.rpc.chunked.v1`. When the server selects it, every RPC message over 64
+`coddy-studio.rpc.chunked.v1`. When the server selects it, every RPC message over 64
 KiB leaves as binary frames, one record per frame, in the E2EE record format:
 `0x00` for the final record, `0x01` for a continuation, and `0x02` for a
 stand-alone control message sent between the records of another message, which
@@ -199,12 +199,12 @@ raw-deflate compressed server message only after the client lists `deflate-v1`
 and the server confirms it ([Remote environments](./remote.md#direct-connection-e2ee)).
 
 A plain client that can inflate raw deflate offers
-`bibcode.rpc.chunked-deflate.v1` before `bibcode.rpc.chunked.v1`, except on a
+`coddy-studio.rpc.chunked-deflate.v1` before `coddy-studio.rpc.chunked.v1`, except on a
 loopback socket that is not an SSH tunnel (a backend on the same machine). The
-server prefers it unless `BIBCODE_REMOTE_COMPRESSION=0` is set. Selecting it means
+server prefers it unless `CODDY_STUDIO_REMOTE_COMPRESSION=0` is set. Selecting it means
 chunked records as above, and a data message of at least 16 KiB that compresses
 smaller leaves in the `deflate-v1` form: binary records that all carry `0x10`,
-even below 64 KiB. A server that predates it selects `bibcode.rpc.chunked.v1`
+even below 64 KiB. A server that predates it selects `coddy-studio.rpc.chunked.v1`
 ([design](../superpowers/specs/2026-10-13-e2ee-message-compression-design.md#addendum-2026-10-17-compression-on-plain-ws)).
 
 A response that does not fit the connection's message limit (64 MiB on E2EE and
@@ -669,7 +669,7 @@ require `orchestration:operate`. Every request carries the selected checkout's
 request nouns. Both remain required and are sent by the GitHub and GitLab
 adapters so older clients can decode context. Current clients ignore those two
 fields and derive nouns and number prefixes from the provider kind through
-`@bibcode/shared/sourceControl`; the remaining vocabulary fields still describe
+`@coddy/shared/sourceControl`; the remaining vocabulary fields still describe
 host-specific controls.
 
 A stacked push of the current branch (`push`, `commit_push`, and the publish
@@ -814,7 +814,7 @@ input debounce do not poll. Detail mounts `get` plus the active tab's query;
 Files also mounts timeline for line-anchored threads. Inactive atom invalidation
 does not mount extra reads.
 
-`@bibcode/client-runtime/state/pull-requests` exposes the query families and
+`@coddy/client-runtime/state/pull-requests` exposes the query families and
 commands. Reads have bounded stale times without polling; mutations share the
 existing VCS scheduler, serialized by environment and checkout path. The
 `pullRequestsEnabled` client preference defaults to true. The environment
@@ -1016,7 +1016,7 @@ There are no provider timers or focus refreshes; the 300 ms text-input debounce
 is scheduled only by typing.
 
 `apps/web/src/pullRequestsStore.ts` owns version-1 local view state under
-`bibcode:pull-requests-state:v1`, keyed by the physical environment/project
+`coddy-studio:pull-requests-state:v1`, keyed by the physical environment/project
 identity and bounded to the two most recently used projects. It persists the
 opaque checkout, tab, filters, sort, scroll position, last number, viewed files,
 and separate per-number comment/review/edit/merge drafts. Server results and
@@ -1240,7 +1240,7 @@ The catalog protocol is server-resolved and capability gated:
 | `worktree.retarget`              | `orchestration:operate` | Resolve an opaque catalog key/generation before changing a workspace owner path.            |
 | `worktree.adopt`                 | `orchestration:operate` | Resolve an opaque catalog candidate and create, restore, or return its canonical workspace. |
 | `worktree.getRemovalPlan`        | `orchestration:read`    | Bind current removal facts into an opaque plan token.                                       |
-| `worktree.removeFromBibCode`     | `orchestration:operate` | Detach ownership without a Git mutation.                                                    |
+| `worktree.removeFromCoddyStudio`     | `orchestration:operate` | Detach ownership without a Git mutation.                                                    |
 | `worktree.remove`                | `orchestration:operate` | Perform the explicitly selected verified Git action and apply its detach rules.             |
 
 The browser never supplies a checkout path to these methods. Repository trust,
@@ -1400,7 +1400,7 @@ rejects any token drift before mutation. Present deletion uses verified Git
 removal and preserves the local branch. Missing cleanup uses the verified
 target/prune owners; locked registrations and replacement directories fail
 closed, while an attempted cleanup that fails may detach with a bounded
-`failed` outcome. `worktree.removeFromBibCode` performs the same atomic detach
+`failed` outcome. `worktree.removeFromCoddyStudio` performs the same atomic detach
 without requesting a Git mutation.
 
 Planning and execution resolve the catalog's trusted repository anchor rather
@@ -2063,7 +2063,7 @@ formatter that names the provider by its instance label, never by a driver id:
 the refusal itself, such as "Fast Mode is not supported by the selected model.";
 for a spawn failure, that the provider could not start and why; for an uncertain
 delivery, that the Claude instance never confirmed a written message, or that
-BiBCode can't check after a restart whether a provider without exact
+Coddy Studio can't check after a restart whether a provider without exact
 reconciliation received it. Error text, logs and runtime rows keep the internal
 detail.
 
@@ -2379,7 +2379,7 @@ off. The supervisor likewise refuses, before it rewinds or reports files only,
 while the live session still runs background work that keeps idle suspension
 away: a Claude background task, or a subagent or work item Activity shows
 running, reported within the last 30 minutes. The session reads idle then, but
-its process would write over the restored files. Work BiBCode cannot see does
+its process would write over the restored files. Work Coddy Studio cannot see does
 not block a revert.
 
 A revert and the thread's turn deliveries exclude each other. The revert
@@ -2791,7 +2791,7 @@ quiesce and its reaper retries suspend a current provider session only when its
 projection is neither `running` nor `starting`, has no active turn, and the
 supervisor has no active delivery generation. Suspension shuts down the driver
 and retains its resume cursor in a `suspended` runtime row. Other current
-sessions are stopped; `worktree.removeFromBibCode` retains its detach-only
+sessions are stopped; `worktree.removeFromCoddyStudio` retains its detach-only
 behavior, including stopping running sessions. Pending, queued, and uncertain
 deliveries alone do not cause the session refusal.
 
@@ -2960,7 +2960,7 @@ the monotonic clock, each holding 100 log-scale buckets that grow by a factor of
 The wire request ID is not visible to the client's observer, and one trace spans
 several RPCs, so neither can match a client measurement to the server's. While
 the profiler is on for an environment, the client therefore sends a per-request
-correlation ID, `<clientId>:<counter>`, in the `x-bibcode-profiler-rid` RPC
+correlation ID, `<clientId>:<counter>`, in the `x-coddy-studio-profiler-rid` RPC
 header. The server keeps the last 4,096 `(correlationId, method, serverMs,
 queuedMs)` entries, ignoring IDs over 64 bytes. A client record joins only an
 entry with its correlation ID and the same method; there is no time-based
@@ -3034,7 +3034,7 @@ session also notes the client id of its first request that carries the
 correlation header; when that client's previous connection ended in this
 process, it writes `rpc.reconnect` with the gap between them. The last 256
 disconnected clients are remembered. The fields are in the
-[events reference](../skills/bibcode-profiler/references/events.md#rpcdisconnect).
+[events reference](../skills/coddy-studio-profiler/references/events.md#rpcdisconnect).
 
 ## Device previews flow
 
@@ -3077,7 +3077,7 @@ H.264 video does not travel over RPC. The ticket from
 - Promotion snapshots no new user choices: the enqueued model and modes are
   retained, while the message timestamp becomes the promotion time.
 - Steering uses the provider's native operation and attributes the message to
-  its runtime turn without starting a second BiBCode turn. Codex preserves the
+  its runtime turn without starting a second Coddy Studio turn. Codex preserves the
   active turn ID; Claude attributes its matching echo to the runtime turn
   current when that echo arrives.
 - Cancel never discards user text. It withdraws the queued message and restores

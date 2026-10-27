@@ -43,16 +43,16 @@ const gracefulShutdownTimeoutMs = 1_000;
 const forcedShutdownTimeoutMs = 5_000;
 
 function prepareProviderFixture(): PreparedProviderFixture {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- These integration tests execute shims for the current native host.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- These integration tests execute shims for the current native host.
   const hostPlatform = NodeOS.platform();
   const runRoot = NodeFS.mkdtempSync(
-    NodePath.join(NodeOS.tmpdir(), "bibcode provider launcher root "),
+    NodePath.join(NodeOS.tmpdir(), "coddy-studio provider launcher root "),
   );
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
-    BIBCODE_E2E_RUN_ROOT: runRoot,
-    BIBCODE_E2E_ARTIFACT_DIR: NodePath.join(runRoot, "artifacts"),
-    BIBCODE_E2E_PLATFORM:
+    CODDY_STUDIO_E2E_RUN_ROOT: runRoot,
+    CODDY_STUDIO_E2E_ARTIFACT_DIR: NodePath.join(runRoot, "artifacts"),
+    CODDY_STUDIO_E2E_PLATFORM:
       hostPlatform === "win32" ? "win" : hostPlatform === "darwin" ? "mac" : "linux",
   };
   const context = prepareDesktopUiTestContext(environment);
@@ -307,7 +307,7 @@ async function requestGracefulOpenCodeShutdown(endpoint: string): Promise<void> 
   const controller = new AbortController();
   try {
     const response = await withTimeout(
-      fetch(`${endpoint}/bibcode-fixture/shutdown`, {
+      fetch(`${endpoint}/coddy-studio-fixture/shutdown`, {
         method: "POST",
         signal: controller.signal,
       }),
@@ -603,7 +603,7 @@ describe("generated provider shims", () => {
     expect(responseWithId(responses, 3)).toMatchObject({
       jsonrpc: "2.0",
       result: {
-        sessionId: "bibcode-ui-cursor-session",
+        sessionId: "coddy-studio-ui-cursor-session",
         modes: { currentModeId: "ask" },
       },
     });
@@ -657,8 +657,8 @@ describe("generated provider shims", () => {
             body: "{}",
           })
         ).json(),
-      ).toEqual({ id: "bibcode-ui-opencode-session" });
-      await fetch(`${endpoint}/session/bibcode-ui-opencode-session/prompt_async`, {
+      ).toEqual({ id: "coddy-studio-ui-opencode-session" });
+      await fetch(`${endpoint}/session/coddy-studio-ui-opencode-session/prompt_async`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ parts: [{ type: "text", text: "@reviewer" }] }),
@@ -666,7 +666,7 @@ describe("generated provider shims", () => {
 
       expect(await readServerSentEvent(reader, "session.status")).toMatchObject({
         properties: {
-          sessionID: "bibcode-ui-opencode-session",
+          sessionID: "coddy-studio-ui-opencode-session",
           status: { type: "idle" },
         },
       });
@@ -691,12 +691,12 @@ describe("generated provider shims", () => {
       "--hostname=127.0.0.1",
       `--port=${port}`,
     ]);
-    const messageUrl = `${endpoint}/session/bibcode-ui-opencode-session/message/msg_fixture1`;
+    const messageUrl = `${endpoint}/session/coddy-studio-ui-opencode-session/message/msg_fixture1`;
 
     try {
       await waitForHealthyEndpoint(endpoint);
       expect((await fetch(messageUrl)).status).toBe(404);
-      await fetch(`${endpoint}/session/bibcode-ui-opencode-session/prompt_async`, {
+      await fetch(`${endpoint}/session/coddy-studio-ui-opencode-session/prompt_async`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -707,7 +707,7 @@ describe("generated provider shims", () => {
       const found = await fetch(messageUrl);
       expect(found.status).toBe(200);
       expect(await found.json()).toEqual({
-        info: { id: "msg_fixture1", sessionID: "bibcode-ui-opencode-session", role: "user" },
+        info: { id: "msg_fixture1", sessionID: "coddy-studio-ui-opencode-session", role: "user" },
         parts: [{ type: "text", text: "@reviewer" }],
       });
     } finally {
@@ -737,7 +737,7 @@ describe("generated provider shims", () => {
     expect(responseWithId(responses, 3)).toMatchObject({
       jsonrpc: "2.0",
       result: {
-        sessionId: "bibcode-ui-grok-session",
+        sessionId: "coddy-studio-ui-grok-session",
         modes: { currentModeId: "code" },
       },
     });

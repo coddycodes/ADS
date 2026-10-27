@@ -1,5 +1,5 @@
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
-import { PullRequestsOperationError } from "@bibcode/contracts";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
+import { PullRequestsOperationError } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { useContext, useEffect, type ReactNode } from "react";
 import type { EnvironmentQueryView } from "../../../state/query";

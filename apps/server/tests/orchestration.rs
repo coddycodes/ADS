@@ -1,9 +1,11 @@
-use bibcode_server::orchestration::engine::{
+use coddy_studio_server::orchestration::engine::{
     EngineOptions, OrchestrationCommand, OrchestrationEngine, OrchestrationError, TestHooks,
     load_snapshot,
 };
-use bibcode_server::orchestration::{TurnDeliveryMode, TurnDeliveryState};
-use bibcode_server::persistence::{Database, NewOrchestrationEvent, Repositories, run_migrations};
+use coddy_studio_server::orchestration::{TurnDeliveryMode, TurnDeliveryState};
+use coddy_studio_server::persistence::{
+    Database, NewOrchestrationEvent, Repositories, run_migrations,
+};
 use serde_json::{Value, json};
 
 const CREATED_AT: &str = "2026-07-10T10:00:00.000Z";
@@ -414,7 +416,7 @@ async fn project_repository_identity_pin_survives_projection_rewind_and_replay()
             )
             .await
             .expect("pin persists"),
-        Some(bibcode_server::persistence::WorktreeRepositoryPinOutcome::Established)
+        Some(coddy_studio_server::persistence::WorktreeRepositoryPinOutcome::Established)
     );
     engine.shutdown().await;
 

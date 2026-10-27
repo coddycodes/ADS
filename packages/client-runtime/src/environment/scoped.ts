@@ -6,7 +6,7 @@ import {
   type ProjectId as ProjectIdType,
   type ScopedProjectRef,
   type ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 export function scopeProjectRef(
   environmentId: EnvironmentIdType,

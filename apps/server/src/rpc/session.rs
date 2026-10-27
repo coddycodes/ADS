@@ -3595,7 +3595,7 @@ mod tests {
             json!([
                 {
                     "_tag": "Request", "id": "1", "tag": "test.profiler.joined", "payload": {},
-                    "headers": [["X-Bibcode-Profiler-Rid", "t9:c1:7"]]
+                    "headers": [["X-Coddy-Studio-Profiler-Rid", "t9:c1:7"]]
                 },
                 {
                     "_tag": "Request", "id": "2", "tag": "test.profiler.unjoined", "payload": {},
@@ -3603,7 +3603,7 @@ mod tests {
                 },
                 {
                     "_tag": "Request", "id": "3", "tag": "test.profiler.stream", "payload": {},
-                    "headers": [["x-bibcode-profiler-rid", "t9:s:1"]]
+                    "headers": [["x-coddy-studio-profiler-rid", "t9:s:1"]]
                 }
             ]),
             3,
@@ -3657,7 +3657,7 @@ mod tests {
             registry,
             json!([{
                 "_tag": "Request", "id": "1", "tag": "test.profiler.off", "payload": {},
-                "headers": [["x-bibcode-profiler-rid", "t9:off:1"]]
+                "headers": [["x-coddy-studio-profiler-rid", "t9:off:1"]]
             }]),
             1,
         )

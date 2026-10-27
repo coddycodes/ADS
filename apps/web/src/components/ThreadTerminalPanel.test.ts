@@ -193,9 +193,9 @@ describe("resolveTerminalSelectionActionPosition", () => {
 describe("quoteTerminalPastePath", () => {
   it.each([
     [
-      "/home/me/.bibcode/userdata/terminal-pastes/a.png",
+      "/home/me/.coddy/studio/userdata/terminal-pastes/a.png",
       "linux",
-      "/home/me/.bibcode/userdata/terminal-pastes/a.png",
+      "/home/me/.coddy/studio/userdata/terminal-pastes/a.png",
     ],
     [
       "/Volumes/Work Disk/terminal-pastes/a.png",

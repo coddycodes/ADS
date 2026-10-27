@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ThreadId, type TerminalLaunchCommand } from "@bibcode/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import { EnvironmentId, ThreadId, type TerminalLaunchCommand } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { CENTER_PANEL_ROOT_GROUP_ID } from "./centerPanelLayout";
@@ -23,7 +23,7 @@ const validAction: CreateCenterTerminalInput = {
   launch: {
     cwd: "/workspace/project",
     worktreePath: null,
-    env: { BIBCODE_WORKTREE_PATH: "/workspace/project" },
+    env: { CODDY_STUDIO_WORKTREE_PATH: "/workspace/project" },
   },
 };
 
@@ -216,8 +216,8 @@ describe("createCenterTerminal", () => {
         cwd: "/workspace/worktree",
         worktreePath: "/workspace/worktree",
         env: {
-          BIBCODE_PROJECT_PATH: "/workspace/project",
-          BIBCODE_WORKTREE_PATH: "/workspace/worktree",
+          CODDY_STUDIO_PROJECT_PATH: "/workspace/project",
+          CODDY_STUDIO_WORKTREE_PATH: "/workspace/worktree",
         },
         label: "Dev server",
         command,
@@ -233,8 +233,8 @@ describe("createCenterTerminal", () => {
       cwd: "/workspace/worktree",
       worktreePath: "/workspace/worktree",
       env: {
-        BIBCODE_PROJECT_PATH: "/workspace/project",
-        BIBCODE_WORKTREE_PATH: "/workspace/worktree",
+        CODDY_STUDIO_PROJECT_PATH: "/workspace/project",
+        CODDY_STUDIO_WORKTREE_PATH: "/workspace/worktree",
       },
       centerPanel: true,
       command,

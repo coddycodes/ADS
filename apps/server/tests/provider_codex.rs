@@ -5,14 +5,14 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::activity::{
+use coddy_studio_server::activity::{
     ActivityActorSummary, ActivityCapabilities, ActivityEntry, ActivityLifecycle,
     ActivityObservationState, ActivityRecordKind, ActivityRepository, ActivityScopeSeed,
     ActivitySection, ActivitySectionObservationState, ActivityWorkItemSummary,
     ProviderActivityMutation,
 };
-use bibcode_server::persistence::{Database, run_migrations};
-use bibcode_server::provider::codex::{
+use coddy_studio_server::persistence::{Database, run_migrations};
+use coddy_studio_server::provider::codex::{
     BuildTurnStartInput, CodexActivityFixtureAdapter, CodexRuntimeMode, CodexSessionOptions,
     CodexSessionRuntime, ConnectionConfig, IncomingEvent, JsonRpcConnection, RuntimeEvent,
     RuntimeEventStableView, build_initialize_params, build_turn_start_params,
@@ -550,19 +550,21 @@ fn codex_activity_attributes_interrupted_child_turn_state() {
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) => Some(entry),
+            coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
+                Some(entry)
+            }
             _ => None,
         })
         .expect("interrupted child turn entry");
 
     assert_eq!(
         entry.kind,
-        bibcode_server::activity::ActivityEntryKind::State
+        coddy_studio_server::activity::ActivityEntryKind::State
     );
     assert_eq!(entry.title, "Turn interrupted");
     assert_eq!(
         entry.tone,
-        bibcode_server::activity::ActivityEntryTone::Warning
+        coddy_studio_server::activity::ActivityEntryTone::Warning
     );
     assert_eq!(entry.owner_id, "codex:thread:child-1");
 }
@@ -605,7 +607,7 @@ fn codex_activity_rejects_foreign_collaboration_and_root_receivers() {
     assert!(foreign_output.mutations.is_empty());
     assert!(matches!(
         root_output.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.id == "codex:thread:child-1"
     ));
     assert_eq!(tracker.state_counts().actors, 1);
@@ -664,7 +666,7 @@ fn codex_activity_rejects_self_parent_edges_before_mutation() {
     );
     assert!(matches!(
         status.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.parent_actor_id.is_none()
     ));
 }
@@ -725,7 +727,7 @@ fn codex_activity_rejects_ancestor_reparenting_cycles() {
     );
     assert!(matches!(
         status.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.parent_actor_id.is_none()
     ));
 }
@@ -770,7 +772,7 @@ fn codex_activity_preserves_established_non_authoritative_parents() {
 
     assert!(matches!(
         output.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.id == "codex:thread:child-a" && actor.parent_actor_id.is_none()
     ));
 }
@@ -796,7 +798,9 @@ fn codex_activity_redacts_raw_command_output_before_display() {
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) => Some(entry),
+            coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
+                Some(entry)
+            }
             _ => None,
         })
         .expect("command entry");
@@ -860,7 +864,9 @@ fn codex_activity_prefers_complete_reasoning_summary_without_exposing_raw_reason
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) => Some(entry),
+            coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
+                Some(entry)
+            }
             _ => None,
         })
         .expect("official reasoning completion entry");
@@ -933,12 +939,12 @@ fn codex_activity_lifecycle_is_exhaustive_and_terminal_monotonic() {
 
     assert!(matches!(
         starting.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Starting
     ));
     assert!(matches!(
         terminal.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Completed
     ));
     assert!(
@@ -1012,7 +1018,9 @@ fn codex_activity_reopens_terminal_child_only_for_native_active_or_resume() {
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor) => Some(actor),
+            coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor) => {
+                Some(actor)
+            }
             _ => None,
         })
         .expect("delayed terminal update");
@@ -1062,7 +1070,7 @@ fn codex_activity_reopens_terminal_child_only_for_native_active_or_resume() {
     );
     assert!(matches!(
         equal_active.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Running
                 && actor.terminal_at.is_none()
     ));
@@ -1089,7 +1097,7 @@ fn codex_activity_reopens_terminal_child_only_for_native_active_or_resume() {
     );
     assert!(matches!(
         terminal_again.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Completed
                 && actor.terminal_at.is_some()
     ));
@@ -1140,7 +1148,7 @@ fn codex_activity_reopens_terminal_child_only_for_native_active_or_resume() {
     );
     assert!(matches!(
         equal_resume.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Running
                 && actor.terminal_at.is_none()
     ));
@@ -1175,7 +1183,7 @@ fn timestamp_less_terminal_child_tracker() -> CodexActivityFixtureAdapter {
     }));
     assert!(matches!(
         started.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Running
                 && actor.updated_at.starts_with("1970-01-01T00:00:00")
     ));
@@ -1199,7 +1207,7 @@ fn timestamp_less_terminal_child_tracker() -> CodexActivityFixtureAdapter {
     }));
     assert!(matches!(
         terminal.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Completed
                 && actor.updated_at.starts_with("1970-01-01T00:00:00")
     ));
@@ -1351,7 +1359,7 @@ fn codex_activity_decodes_legacy_string_status_without_granting_reopen_authority
     );
     assert!(matches!(
         legacy_idle.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Waiting
     ));
     let legacy_terminal = tracker.handle_notification(
@@ -1361,7 +1369,7 @@ fn codex_activity_decodes_legacy_string_status_without_granting_reopen_authority
     );
     assert!(matches!(
         legacy_terminal.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor)]
+        [coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor)]
             if actor.status == ActivityLifecycle::Completed
                 && actor.terminal_at.is_some()
     ));
@@ -1407,7 +1415,9 @@ fn codex_activity_tracks_nested_relationships_and_bounds_canonical_ids() {
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor) => Some(actor),
+            coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor) => {
+                Some(actor)
+            }
             _ => None,
         })
         .expect("nested actor mutation");
@@ -1459,7 +1469,7 @@ fn codex_activity_event_keys_are_unambiguous_for_adversarial_delimiters() {
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
+            coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
                 Some(entry.id.as_str())
             }
             _ => None,
@@ -1469,7 +1479,7 @@ fn codex_activity_event_keys_are_unambiguous_for_adversarial_delimiters() {
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
+            coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
                 Some(entry.id.as_str())
             }
             _ => None,
@@ -1515,13 +1525,13 @@ fn codex_activity_coalesces_and_utf8_clips_child_text() {
         .mutations
         .iter()
         .find_map(|mutation| match mutation {
-            bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
+            coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
                 entry.detail.as_deref()
             }
             _ => None,
         })
         .expect("completion flush entry");
-    assert!(detail.len() <= bibcode_server::activity::ACTIVITY_DETAIL_MAX_LENGTH);
+    assert!(detail.len() <= coddy_studio_server::activity::ACTIVITY_DETAIL_MAX_LENGTH);
     assert!(std::str::from_utf8(detail.as_bytes()).is_ok());
     assert!(detail.starts_with('a'));
 }
@@ -1573,7 +1583,7 @@ fn codex_activity_text_deltas_are_replay_safe_across_completion() {
             .mutations
             .iter()
             .find_map(|mutation| match mutation {
-                bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) =>
+                coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) =>
                     entry.detail.as_deref(),
                 _ => None,
             }),
@@ -1623,7 +1633,7 @@ fn codex_activity_explicit_sequences_advance_the_automatic_counter() {
     assert!(automatic.mutations.is_empty());
     assert!(matches!(
         completion.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry)]
+        [coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry)]
             if entry.detail.as_deref() == Some("firstsecond")
     ));
 }
@@ -1670,7 +1680,7 @@ fn codex_activity_automatic_sequences_remain_unique_past_u64_max() {
     );
     assert!(matches!(
         completion.mutations.as_slice(),
-        [bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry)]
+        [coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry)]
             if entry.detail.as_deref() == Some("explicitautomatic-1automatic-2")
     ));
 }
@@ -1687,7 +1697,7 @@ fn codex_activity_downgrades_recovery_only_for_a_missing_method() {
                     mutation,
                     ProviderActivityMutation::SetScope { capabilities, .. }
                         if capabilities.history_recovery
-                            == bibcode_server::activity::ActivityHistoryRecovery::None
+                            == coddy_studio_server::activity::ActivityHistoryRecovery::None
                 )
             })
     };
@@ -2422,10 +2432,10 @@ fn task_2_codex_activity_projection(fixture: &CodexActivityFixture) -> Vec<Value
 }
 
 fn provider_activity_mutation_to_value(
-    mutation: bibcode_server::activity::ProviderActivityMutation,
+    mutation: coddy_studio_server::activity::ProviderActivityMutation,
 ) -> Value {
     let mut value = match mutation {
-        bibcode_server::activity::ProviderActivityMutation::SetScope {
+        coddy_studio_server::activity::ProviderActivityMutation::SetScope {
             capabilities,
             observation_state,
         } => json!({
@@ -2433,7 +2443,7 @@ fn provider_activity_mutation_to_value(
             "capabilities": capabilities,
             "observationState": observation_state,
         }),
-        bibcode_server::activity::ProviderActivityMutation::SetSectionHealth {
+        coddy_studio_server::activity::ProviderActivityMutation::SetSectionHealth {
             section,
             health,
         } => {
@@ -2443,19 +2453,21 @@ fn provider_activity_mutation_to_value(
                 "health": health,
             })
         }
-        bibcode_server::activity::ProviderActivityMutation::UpsertActor(actor) => {
+        coddy_studio_server::activity::ProviderActivityMutation::UpsertActor(actor) => {
             json!({ "type": "upsertActor", "actor": actor })
         }
-        bibcode_server::activity::ProviderActivityMutation::RemoveActor { actor_id } => {
+        coddy_studio_server::activity::ProviderActivityMutation::RemoveActor { actor_id } => {
             json!({ "type": "removeActor", "actorId": actor_id })
         }
-        bibcode_server::activity::ProviderActivityMutation::UpsertWorkItem(work_item) => {
+        coddy_studio_server::activity::ProviderActivityMutation::UpsertWorkItem(work_item) => {
             json!({ "type": "upsertWorkItem", "workItem": work_item })
         }
-        bibcode_server::activity::ProviderActivityMutation::RemoveWorkItem { work_item_id } => {
+        coddy_studio_server::activity::ProviderActivityMutation::RemoveWorkItem {
+            work_item_id,
+        } => {
             json!({ "type": "removeWorkItem", "workItemId": work_item_id })
         }
-        bibcode_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
+        coddy_studio_server::activity::ProviderActivityMutation::AppendEntry(entry) => {
             json!({ "type": "appendEntry", "entry": entry })
         }
     };
@@ -5789,7 +5801,7 @@ async fn reconciliation_repairs_missed_history_and_official_background_terminals
             && capabilities.attributed_activity
             && capabilities.background_work
             && capabilities.history_recovery
-                == bibcode_server::activity::ActivityHistoryRecovery::Full
+                == coddy_studio_server::activity::ActivityHistoryRecovery::Full
             && !capabilities.terminal_observation
     )));
 
@@ -6049,7 +6061,7 @@ async fn assert_background_list_downgrades_once(missing_method_error: Value) {
                     && capabilities.attributed_activity
                     && !capabilities.background_work
                     && capabilities.history_recovery
-                        == bibcode_server::activity::ActivityHistoryRecovery::Full
+                        == coddy_studio_server::activity::ActivityHistoryRecovery::Full
             ))
     );
     assert!(
@@ -6283,7 +6295,7 @@ async fn reconciliation_never_advertises_full_before_thread_read_is_proven() {
                     capabilities,
                     observation_state: ActivityObservationState::Live,
                 } if capabilities.history_recovery
-                    == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+                    == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
             )),
             "history remains bounded until both list and read support are proven"
         );
@@ -6292,7 +6304,7 @@ async fn reconciliation_never_advertises_full_before_thread_read_is_proven() {
                 mutation,
                 ProviderActivityMutation::SetScope { capabilities, .. }
                     if capabilities.history_recovery
-                        == bibcode_server::activity::ActivityHistoryRecovery::Full
+                        == coddy_studio_server::activity::ActivityHistoryRecovery::Full
             )),
             "an empty list or an unsupported read must never advertise full history"
         );
@@ -6440,7 +6452,7 @@ async fn reconciliation_wrong_thread_read_does_not_prove_support_or_apply_histor
                     capabilities,
                     observation_state: ActivityObservationState::Live,
                 } if capabilities.history_recovery
-                    == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+                    == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
             ))
     );
     assert!(
@@ -6451,7 +6463,7 @@ async fn reconciliation_wrong_thread_read_does_not_prove_support_or_apply_histor
                 mutation,
                 ProviderActivityMutation::SetScope { capabilities, .. }
                     if capabilities.history_recovery
-                        == bibcode_server::activity::ActivityHistoryRecovery::Full
+                        == coddy_studio_server::activity::ActivityHistoryRecovery::Full
             ))
     );
     assert!(
@@ -6499,7 +6511,7 @@ async fn reconciliation_wrong_thread_read_does_not_prove_support_or_apply_histor
                     capabilities,
                     observation_state: ActivityObservationState::Live,
                 } if capabilities.history_recovery
-                    == bibcode_server::activity::ActivityHistoryRecovery::Full
+                    == coddy_studio_server::activity::ActivityHistoryRecovery::Full
             ))
     );
     assert!(
@@ -6640,7 +6652,7 @@ async fn reconciliation_read_method_not_found_degrades_history_to_bounded() {
                     observation_state: ActivityObservationState::Live,
                 } if capabilities.background_work
                     && capabilities.history_recovery
-                        == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+                        == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
             ))
     );
     assert!(
@@ -6685,7 +6697,7 @@ async fn reconciliation_read_method_not_found_degrades_history_to_bounded() {
                 mutation,
                 ProviderActivityMutation::SetScope { capabilities, .. }
                     if capabilities.history_recovery
-                        == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+                        == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
             ))
     );
     assert!(
@@ -6816,7 +6828,7 @@ async fn reconciliation_oversized_thread_read_keeps_the_method_supported_and_rec
         mutation,
         ProviderActivityMutation::SetScope { capabilities, .. }
             if capabilities.history_recovery
-                == bibcode_server::activity::ActivityHistoryRecovery::Full
+                == coddy_studio_server::activity::ActivityHistoryRecovery::Full
     )));
     assert!(
         reconciliation.activity.iter().any(|mutation| matches!(
@@ -7028,7 +7040,7 @@ fn appended_details(event: &RuntimeEvent) -> Vec<String> {
 
 fn history_recovery(
     event: &RuntimeEvent,
-) -> Option<bibcode_server::activity::ActivityHistoryRecovery> {
+) -> Option<coddy_studio_server::activity::ActivityHistoryRecovery> {
     event.activity.iter().find_map(|mutation| match mutation {
         ProviderActivityMutation::SetScope { capabilities, .. } => {
             Some(capabilities.history_recovery)
@@ -7093,7 +7105,7 @@ async fn reconciliation_recovers_a_huge_thread_from_its_newest_page() {
     assert!(!details.iter().any(|detail| detail == "message-1979"));
     assert_eq!(
         history_recovery(&reconciliations[0]),
-        Some(bibcode_server::activity::ActivityHistoryRecovery::Full)
+        Some(coddy_studio_server::activity::ActivityHistoryRecovery::Full)
     );
 }
 
@@ -7193,7 +7205,7 @@ async fn reconciliation_missing_turns_list_downgrades_history_reads() {
     );
     assert_eq!(
         history_recovery(&reconciliations[1]),
-        Some(bibcode_server::activity::ActivityHistoryRecovery::Bounded)
+        Some(coddy_studio_server::activity::ActivityHistoryRecovery::Bounded)
     );
     let history_requests = log
         .lock()
@@ -7736,7 +7748,7 @@ async fn reconciliation_list_method_not_found_keeps_bounded_root_read_recovery()
                     && capabilities.attributed_activity
                     && capabilities.background_work
                     && capabilities.history_recovery
-                        == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+                        == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
             ))
     );
 
@@ -7771,7 +7783,7 @@ async fn reconciliation_list_method_not_found_keeps_bounded_root_read_recovery()
                 mutation,
                 ProviderActivityMutation::SetScope { capabilities, .. }
                     if capabilities.history_recovery
-                        == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+                        == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
             ))
     );
     assert!(
@@ -7919,7 +7931,7 @@ async fn reconciliation_reconnect_cancels_old_pass_and_runs_one_immediate_repair
             capabilities,
             observation_state: ActivityObservationState::Live,
         } if capabilities.history_recovery
-                == bibcode_server::activity::ActivityHistoryRecovery::Full
+                == coddy_studio_server::activity::ActivityHistoryRecovery::Full
             && capabilities.background_work
     )));
 
@@ -7994,7 +8006,7 @@ async fn reconciliation_initial_transport_failure_publishes_bounded_history() {
             capabilities,
             observation_state: ActivityObservationState::Stale,
         } if capabilities.history_recovery
-            == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+            == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
     )));
 
     peer_task.await.expect("peer task");
@@ -8107,7 +8119,7 @@ async fn reconciliation_read_downgrade_before_transport_failure_publishes_bounde
         mutation,
         ProviderActivityMutation::SetScope { capabilities, .. }
             if capabilities.history_recovery
-                == bibcode_server::activity::ActivityHistoryRecovery::Full
+                == coddy_studio_server::activity::ActivityHistoryRecovery::Full
     )));
 
     incoming_tx
@@ -8139,7 +8151,7 @@ async fn reconciliation_read_downgrade_before_transport_failure_publishes_bounde
             capabilities,
             observation_state: ActivityObservationState::Stale,
         } if capabilities.history_recovery
-            == bibcode_server::activity::ActivityHistoryRecovery::Bounded
+            == coddy_studio_server::activity::ActivityHistoryRecovery::Bounded
     )));
 
     peer_task.await.expect("peer task");
@@ -8271,7 +8283,7 @@ async fn reconciliation_transport_loss_marks_stale_and_preserves_capabilities_un
                 ProviderActivityMutation::SetScope { capabilities, .. }
                     if capabilities.background_work
                         && capabilities.history_recovery
-                            == bibcode_server::activity::ActivityHistoryRecovery::Full
+                            == coddy_studio_server::activity::ActivityHistoryRecovery::Full
             ))
     );
 
@@ -8305,12 +8317,12 @@ async fn reconciliation_transport_loss_marks_stale_and_preserves_capabilities_un
             observation_state: ActivityObservationState::Stale,
         } if capabilities.background_work
             && capabilities.history_recovery
-                == bibcode_server::activity::ActivityHistoryRecovery::Full
+                == coddy_studio_server::activity::ActivityHistoryRecovery::Full
     )));
     assert!(!stale.activity.iter().any(|mutation| matches!(
         mutation,
         ProviderActivityMutation::AppendEntry(entry)
-            if entry.kind == bibcode_server::activity::ActivityEntryKind::Error
+            if entry.kind == coddy_studio_server::activity::ActivityEntryKind::Error
     )));
     old_peer_task.await.expect("old peer task");
 
@@ -9817,7 +9829,7 @@ fn expect_rewind_session_start(peer: &mut ScriptedPeer, history_mode: Option<&st
         thread["historyMode"] = json!(history_mode);
     }
     peer.expect_request("initialize", fixture("initialize-params.json"))
-        .respond(json!({ "userAgent": "bibcode_desktop/0.162.1" }));
+        .respond(json!({ "userAgent": "coddy_studio_desktop/0.162.1" }));
     peer.expect_notification("initialized");
     peer.expect_request(
         "thread/start",

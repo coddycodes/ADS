@@ -1,5 +1,5 @@
-import type { EnvironmentId } from "@bibcode/contracts";
-import { isAtomCommandInterrupted } from "@bibcode/client-runtime/state/runtime";
+import type { EnvironmentId } from "@coddy/contracts";
+import { isAtomCommandInterrupted } from "@coddy/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 

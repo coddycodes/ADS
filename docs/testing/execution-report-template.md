@@ -204,13 +204,13 @@ Delete the unused result values above. Do not leave an ambiguous status.
 - External tool, command, and path used for the Files Refresh rescan:
 - Authentication-dependent scenarios unavailable:
 - Linux preview child webview geometry, per backend (native Wayland and
-  `BIBCODE_GDK_BACKEND=x11`): scale, screenshot after the split drag, and any
+  `CODDY_STUDIO_GDK_BACKEND=x11`): scale, screenshot after the split drag, and any
   step where the preview did not follow its panel:
 
 ## Profiler crash smoke evidence
 
 - Symbol build command and post-bundle check output:
-- Executable launched and test-owned `BIBCODE_HOME`:
+- Executable launched and test-owned `CODDY_STUDIO_HOME`:
 - Capabilities (`nativeDumps`, `osCrashRecords`, `storage`) and the cause of any
   `unavailable` or `disabled` value:
 - Crash monitor process (pid, parent, socket directory and mode) and its exit
@@ -312,7 +312,7 @@ See [Desktop-managed SSH environments](./ssh-environments.md).
 - Automated harness command and result (`ssh_environment`, `--ignored`):
 - Remote host OS and login shell:
 - Authentication methods exercised (key, password):
-- Remote `bibcode --version`:
+- Remote `coddy-studio --version`:
 - Devices for this desktop on the host before (count, access):
 
 | #   | Scenario                     | Evidence class | Result | Exact error or message |
@@ -344,7 +344,7 @@ See [Preview gateway](./cross-platform-validation.md#preview-gateway).
 - Client (desktop or browser tab), environment address, and evidence class:
 - Server bind host and each gateway port with its listen address:
 - Gateway cookie attributes (never the value):
-- Exact `bibcode-open-url` path, exit codes, and printed output:
+- Exact `coddy-studio-open-url` path, exit codes, and printed output:
 
 | Scenario                         | Result | Screenshot, command, or log evidence | Exact message or finding |
 | -------------------------------- | ------ | ------------------------------------ | ------------------------ |
@@ -393,7 +393,7 @@ iOS simulators (macOS server only; otherwise "not applicable"):
 - Xcode version, `xcode-select -p`, simulator name, UDID, and runtime:
 - Simulators already booted before the run (left alone: yes | no):
 - Live or view-only, with the reason:
-- iOS sim tests (`BIBCODE_IOS_SIM_TESTS=1`): pass | fail | not run, with the
+- iOS sim tests (`CODDY_STUDIO_IOS_SIM_TESTS=1`): pass | fail | not run, with the
   test counts:
 
 | Scenario                                    | Result | Screenshot, command, or log evidence | Exact message or finding |

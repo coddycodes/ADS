@@ -1,14 +1,14 @@
 "use client";
 
-import type { ConnectionTarget } from "@bibcode/client-runtime/connection";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+import type { ConnectionTarget } from "@coddy/client-runtime/connection";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   mapAtomCommandResult,
   settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -16,7 +16,7 @@ import {
   EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   ProviderInstanceId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 

@@ -7,7 +7,7 @@ export function getBulkThreadDeletionConfirmation(
     `This permanently clears conversation history for ${threadCount === 1 ? "this thread" : "these threads"}.`,
     ...(worktreeCount > 0
       ? [
-          `${worktreeCount} worktree-backed thread${worktreeCount === 1 ? "" : "s"} will be removed from BiBCode only. Git worktrees and files are left untouched.`,
+          `${worktreeCount} worktree-backed thread${worktreeCount === 1 ? "" : "s"} will be removed from Coddy Studio only. Git worktrees and files are left untouched.`,
         ]
       : []),
   ].join("\n");

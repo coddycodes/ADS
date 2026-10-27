@@ -11,22 +11,28 @@
 //! once (see `test_support::tests`) instead of once per integration binary.
 //!
 //! This file is generic over `std::path`/`serde_json` only (no `crate::` or
-//! `bibcode_server::` paths), because it is compiled both as part of the
-//! `bibcode_server` lib crate (via `src/test_support/mod.rs`) and as part of
+//! `coddy_studio_server::` paths), because it is compiled both as part of the
+//! `coddy_studio_server` lib crate (via `src/test_support/mod.rs`) and as part of
 //! every integration test binary that includes it; those two contexts
 //! disagree about what the crate is named from this file's point of view.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 /// Drivers back-filled from legacy settings by the server's provider inventory.
 /// Keep this list checked against the server's settings and inventory by
 /// `test_support::tests::hermetic_helper_pins_every_provider_driver_the_server_defines_as_built_in`,
 /// which fails if a driver is added or removed without updating this list.
-pub(crate) const BUILTIN_PROVIDER_DRIVERS: &[&str] =
-    &["codex", "claudeAgent", "cursor", "grok", "opencode"];
+pub(crate) const BUILTIN_PROVIDER_DRIVERS: &[&str] = &[
+    "codex",
+    "claudeAgent",
+    "coddy",
+    "cursor",
+    "grok",
+    "opencode",
+];
 
 /// An absolute, absent path in a test-owned sandbox. Executable resolution
 /// must not fall back to PATH when this path is missing.
@@ -67,6 +73,7 @@ pub(crate) fn hermetic_provider_settings(sandbox: &Path) -> Value {
     for (driver, enabled_by_default) in [
         ("codex", true),
         ("claudeAgent", true),
+        ("coddy", true),
         ("cursor", true),
         ("grok", false),
         ("opencode", true),

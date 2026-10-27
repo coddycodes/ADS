@@ -1,4 +1,4 @@
-import { type ServerProvider } from "@bibcode/contracts";
+import { type ServerProvider } from "@coddy/contracts";
 import { memo } from "react";
 import { InfoIcon } from "lucide-react";
 import { cn } from "~/lib/utils";

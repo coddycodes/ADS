@@ -5,7 +5,7 @@ import type {
   GitManagerMergePreview,
   GitManagerOperationEvent,
   GitManagerRefEntry,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { isConflictResolved } from "./GitManagerConflictList.logic";
 

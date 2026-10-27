@@ -8,7 +8,7 @@ use crate::provider::{
     unsupported_option_refusal,
 };
 
-/// BiBCode's labels for Cursor's options, used when the session gives an option no name of its
+/// Coddy Studio's labels for Cursor's options, used when the session gives an option no name of its
 /// own. The option descriptors show them, and the refusal for an option names it the same way.
 pub(crate) const REASONING_LABEL: &str = "Reasoning";
 pub(crate) const CONTEXT_LABEL: &str = "Context";
@@ -233,8 +233,8 @@ pub fn build_capabilities_from_config_options(options: &Value) -> Value {
 
 /// Resolves a turn's options into Cursor config updates, checked against what the session
 /// advertises. A refusal names the option by the label the option descriptors show: the session's
-/// own name for it, or BiBCode's default. A problem with the request, such as an option or value
-/// the session does not advertise, gets its own sentence. A session configuration BiBCode can't
+/// own name for it, or Coddy Studio's default. A problem with the request, such as an option or value
+/// the session does not advertise, gets its own sentence. A session configuration Coddy Studio can't
 /// work with, such as an advertised option of an unexpected category or type, gets the generic
 /// sentence of [`RefusedOption::unusable`]: a relaunch advertises the same configuration, and the
 /// protocol detail is nothing the user can act on.
@@ -378,7 +378,7 @@ pub fn resolve_acp_config_updates(
 
 /// [`resolve_acp_config_updates`], plus the updates that restore every supported option the turn
 /// leaves out to the session's baseline. Restoring depends only on the session's configuration,
-/// so a failure there is a configuration BiBCode can't work with.
+/// so a failure there is a configuration Coddy Studio can't work with.
 pub fn resolve_acp_config_updates_with_baseline(
     options: &Value,
     baseline: &Value,
@@ -457,7 +457,7 @@ pub fn resolve_acp_default_model_config(options: &Value) -> Result<(String, Valu
 }
 
 /// The session's current value for an option it advertises, or its advertised default. Its
-/// absence is a session configuration BiBCode can't work with.
+/// absence is a session configuration Coddy Studio can't work with.
 pub fn acp_config_option_current_value(
     options: &Value,
     config_id: &str,
@@ -542,7 +542,7 @@ fn acp_config_option_baseline_value(options: &[Value], config_id: &str) -> Resul
 
 /// The descriptor of an option the turn requests. The session not advertising it refuses the
 /// request, naming the option by `label`; an advertised option of another category is a
-/// configuration BiBCode can't work with.
+/// configuration Coddy Studio can't work with.
 fn requested_config_option<'a>(
     options: &'a [Value],
     config_id: &str,
@@ -567,7 +567,7 @@ fn requested_config_option<'a>(
 }
 
 /// The label the option descriptors show for an advertised option: the session's name for it, or
-/// BiBCode's `default`.
+/// Coddy Studio's `default`.
 fn option_label<'a>(descriptor: &'a Value, default: &'a str) -> &'a str {
     descriptor
         .get("name")

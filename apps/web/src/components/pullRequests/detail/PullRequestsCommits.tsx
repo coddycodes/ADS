@@ -1,4 +1,4 @@
-import type { PullRequestsCommits as Commits } from "@bibcode/contracts";
+import type { PullRequestsCommits as Commits } from "@coddy/contracts";
 import { CopyIcon } from "lucide-react";
 import { memo, useState } from "react";
 import { writeTextToClipboard } from "../../../hooks/useCopyToClipboard";

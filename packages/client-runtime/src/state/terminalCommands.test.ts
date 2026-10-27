@@ -7,7 +7,7 @@ import {
   type ServerConfig,
   type TerminalMetadataStreamEvent,
   type TerminalSessionSnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { Deferred, Effect, Fiber, Layer, Option, Stream, SubscriptionRef } from "effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";

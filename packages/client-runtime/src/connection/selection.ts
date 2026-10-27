@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -13,7 +13,7 @@ export class EnvironmentSelection extends Context.Reference<{
   readonly current: Effect.Effect<EnvironmentId | null>;
   /** The selected environment after every change; it may repeat the current one. */
   readonly changes: Stream.Stream<EnvironmentId | null>;
-}>("@bibcode/client-runtime/connection/selection/EnvironmentSelection", {
+}>("@coddy/client-runtime/connection/selection/EnvironmentSelection", {
   defaultValue: () => ({ current: Effect.succeed(null), changes: Stream.never }),
 }) {}
 

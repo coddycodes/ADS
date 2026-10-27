@@ -1,5 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
+import { projectKey } from "@coddy/client-runtime/state/entities";
 import type {
   GitManagerBlockedReason,
   GitManagerOperationEvent,
@@ -8,7 +8,7 @@ import type {
   GitManagerRefsSnapshot,
   ScopedProjectRef,
   VcsWorktreeDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { CloudIcon, FolderGit2Icon, FolderIcon, MonitorIcon, TagIcon } from "lucide-react";
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";

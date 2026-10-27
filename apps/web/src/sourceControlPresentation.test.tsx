@@ -1,4 +1,4 @@
-import type { SourceControlProviderInfo } from "@bibcode/contracts";
+import type { SourceControlProviderInfo } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 

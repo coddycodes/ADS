@@ -201,7 +201,7 @@ impl ProfilerStore {
         let (pause_tx, pause_rx) = mpsc::sync_channel::<()>(1);
         let writer_counters = counters.clone();
         let thread = std::thread::Builder::new()
-            .name("bibcode-profiler-writer".into())
+            .name("coddy-studio-profiler-writer".into())
             .spawn(move || {
                 if paused {
                     let _ = pause_rx.recv();
@@ -381,7 +381,7 @@ impl Writer {
         line.insert("v".into(), 1.into());
         // Every line names its build, so no retention or failed write can part events from it
         // (#98).
-        line.insert("bibcode".into(), env!("CARGO_PKG_VERSION").into());
+        line.insert("coddy-studio".into(), env!("CARGO_PKG_VERSION").into());
         line.insert("seq".into(), self.seq.into());
         let id = EventId {
             sid: self.counters.sid,
@@ -853,7 +853,7 @@ mod tests {
         let first = std::fs::read_to_string(dir.path().join(&files[0])).unwrap();
         let line: serde_json::Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
         assert_eq!(line["v"], 1);
-        assert_eq!(line["bibcode"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(line["coddy-studio"], env!("CARGO_PKG_VERSION"));
         assert_eq!(line["kind"], "test.event");
         assert_eq!(line["seq"], 0);
         assert_eq!(

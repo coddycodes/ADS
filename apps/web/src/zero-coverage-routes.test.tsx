@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentId, ProjectId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@coddy/contracts";
 import { act, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -97,8 +97,8 @@ vi.mock("./cloud/publicConfig", () => ({
   hasCloudPublicConfig: () => h.cloudConfigured,
 }));
 
-vi.mock("./components/clerk/useBiBCodeConnectAuthPrompt", () => ({
-  useBiBCodeConnectAuthPrompt: () => ({
+vi.mock("./components/clerk/useCoddyConnectAuthPrompt", () => ({
+  useCoddyConnectAuthPrompt: () => ({
     authPrompt: h.authPrompt,
     openAuthPrompt: h.openAuthPrompt,
   }),
@@ -158,9 +158,9 @@ vi.mock("./components/preview/usePreviewBridge", () => ({
 
 import { CenterTerminalPanel } from "./components/CenterTerminalPanel";
 import {
-  BiBCodeConnectSidebarAvatar,
-  BiBCodeConnectSidebarSignIn,
-} from "./components/clerk/BiBCodeConnectSidebarSignIn";
+  CoddyConnectSidebarAvatar,
+  CoddyConnectSidebarSignIn,
+} from "./components/clerk/CoddyConnectSidebarSignIn";
 import { PreviewPanel } from "./components/preview/PreviewPanel";
 import { PreviewUnreachable } from "./components/preview/PreviewUnreachable";
 import { useLoadingProgress } from "./components/preview/useLoadingProgress";
@@ -340,27 +340,27 @@ describe("settings and pairing routes", () => {
 
 describe("cloud sign-in surfaces", () => {
   it("hides unconfigured and unresolved auth before rendering sign-in or avatar", async () => {
-    const mounted = await mount(<BiBCodeConnectSidebarSignIn key="unconfigured" />);
+    const mounted = await mount(<CoddyConnectSidebarSignIn key="unconfigured" />);
     expect(mounted.container.innerHTML).toBe("");
 
     h.cloudConfigured = true;
-    await rerender(mounted, <BiBCodeConnectSidebarSignIn key="auth-loading" />);
+    await rerender(mounted, <CoddyConnectSidebarSignIn key="auth-loading" />);
     expect(mounted.container.innerHTML).toBe("");
 
     h.auth = { isLoaded: true, isSignedIn: false };
     h.authPrompt = <div>Auth dialog</div>;
-    await rerender(mounted, <BiBCodeConnectSidebarSignIn key="signed-out" />);
+    await rerender(mounted, <CoddyConnectSidebarSignIn key="signed-out" />);
     await click(mounted.container.querySelector("button")!);
     expect(h.openAuthPrompt).toHaveBeenCalledOnce();
     expect(mounted.container.textContent).toContain("Auth dialog");
 
     h.auth = { isLoaded: true, isSignedIn: true };
-    await rerender(mounted, <BiBCodeConnectSidebarSignIn key="signed-in" />);
+    await rerender(mounted, <CoddyConnectSidebarSignIn key="signed-in" />);
     expect(mounted.container.innerHTML).toBe("");
-    await rerender(mounted, <BiBCodeConnectSidebarAvatar key="configured-avatar" />);
+    await rerender(mounted, <CoddyConnectSidebarAvatar key="configured-avatar" />);
     expect(mounted.container.querySelector("[data-user-button]")).not.toBeNull();
     h.cloudConfigured = false;
-    await rerender(mounted, <BiBCodeConnectSidebarAvatar key="unconfigured-avatar" />);
+    await rerender(mounted, <CoddyConnectSidebarAvatar key="unconfigured-avatar" />);
     expect(mounted.container.innerHTML).toBe("");
   });
 });
@@ -405,7 +405,7 @@ describe("center terminal and preview surfaces", () => {
       renderPanel({
         cwd: "/repo/worktree",
         worktreePath: "/repo/worktree",
-        runtimeEnv: { BIBCODE_PROJECT_ROOT: "/repo" },
+        runtimeEnv: { CODDY_STUDIO_PROJECT_ROOT: "/repo" },
       }),
     );
     expect(h.panelProps).toMatchObject({
@@ -428,7 +428,7 @@ describe("center terminal and preview surfaces", () => {
       renderPanel({
         cwd: "/repo/current-worktree",
         worktreePath: "/repo/current-worktree",
-        runtimeEnv: { BIBCODE_PROJECT_ROOT: "/repo" },
+        runtimeEnv: { CODDY_STUDIO_PROJECT_ROOT: "/repo" },
       }),
     );
     expect(h.panelProps).toMatchObject({

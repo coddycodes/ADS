@@ -47,7 +47,7 @@ export class ConnectionDriver extends Context.Service<
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
   }
->()("@bibcode/client-runtime/connection/driver/ConnectionDriver") {}
+>()("@coddy/client-runtime/connection/driver/ConnectionDriver") {}
 
 export const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;

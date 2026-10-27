@@ -1,4 +1,4 @@
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@bibcode/shared/keybindings";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@coddy/shared/keybindings";
 import { assert, describe, it } from "vite-plus/test";
 
 import {
@@ -6,7 +6,7 @@ import {
   type KeybindingShortcut,
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   formatShortcutLabel,
   isChatNewShortcut,

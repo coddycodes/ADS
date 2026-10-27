@@ -1,4 +1,4 @@
-import type { ServerConfig } from "@bibcode/contracts";
+import type { ServerConfig } from "@coddy/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";

@@ -1,4 +1,4 @@
-import type { PullRequestsContext, PullRequestsDetail } from "@bibcode/contracts";
+import type { PullRequestsContext, PullRequestsDetail } from "@coddy/contracts";
 import { memo, useRef, useState } from "react";
 import { PermissionButton, constrainPermission } from "../../ui/permission-button";
 import { toastManager } from "../../ui/toast";

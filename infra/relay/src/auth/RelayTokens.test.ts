@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import { describe, expect, it } from "@effect/vitest";
-import { signRelayJwt } from "@bibcode/shared/relayJwt";
+import { signRelayJwt } from "@coddy/shared/relayJwt";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -19,7 +19,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test/",
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "bibcode-relay",
+  clerkJwtAudience: "coddy-studio-relay",
   cloudMintPrivateKey: Redacted.make(keyPair.privateKey),
   cloudMintPublicKey: keyPair.publicKey,
   managedEndpointBaseDomain: undefined,
@@ -109,7 +109,7 @@ describe("RelayTokens", () => {
         jti: "access-token-1",
         issuedAtEpochSeconds: 100,
         expiresAtEpochSeconds: 10_000,
-        clientId: "bibcode-web",
+        clientId: "coddy-studio-web",
         scopes: ["environment:connect", "environment:status"],
       });
 
@@ -118,7 +118,7 @@ describe("RelayTokens", () => {
       ).toMatchObject({
         sub: "user_123",
         cnf: { jkt: "proof-key-thumbprint" },
-        client_id: "bibcode-web",
+        client_id: "coddy-studio-web",
         scope: ["environment:connect", "environment:status"],
       });
       expect(
@@ -139,14 +139,14 @@ describe("RelayTokens", () => {
         jti: "web-access-token-1",
         issuedAtEpochSeconds: 100,
         expiresAtEpochSeconds: 200,
-        clientId: "bibcode-web",
+        clientId: "coddy-studio-web",
         scopes: ["environment:connect", "environment:status"],
       });
 
       expect(
         yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 150 }),
       ).toMatchObject({
-        client_id: "bibcode-web",
+        client_id: "coddy-studio-web",
         scope: ["environment:connect", "environment:status"],
         cnf: { jkt: "web-proof-key-thumbprint" },
       });
@@ -158,7 +158,7 @@ describe("RelayTokens", () => {
       const relayTokens = yield* RelayTokens.RelayTokens;
       expect(
         relayTokens.resolveDpopAccessTokenScopes({
-          clientId: "bibcode-web",
+          clientId: "coddy-studio-web",
           scope: "environment:status environment:connect environment:status",
         }),
       ).toEqual(["environment:status", "environment:connect"]);
@@ -170,7 +170,7 @@ describe("RelayTokens", () => {
       const relayTokens = yield* RelayTokens.RelayTokens;
       const token = yield* signRelayJwt({
         privateKey: keyPair.privateKey,
-        typ: "bibcode-relay-dpop-access+jwt",
+        typ: "coddy-studio-relay-dpop-access+jwt",
         payload: {
           iss: "https://relay.example.test",
           aud: "https://relay.example.test",
@@ -178,7 +178,7 @@ describe("RelayTokens", () => {
           jti: "access-token-invalid-scope",
           iat: 100,
           exp: 200,
-          client_id: "bibcode-web",
+          client_id: "coddy-studio-web",
           scope: "environment:admin",
           cnf: { jkt: "proof-key-thumbprint" },
         },
@@ -197,7 +197,7 @@ describe("RelayTokens", () => {
       });
       const forgedToken = yield* signRelayJwt({
         privateKey: forgedKeyPair.privateKey,
-        typ: "bibcode-relay-dpop-access+jwt",
+        typ: "coddy-studio-relay-dpop-access+jwt",
         payload: {
           iss: "https://relay.example.test",
           aud: "https://relay.example.test",
@@ -205,14 +205,14 @@ describe("RelayTokens", () => {
           jti: "forged-access-token",
           iat: 100,
           exp: 10_000,
-          client_id: "bibcode-web",
+          client_id: "coddy-studio-web",
           scope: "environment:connect",
           cnf: { jkt: "proof-key-thumbprint" },
         },
       });
       const malformedClaimsToken = yield* signRelayJwt({
         privateKey: keyPair.privateKey,
-        typ: "bibcode-relay-dpop-access+jwt",
+        typ: "coddy-studio-relay-dpop-access+jwt",
         payload: {
           iss: "https://relay.example.test",
           aud: "https://relay.example.test",
@@ -220,7 +220,7 @@ describe("RelayTokens", () => {
           jti: "malformed-access-token",
           iat: 100,
           exp: 10_000,
-          client_id: "bibcode-web",
+          client_id: "coddy-studio-web",
           scope: "environment:connect",
           cnf: {},
         },
@@ -244,7 +244,7 @@ describe("RelayTokens", () => {
   it.effect("rejects tokens with a mismatched issuer, audience, type, or max token age", () =>
     Effect.gen(function* () {
       const relayTokens = yield* RelayTokens.RelayTokens;
-      const makeToken = (payload: Record<string, unknown>, typ = "bibcode-relay-dpop-access+jwt") =>
+      const makeToken = (payload: Record<string, unknown>, typ = "coddy-studio-relay-dpop-access+jwt") =>
         signRelayJwt({
           privateKey: keyPair.privateKey,
           typ,
@@ -255,7 +255,7 @@ describe("RelayTokens", () => {
             jti: "access-token-rejection",
             iat: 100,
             exp: 10_000,
-            client_id: "bibcode-web",
+            client_id: "coddy-studio-web",
             scope: "environment:connect",
             cnf: { jkt: "proof-key-thumbprint" },
             ...payload,
@@ -265,7 +265,7 @@ describe("RelayTokens", () => {
       const [wrongIssuer, wrongAudience, wrongType, staleToken] = yield* Effect.all([
         makeToken({ iss: "https://attacker.example.test" }),
         makeToken({ aud: "https://attacker.example.test" }),
-        makeToken({}, "bibcode-link-challenge+jwt"),
+        makeToken({}, "coddy-studio-link-challenge+jwt"),
         makeToken({}),
       ]);
 
@@ -289,7 +289,7 @@ describe("RelayTokens", () => {
       const relayTokens = yield* RelayTokens.RelayTokens;
       const malformedChallenge = yield* signRelayJwt({
         privateKey: keyPair.privateKey,
-        typ: "bibcode-link-challenge+jwt",
+        typ: "coddy-studio-link-challenge+jwt",
         payload: {
           iss: "https://relay.example.test",
           aud: "https://relay.example.test",
@@ -333,7 +333,7 @@ describe("RelayTokens", () => {
           jti: "invalid-key",
           issuedAtEpochSeconds: 100,
           expiresAtEpochSeconds: 200,
-          clientId: "bibcode-web",
+          clientId: "coddy-studio-web",
           scopes: ["environment:connect"],
         })
         .pipe(
@@ -343,7 +343,7 @@ describe("RelayTokens", () => {
           }),
         );
 
-      expect(message).toBe('Failed to sign relay JWT of type "bibcode-relay-dpop-access+jwt".');
+      expect(message).toBe('Failed to sign relay JWT of type "coddy-studio-relay-dpop-access+jwt".');
       expect(message).not.toContain("not-a-private-key");
     }).pipe(Effect.provide(invalidPrivateKeyLayer)),
   );

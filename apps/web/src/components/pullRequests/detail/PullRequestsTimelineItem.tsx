@@ -7,7 +7,7 @@ import type {
   PullRequestsPermissions,
   PullRequestsTimelineItem as TimelineItem,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { CheckIcon, CircleDotIcon, MessageSquareIcon, XIcon } from "lucide-react";
 import { memo, type ReactNode, useState } from "react";
 import { formatRelativeTimeLabel } from "../../../timestampFormat";

@@ -6,8 +6,8 @@ import type {
   GitManagerPullRequestsResult,
   SourceControlProviderInfo,
   SourceControlProviderKind,
-} from "@bibcode/contracts";
-import { formatChangeRequestNumber } from "@bibcode/shared/sourceControl";
+} from "@coddy/contracts";
+import { formatChangeRequestNumber } from "@coddy/shared/sourceControl";
 import { Link } from "@tanstack/react-router";
 import { capitalize } from "effect/String";
 import { CheckCircle2Icon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";

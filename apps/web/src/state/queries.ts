@@ -1,8 +1,8 @@
 import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
-} from "@bibcode/client-runtime/state/threads";
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/threads";
+import type { EnvironmentId, OrchestrationThread, ThreadId } from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { useEffect, useMemo, useState } from "react";
 

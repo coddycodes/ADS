@@ -9,11 +9,11 @@ settings_capture='__SETTINGS__'
 token_capture='__TOKEN__'
 session_capture='__SESSION_PATH__'
 ready_capture='__READY__'
-case "$capture" in __*__) capture="$PWD/.bibcode-claude-targeted-requests.ndjson";; esac
-case "$settings_capture" in __*__) settings_capture="$PWD/.bibcode-claude-targeted-settings.json";; esac
-case "$token_capture" in __*__) token_capture="$PWD/.bibcode-claude-targeted-token";; esac
-case "$session_capture" in __*__) session_capture="$PWD/.bibcode-claude-targeted-session";; esac
-case "$ready_capture" in __*__) ready_capture="$PWD/.bibcode-claude-targeted-ready";; esac
+case "$capture" in __*__) capture="$PWD/.coddy-studio-claude-targeted-requests.ndjson";; esac
+case "$settings_capture" in __*__) settings_capture="$PWD/.coddy-studio-claude-targeted-settings.json";; esac
+case "$token_capture" in __*__) token_capture="$PWD/.coddy-studio-claude-targeted-token";; esac
+case "$session_capture" in __*__) session_capture="$PWD/.coddy-studio-claude-targeted-session";; esac
+case "$ready_capture" in __*__) ready_capture="$PWD/.coddy-studio-claude-targeted-ready";; esac
 has_session=false
 for argument in "$@"; do
   case "$argument" in --session-id|--resume) has_session=true;; esac
@@ -40,7 +40,7 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-printf '%s' "$BIBCODE_CLAUDE_HOOK_TOKEN" > "$token_capture"
+printf '%s' "$CODDY_STUDIO_CLAUDE_HOOK_TOKEN" > "$token_capture"
 printf '%s' "$session_id" > "$session_capture"
 if [ -s "$settings_capture" ] && [ -s "$token_capture" ] && [ -s "$session_capture" ]; then
   : > "$ready_capture"

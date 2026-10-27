@@ -2,7 +2,7 @@
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const h = vi.hoisted(() => ({
@@ -180,7 +180,7 @@ describe("EnvironmentContextCard", () => {
     const markup = renderToStaticMarkup(<EnvironmentContextCard />);
     expect(markup).toContain("AI-SERVER");
     expect(markup).toContain("Connected");
-    expect(markup).toContain("BiBCode v0.4.2");
+    expect(markup).toContain("Coddy Studio v0.4.2");
   });
 
   it("disconnects through the latch and deep-links Manage", () => {
@@ -267,7 +267,7 @@ describe("EnvironmentContextCard", () => {
     expect(accessibleText(status)).toBe(NO_DATA_STATUS);
     // The version stays visible, on the badge row below the reason, so the
     // clamp can never hide it.
-    const version = statusLine(host, "BiBCode v0.6.2");
+    const version = statusLine(host, "Coddy Studio v0.6.2");
     expect(status.contains(version)).toBe(false);
     expect(version.closest(".flex-wrap")).not.toBeNull();
   });
@@ -313,7 +313,7 @@ describe("EnvironmentContextCard", () => {
     // At the narrowest sidebar the status wraps rather than clipping to "Co…".
     expect(status.className).toContain("line-clamp-3");
     expect(status.className).not.toContain("truncate");
-    expect(accessibleText(status)).toBe("Connected BiBCode v0.6.2");
+    expect(accessibleText(status)).toBe("Connected Coddy Studio v0.6.2");
     // Nothing is hidden, so there is nothing to reveal.
     expect(status.hasAttribute("tabindex")).toBe(false);
     expect(status.className).not.toContain("cursor-help");
@@ -333,7 +333,7 @@ describe("EnvironmentContextCard", () => {
 
     // The status text leaves a connected card's error out, so the card shows
     // the short status with its version and no tooltip or extra tab stop.
-    expect(accessibleText(status)).toBe("Connected BiBCode v0.6.2");
+    expect(accessibleText(status)).toBe("Connected Coddy Studio v0.6.2");
     expect(status.hasAttribute("tabindex")).toBe(false);
     expect(host.querySelector("[data-tooltip]")).toBeNull();
     expect(host.textContent).not.toContain("A stale failure from before.");

@@ -1,4 +1,4 @@
-import type { DesktopPreviewBridge } from "@bibcode/contracts";
+import type { DesktopPreviewBridge } from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { startBrowserSurfaceSync } from "./browserSurfaceSync";

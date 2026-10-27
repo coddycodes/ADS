@@ -1,4 +1,4 @@
-import type { PullRequestsContext, PullRequestsDetail, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsContext, PullRequestsDetail, ScopedProjectRef } from "@coddy/contracts";
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
 import { useRef, useState } from "react";

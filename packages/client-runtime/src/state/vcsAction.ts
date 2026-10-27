@@ -8,7 +8,7 @@ import {
   type GitRunStackedActionResult,
   GitStackedAction,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -93,7 +93,7 @@ export class VcsPullRequestCreateOptionsUnsupportedError extends Schema.TaggedEr
   { environmentId: EnvironmentId },
 ) {
   override get message(): string {
-    return "Update this environment's BiBCode server to set draft, people, labels or merge options when creating a request.";
+    return "Update this environment's Coddy Studio server to set draft, people, labels or merge options when creating a request.";
   }
 }
 
@@ -115,7 +115,7 @@ export class VcsPullRequestBranchSelectionUnsupportedError extends Schema.Tagged
   { environmentId: EnvironmentId },
 ) {
   override get message(): string {
-    return "Update this environment's BiBCode server before creating a pull or merge request with the selected source and target branches.";
+    return "Update this environment's Coddy Studio server before creating a pull or merge request with the selected source and target branches.";
   }
 }
 

@@ -1,4 +1,4 @@
-import type { VcsStatusResult } from "@bibcode/contracts";
+import type { VcsStatusResult } from "@coddy/contracts";
 
 import type { GitManagerTab } from "../../gitManagerStore";
 

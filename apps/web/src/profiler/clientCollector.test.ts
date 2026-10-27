@@ -11,7 +11,7 @@ function setVisibility(state: "visible" | "hidden"): void {
   document.dispatchEvent(new Event("visibilitychange"));
 }
 
-/** Whether BiBCode's window has focus; the page stays visible either way (#99). */
+/** Whether Coddy Studio's window has focus; the page stays visible either way (#99). */
 function setFocus(focused: boolean): void {
   vi.spyOn(document, "hasFocus").mockReturnValue(focused);
   window.dispatchEvent(new Event(focused ? "focus" : "blur"));

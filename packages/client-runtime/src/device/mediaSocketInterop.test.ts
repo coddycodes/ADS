@@ -1,8 +1,8 @@
 // Cross-language device media interop: the TypeScript media socket against the real Rust
 // server. Opt-in: requires a freshly built server binary.
 //
-//   cargo build -p bibcode-server
-//   BIBCODE_E2EE_SERVER_BIN=$PWD/target/debug/bibcode vp test run src/device/mediaSocketInterop.test.ts
+//   cargo build -p coddy-studio-server
+//   CODDY_STUDIO_E2EE_SERVER_BIN=$PWD/target/debug/coddy-studio vp test run src/device/mediaSocketInterop.test.ts
 //
 // No device runs here (the real runtime has no fake SDK), so streaming is verified natively.
 // What crosses the boundary is checked: the Noise handshake with the media prologue, the

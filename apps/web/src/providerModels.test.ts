@@ -3,8 +3,8 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
-} from "@bibcode/contracts";
-import { createModelCapabilities } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { createModelCapabilities } from "@coddy/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
 import { getProviderInteractionModeToggle, getProviderModelCapabilities } from "./providerModels";

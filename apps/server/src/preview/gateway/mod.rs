@@ -16,7 +16,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use capability::GatewayCapabilityClaims;
 
 /// Authority the gateway cookie carries: one previewed upstream port reached by one
-/// BiBCode principal for one thread.
+/// Coddy Studio principal for one thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatewaySession {
     pub gateway_port: u16,
@@ -24,7 +24,7 @@ pub struct GatewaySession {
     pub thread_id: String,
     pub principal_session_id: String,
     pub principal_expires_at_ms: u64,
-    /// The browser-mode BiBCode UI that frames this preview; only it may frame
+    /// The browser-mode Coddy Studio UI that frames this preview; only it may frame
     /// the gateway's responses for this session (see `frame::apply_frame_policy`).
     pub ui_origin: Option<String>,
 }
@@ -72,7 +72,7 @@ impl GatewaySessions {
         Some(session.clone())
     }
 
-    /// Drops every gateway session minted for BiBCode session `session_id`.
+    /// Drops every gateway session minted for Coddy Studio session `session_id`.
     pub fn remove_for_principal(&self, session_id: &str) {
         self.lock()
             .retain(|_, session| session.principal_session_id != session_id);

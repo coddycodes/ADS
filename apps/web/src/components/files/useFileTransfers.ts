@@ -12,8 +12,8 @@
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
-import type { EnvironmentId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/runtime";
+import type { EnvironmentId } from "@coddy/contracts";
 import type { ChangeEvent, RefObject } from "react";
 import { useCallback, useEffect, useRef } from "react";
 

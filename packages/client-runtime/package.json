@@ -1,5 +1,5 @@
 {
-  "name": "@bibcode/client-runtime",
+  "name": "@coddy/client-runtime",
   "private": true,
   "type": "module",
   "exports": {
@@ -165,8 +165,8 @@
     "test": "node ../../scripts/run-local-vp.mjs test run"
   },
   "dependencies": {
-    "@bibcode/contracts": "workspace:*",
-    "@bibcode/shared": "workspace:*",
+    "@coddy/contracts": "workspace:*",
+    "@coddy/shared": "workspace:*",
     "@noble/ciphers": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",

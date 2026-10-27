@@ -174,7 +174,7 @@ describe("AppSidebarLayout", () => {
     expect(style?.["--sidebar-width"]).toBe("500px");
     // Reads and clamps through the same bounds passed to the resizable
     // sidebar itself (`minWidth`, and no configured ceiling).
-    expect(readStoredSidebarWidthSpy).toHaveBeenCalledWith("bibcode:sidebar-width:v2", {
+    expect(readStoredSidebarWidthSpy).toHaveBeenCalledWith("coddy-studio:sidebar-width:v2", {
       minWidth: 260,
       maxWidth: Number.POSITIVE_INFINITY,
     });

@@ -1,4 +1,4 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@bibcode/contracts";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 

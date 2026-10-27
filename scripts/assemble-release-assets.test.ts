@@ -17,7 +17,7 @@ import {
 const temporaryRoots: string[] = [];
 
 function temporaryRoot(): string {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-release-assets-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-release-assets-"));
   temporaryRoots.push(root);
   return root;
 }
@@ -30,12 +30,12 @@ afterEach(() => {
 
 function writeCompleteFixture(root: string, version: string, updater: boolean): void {
   const desktop = [
-    `BiBCode_${version}_aarch64.dmg`,
-    `BiBCode_${version}_x64.dmg`,
-    `BiBCode_${version}_aarch64.AppImage`,
-    `BiBCode_${version}_amd64.AppImage`,
-    `BiBCode_${version}_arm64-setup.exe`,
-    `BiBCode_${version}_x64-setup.exe`,
+    `CoddyStudio_${version}_aarch64.dmg`,
+    `CoddyStudio_${version}_x64.dmg`,
+    `CoddyStudio_${version}_aarch64.AppImage`,
+    `CoddyStudio_${version}_amd64.AppImage`,
+    `CoddyStudio_${version}_arm64-setup.exe`,
+    `CoddyStudio_${version}_x64-setup.exe`,
   ];
   for (const name of [
     ...desktop,
@@ -55,14 +55,14 @@ function writeCompleteFixture(root: string, version: string, updater: boolean): 
       "windows-x86_64",
     ]) {
       const artifact = target.startsWith("darwin-")
-        ? `bibcode-update-${target}.app.tar.gz`
+        ? `coddy-studio-update-${target}.app.tar.gz`
         : target === "linux-aarch64"
-          ? `BiBCode_${version}_aarch64.AppImage`
+          ? `CoddyStudio_${version}_aarch64.AppImage`
           : target === "linux-x86_64"
-            ? `BiBCode_${version}_amd64.AppImage`
+            ? `CoddyStudio_${version}_amd64.AppImage`
             : target === "windows-aarch64"
-              ? `BiBCode_${version}_arm64-setup.exe`
-              : `BiBCode_${version}_x64-setup.exe`;
+              ? `CoddyStudio_${version}_arm64-setup.exe`
+              : `CoddyStudio_${version}_x64-setup.exe`;
       NodeFS.writeFileSync(
         NodePath.join(root, `updater-${target}.json`),
         `${JSON.stringify({ target, artifact, signature: `${artifact}.sig` })}\n`,
@@ -76,16 +76,16 @@ function writeCompleteFixture(root: string, version: string, updater: boolean): 
 describe("release asset assembly", () => {
   it("requires six archives and four Linux packages", () => {
     expect(expectedServerAssetNames("0.4.3")).toEqual([
-      "bibcode-server-v0.4.3-darwin-aarch64.tar.gz",
-      "bibcode-server-v0.4.3-darwin-x86_64.tar.gz",
-      "bibcode-server-v0.4.3-linux-aarch64.tar.gz",
-      "bibcode-server-v0.4.3-linux-x86_64.tar.gz",
-      "bibcode-server-v0.4.3-windows-aarch64.zip",
-      "bibcode-server-v0.4.3-windows-x86_64.zip",
-      "bibcode-server_0.4.3_amd64.deb",
-      "bibcode-server_0.4.3_arm64.deb",
-      "bibcode-server-0.4.3-1.aarch64.rpm",
-      "bibcode-server-0.4.3-1.x86_64.rpm",
+      "coddy-studio-server-v0.4.3-darwin-aarch64.tar.gz",
+      "coddy-studio-server-v0.4.3-darwin-x86_64.tar.gz",
+      "coddy-studio-server-v0.4.3-linux-aarch64.tar.gz",
+      "coddy-studio-server-v0.4.3-linux-x86_64.tar.gz",
+      "coddy-studio-server-v0.4.3-windows-aarch64.zip",
+      "coddy-studio-server-v0.4.3-windows-x86_64.zip",
+      "coddy-studio-server_0.4.3_amd64.deb",
+      "coddy-studio-server_0.4.3_arm64.deb",
+      "coddy-studio-server-0.4.3-1.aarch64.rpm",
+      "coddy-studio-server-0.4.3-1.x86_64.rpm",
     ]);
   });
 
@@ -101,7 +101,7 @@ describe("release asset assembly", () => {
         "windows-aarch64",
         "windows-x86_64",
       ]) {
-        expect(names).toContain(`bibcode-${family}-symbols-0.4.3-${key}.zip`);
+        expect(names).toContain(`coddy-studio-${family}-symbols-0.4.3-${key}.zip`);
       }
     }
   });
@@ -116,17 +116,17 @@ describe("release asset assembly", () => {
       updater: true,
     });
 
-    const checksumPath = NodePath.join(root, "bibcode-server-SHA256SUMS");
+    const checksumPath = NodePath.join(root, "coddy-studio-server-SHA256SUMS");
     const checksumLines = NodeFS.readFileSync(checksumPath, "utf8").trim().split("\n");
     expect(checksumLines).toHaveLength(10);
     const checksumNames = checksumLines.map((line) => line.slice(66));
     expect(checksumNames).toEqual(checksumNames.toSorted());
-    const firstName = "bibcode-server-0.4.3-1.aarch64.rpm";
+    const firstName = "coddy-studio-server-0.4.3-1.aarch64.rpm";
     const expectedHash = NodeCrypto.createHash("sha256").update(firstName).digest("hex");
     expect(checksumLines[0]).toBe(`${expectedHash}  ${firstName}`);
     expect(result.signed).toBe(false);
-    expect(result.publishedAssets).toContain("bibcode-desktop-symbols-0.4.3-linux-x86_64.zip");
-    expect(result.publishedAssets).toContain("bibcode-server-symbols-0.4.3-windows-aarch64.zip");
+    expect(result.publishedAssets).toContain("coddy-studio-desktop-symbols-0.4.3-linux-x86_64.zip");
+    expect(result.publishedAssets).toContain("coddy-studio-server-symbols-0.4.3-windows-aarch64.zip");
     expect(NodeFS.existsSync(NodePath.join(root, "latest.json"))).toBe(true);
     expect(NodeFS.readdirSync(root).some((name) => name.startsWith("updater-"))).toBe(false);
   });
@@ -134,7 +134,7 @@ describe("release asset assembly", () => {
   it("rejects missing server targets, unexpected files, and partial signing config", async () => {
     const root = temporaryRoot();
     writeCompleteFixture(root, "0.4.3", false);
-    NodeFS.rmSync(NodePath.join(root, "bibcode-server-v0.4.3-linux-aarch64.tar.gz"));
+    NodeFS.rmSync(NodePath.join(root, "coddy-studio-server-v0.4.3-linux-aarch64.tar.gz"));
     await expect(
       assembleReleaseAssets({ assetsDir: root, version: "0.4.3", updater: false }),
     ).rejects.toBeInstanceOf(ReleaseAssetAssemblyError);
@@ -153,19 +153,19 @@ describe("release asset assembly", () => {
 
     NodeFS.rmSync(NodePath.join(root, "stale.sig"));
     NodeFS.writeFileSync(
-      NodePath.join(root, "bibcode-desktop-symbols-0.4.3-linux-riscv64.zip"),
+      NodePath.join(root, "coddy-studio-desktop-symbols-0.4.3-linux-riscv64.zip"),
       "unknown target",
     );
     await expect(
       assembleReleaseAssets({ assetsDir: root, version: "0.4.3", updater: false }),
-    ).rejects.toThrow("Unexpected release asset bibcode-desktop-symbols-0.4.3-linux-riscv64.zip");
+    ).rejects.toThrow("Unexpected release asset coddy-studio-desktop-symbols-0.4.3-linux-riscv64.zip");
 
-    NodeFS.rmSync(NodePath.join(root, "bibcode-desktop-symbols-0.4.3-linux-riscv64.zip"));
-    NodeFS.rmSync(NodePath.join(root, "bibcode-server-symbols-0.4.3-darwin-x86_64.zip"));
+    NodeFS.rmSync(NodePath.join(root, "coddy-studio-desktop-symbols-0.4.3-linux-riscv64.zip"));
+    NodeFS.rmSync(NodePath.join(root, "coddy-studio-server-symbols-0.4.3-darwin-x86_64.zip"));
     await expect(
       assembleReleaseAssets({ assetsDir: root, version: "0.4.3", updater: false }),
     ).rejects.toThrow(
-      "Missing symbol release asset bibcode-server-symbols-0.4.3-darwin-x86_64.zip",
+      "Missing symbol release asset coddy-studio-server-symbols-0.4.3-darwin-x86_64.zip",
     );
 
     expect(() => serverSigningPlan({ privateKey: "/tmp/private", publicKey: undefined })).toThrow(

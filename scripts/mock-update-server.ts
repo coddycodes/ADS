@@ -20,7 +20,7 @@ export interface MockUpdateServerConfig {
   readonly rootRealPath: string;
 }
 
-export const MOCK_UPDATE_READY_PATH = "/.well-known/bibcode-updater-ready";
+export const MOCK_UPDATE_READY_PATH = "/.well-known/coddy-studio-updater-ready";
 export const MOCK_UPDATE_LOOPBACK_HOST = "127.0.0.1";
 
 export const makeResolveMockUpdateServerConfig = (scriptDirectory: string) =>
@@ -28,11 +28,11 @@ export const makeResolveMockUpdateServerConfig = (scriptDirectory: string) =>
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const config = yield* Config.all({
-      port: Config.Port("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.withDefault(3000)),
-      requestLogPath: Config.String("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG").pipe(
+      port: Config.Port("CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.withDefault(3000)),
+      requestLogPath: Config.String("CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG").pipe(
         Config.option,
       ),
-      root: Config.String("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT").pipe(
+      root: Config.String("CODDY_STUDIO_DESKTOP_MOCK_UPDATE_SERVER_ROOT").pipe(
         Config.withDefault("../release-mock"),
       ),
     });

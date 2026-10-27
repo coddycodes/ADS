@@ -84,7 +84,7 @@ pub fn resolve_data_root(request: DataRootRequest) -> Result<ResolvedDataRoot, D
             if request.home_dir.as_os_str().is_empty() {
                 return Err(DataRootError::HomeDirectoryUnavailable);
             }
-            request.home_dir.join(".bibcode")
+            request.home_dir.join(".coddy").join("studio")
         }
     };
 
@@ -175,13 +175,17 @@ mod tests {
         })
         .expect("resolve default root");
 
-        assert_eq!(resolved.requested, temp.path().join(".bibcode"));
+        assert_eq!(
+            resolved.requested,
+            temp.path().join(".coddy").join("studio")
+        );
         assert_eq!(
             resolved.effective,
             temp.path()
                 .canonicalize()
                 .expect("canonical home")
-                .join(".bibcode")
+                .join(".coddy")
+                .join("studio")
         );
     }
 
@@ -190,19 +194,19 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp home");
         let resolved = resolve_data_root(DataRootRequest {
             source: DataRootSource::Environment,
-            requested: Some(PathBuf::from("~/.bibcode")),
+            requested: Some(PathBuf::from("~/.coddy/studio")),
             home_dir: temp.path().to_path_buf(),
         })
         .expect("resolve home-relative root");
 
-        assert_eq!(resolved.requested, temp.path().join(".bibcode"));
+        assert_eq!(resolved.requested, temp.path().join(".coddy/studio"));
     }
 
     #[test]
     fn rejects_relative_explicit_roots() {
         let error = resolve_data_root(DataRootRequest {
             source: DataRootSource::Environment,
-            requested: Some(PathBuf::from("relative/.bibcode")),
+            requested: Some(PathBuf::from("relative/.coddy/studio")),
             home_dir: PathBuf::from("/home/alice"),
         })
         .expect_err("relative environment root must fail");

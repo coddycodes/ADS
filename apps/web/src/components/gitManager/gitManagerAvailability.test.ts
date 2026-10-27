@@ -2,9 +2,9 @@ import {
   AVAILABLE_CONNECTION_STATE,
   ConnectionTransientError,
   type SupervisorConnectionState,
-} from "@bibcode/client-runtime/connection";
-import type { ServerConfig } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/client-runtime/connection";
+import type { ServerConfig } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

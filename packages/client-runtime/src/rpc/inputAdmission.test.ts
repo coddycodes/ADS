@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
-import { WS_METHODS } from "@bibcode/contracts";
+import { WS_METHODS } from "@coddy/contracts";
 import type { WsRpcProtocolClient } from "./protocol.ts";
 import { TerminalInputAdmissionSignal, withInputAdmission } from "./inputAdmission.ts";
 

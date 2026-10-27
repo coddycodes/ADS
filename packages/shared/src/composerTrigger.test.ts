@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
-  parseStandaloneComposerBiBCodeAction,
+  parseStandaloneComposerCoddyStudioAction,
   replaceTextRange,
   serializeComposerFileLink,
   serializeComposerMentionPath,
@@ -65,7 +65,7 @@ describe("detectComposerTrigger", () => {
   };
 
   it.each([
-    [":mod", "bibcode-action"],
+    [":mod", "coddy-studio-action"],
     ["/rev", "provider-slash"],
     ["use $ref", "provider-dollar-skill"],
     ["open @src", "provider-reference"],
@@ -78,12 +78,12 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger("/review", 7, profile)).toBeNull();
     expect(detectComposerTrigger("$review", 7, profile)).toBeNull();
     expect(detectComposerTrigger("@src", 4, profile)?.kind).toBe("provider-reference");
-    expect(detectComposerTrigger(":plan", 5, profile)?.kind).toBe("bibcode-action");
+    expect(detectComposerTrigger(":plan", 5, profile)?.kind).toBe("coddy-studio-action");
   });
 
   it("detects colon and slash triggers only as the current line's single token", () => {
     expect(detectComposerTrigger(":plan", 5, allCapabilities)).toEqual({
-      kind: "bibcode-action",
+      kind: "coddy-studio-action",
       query: "plan",
       rangeStart: 0,
       rangeEnd: 5,
@@ -102,7 +102,7 @@ describe("detectComposerTrigger", () => {
 
   it("supports line-start triggers after newlines", () => {
     expect(detectComposerTrigger("prefix\n:plan", 12, allCapabilities)).toMatchObject({
-      kind: "bibcode-action",
+      kind: "coddy-studio-action",
       rangeStart: 7,
       rangeEnd: 12,
     });
@@ -164,17 +164,17 @@ describe("detectComposerTrigger", () => {
   });
 });
 
-describe("parseStandaloneComposerBiBCodeAction", () => {
+describe("parseStandaloneComposerCoddyStudioAction", () => {
   it("parses standalone actions case-insensitively", () => {
-    expect(parseStandaloneComposerBiBCodeAction("  :MODEL  ")).toBe("model");
-    expect(parseStandaloneComposerBiBCodeAction(":PLAN")).toBe("plan");
-    expect(parseStandaloneComposerBiBCodeAction(":Default\n")).toBe("default");
+    expect(parseStandaloneComposerCoddyStudioAction("  :MODEL  ")).toBe("model");
+    expect(parseStandaloneComposerCoddyStudioAction(":PLAN")).toBe("plan");
+    expect(parseStandaloneComposerCoddyStudioAction(":Default\n")).toBe("default");
   });
 
   it("rejects arguments and unrelated text", () => {
-    expect(parseStandaloneComposerBiBCodeAction(":plan now")).toBeNull();
-    expect(parseStandaloneComposerBiBCodeAction("/plan")).toBeNull();
-    expect(parseStandaloneComposerBiBCodeAction("plan")).toBeNull();
+    expect(parseStandaloneComposerCoddyStudioAction(":plan now")).toBeNull();
+    expect(parseStandaloneComposerCoddyStudioAction("/plan")).toBeNull();
+    expect(parseStandaloneComposerCoddyStudioAction("plan")).toBeNull();
   });
 });
 

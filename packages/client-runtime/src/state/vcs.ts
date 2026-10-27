@@ -4,8 +4,8 @@ import {
   type VcsStatusStreamEvent,
   type VcsStatusSummary,
   WS_METHODS,
-} from "@bibcode/contracts";
-import { applyGitStatusStreamEvent } from "@bibcode/shared/git";
+} from "@coddy/contracts";
+import { applyGitStatusStreamEvent } from "@coddy/shared/git";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";

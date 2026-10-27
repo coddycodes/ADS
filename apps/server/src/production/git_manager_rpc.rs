@@ -214,7 +214,7 @@ impl ConfiguredGitManagerRpcServices {
                             operation: operation.to_owned(),
                             code: code.to_owned(),
                             message:
-                                "The selected checkout is not owned by exactly one BiBCode project."
+                                "The selected checkout is not owned by exactly one Coddy Studio project."
                                     .to_owned(),
                             blocked: None,
                             outputs: Vec::new(),
@@ -748,7 +748,7 @@ impl ConfiguredGitManagerRpcServices {
                     operation_error(
                         operation,
                         code,
-                        "The selected checkout is not owned by exactly one BiBCode project.",
+                        "The selected checkout is not owned by exactly one Coddy Studio project.",
                     )
                 })?;
             if requested_project_id

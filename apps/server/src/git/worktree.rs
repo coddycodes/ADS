@@ -12,8 +12,8 @@ use crate::crypto::sha256_hex;
 use super::GitWorktreeRecord;
 
 const MAX_WORKTREE_RECORDS: usize = 512;
-const WORKTREE_KEY_VERSION: &str = "bibcode.worktree.v1";
-const WORKTREE_PRUNE_IMPACT_VERSION: &str = "bibcode.worktree-prune-impact.v2";
+const WORKTREE_KEY_VERSION: &str = "coddy-studio.worktree.v1";
+const WORKTREE_PRUNE_IMPACT_VERSION: &str = "coddy-studio.worktree-prune-impact.v2";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HostPathPlatform {

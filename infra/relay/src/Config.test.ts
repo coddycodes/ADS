@@ -8,7 +8,7 @@ const configuration = {
   relayIssuer: "https://relay.example.test",
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "bibcode-relay",
+  clerkJwtAudience: "coddy-studio-relay",
   cloudMintPrivateKey: Redacted.make("private-key"),
   cloudMintPublicKey: "public-key",
   managedEndpointBaseDomain: undefined,

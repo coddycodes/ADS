@@ -1972,7 +1972,7 @@ async fn fingerprint_focus_fleet_reconciles_every_five_minutes_for_thirty_minute
 
     run_git(
         &primary_paths[0],
-        &["config", "bibcode.fingerprint", "changed"],
+        &["config", "coddy-studio.fingerprint", "changed"],
     );
     tokio::time::advance(Duration::from_secs(1)).await;
     service
@@ -4113,8 +4113,8 @@ fn test_repository_fixture() -> (TempDir, PathBuf, PathBuf) {
     std::fs::create_dir(&primary).expect("fingerprint primary directory");
     for arguments in [
         vec!["init", "--initial-branch=main"],
-        vec!["config", "user.name", "BiBCode Test"],
-        vec!["config", "user.email", "bibcode-test@example.invalid"],
+        vec!["config", "user.name", "Coddy Studio Test"],
+        vec!["config", "user.email", "coddy-studio-test@example.invalid"],
     ] {
         let output = Command::new("git")
             .args(arguments)

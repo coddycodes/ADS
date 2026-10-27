@@ -1,4 +1,4 @@
-//! The profiler's process sampler. Every 5 s it refreshes only BiBCode's own processes on a
+//! The profiler's process sampler. Every 5 s it refreshes only Coddy Studio's own processes on a
 //! blocking thread and reads each one's private memory. Each process's samples become
 //! 1-minute medians: they feed the leak and CPU rules, and are written once a minute, with
 //! the minute's maxima, as a `process.sample` event.
@@ -281,7 +281,7 @@ impl Sampler {
                 .into_iter()
                 .filter_map(|(pid, parent)| {
                     let record = NativeProcessSampler::process_record(pid.as_u32()).ok()?;
-                    // A pid reused since the scan has another parent, unless BiBCode started
+                    // A pid reused since the scan has another parent, unless Coddy Studio started
                     // that process too.
                     (record.ppid == parent.as_u32()).then_some((pid, record.identity))
                 })
@@ -587,7 +587,7 @@ impl ProcessMinute {
         format!("{}:{}", self.kind, self.label)
     }
 
-    /// Leak and CPU findings, for BiBCode's own processes only: what runs under a terminal
+    /// Leak and CPU findings, for Coddy Studio's own processes only: what runs under a terminal
     /// (a build, a language server) is the user's, sampled but never reported.
     fn record_findings(&self) {
         for finding in self.findings() {
@@ -688,7 +688,7 @@ fn cpu_finding(process: &ProcessMinute) -> FindingInput {
     }
 }
 
-/// BiBCode's descendants, each with the parent it was found under, from a full process
+/// Coddy Studio's descendants, each with the parent it was found under, from a full process
 /// scan, the nearest kept when there are too many. The scan uses its own `System`, dropped at once: sysinfo keeps a
 /// file open for every process it knows, and the long-lived one should know only the
 /// tracked few.
@@ -756,7 +756,7 @@ fn exe_kind(name: &str, own_exe: Option<&str>) -> &'static str {
     }
 }
 
-/// Whether a process of `kind` is BiBCode's own, whose leaks and CPU are findings: the server
+/// Whether a process of `kind` is Coddy Studio's own, whose leaks and CPU are findings: the server
 /// or desktop host, its webview, providers and helpers. Terminals, git and other descendants
 /// run the user's work.
 fn raises_findings(kind: &str) -> bool {
@@ -906,15 +906,21 @@ mod tests {
         assert_eq!(exe_kind("git.exe", None), "git");
         assert_eq!(exe_kind("node", None), "other");
         // Our own executable as a descendant is the crash monitor.
-        assert_eq!(exe_kind("bibcode", Some("bibcode")), "helper");
-        assert_eq!(exe_kind("BiBCode.exe", Some("bibcode.exe")), "helper");
-        assert_eq!(exe_kind("bibcode", Some("bibcode-desktop")), "other");
+        assert_eq!(exe_kind("coddy-studio", Some("coddy-studio")), "helper");
+        assert_eq!(
+            exe_kind("Coddy Studio.exe", Some("coddy-studio.exe")),
+            "helper"
+        );
+        assert_eq!(
+            exe_kind("coddy-studio", Some("coddy-studio-desktop")),
+            "other"
+        );
     }
 
-    /// Only BiBCode's own processes raise leak and CPU findings; what runs under a terminal is
+    /// Only Coddy Studio's own processes raise leak and CPU findings; what runs under a terminal is
     /// sampled, never reported.
     #[test]
-    fn only_bibcode_processes_raise_findings() {
+    fn only_coddy_studio_processes_raise_findings() {
         for kind in [
             "server",
             "desktop-host",
@@ -1119,7 +1125,7 @@ mod tests {
     }
 
     /// #104: on macOS the WebKit process that runs the UI is an XPC service under launchd,
-    /// outside BiBCode's tree. The UI processes process diagnostics observed are sampled as
+    /// outside Coddy Studio's tree. The UI processes process diagnostics observed are sampled as
     /// `webview` all the same.
     #[cfg(unix)]
     #[test]

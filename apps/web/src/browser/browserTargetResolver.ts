@@ -2,8 +2,8 @@ import type {
   BrowserNavigationTarget,
   EnvironmentId,
   PreviewUrlResolution,
-} from "@bibcode/contracts";
-import { normalizePreviewUrl } from "@bibcode/shared/preview";
+} from "@coddy/contracts";
+import { normalizePreviewUrl } from "@coddy/shared/preview";
 
 import { canFrameGatewayPreviews } from "~/components/preview/previewBridge";
 import { readPreparedConnection } from "~/state/session";
@@ -74,7 +74,7 @@ export type PreviewTargetResolution =
    * gateway. `url` is canonical (`http://localhost:<port>/…`; a same-host
    * environment framed in browser mode keeps its loopback as a direct open
    * would): it is what shared preview state stores, and each client resolves it
-   * for its own webview. Over BiBCode Connect the server names the preview
+   * for its own webview. Over Coddy Connect the server names the preview
    * hostname to bootstrap on.
    */
   | {

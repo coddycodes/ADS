@@ -1,10 +1,10 @@
 # Keybindings
 
-BiBCode reads production keybindings from:
+Coddy Studio reads production keybindings from:
 
-- `~/.bibcode/userdata/keybindings.json`
+- `~/.coddy/studio/userdata/keybindings.json`
 
-When `--base-dir` or `BIBCODE_HOME` changes the server base directory, the path
+When `--base-dir` or `CODDY_STUDIO_HOME` changes the server base directory, the path
 is `<base-dir>/userdata/keybindings.json`. A server launched with a development
 URL uses `<base-dir>/dev/keybindings.json` instead. The safest way to find the
 active file is **Settings → Keybindings → Open keybindings.json**, which uses the
@@ -54,7 +54,7 @@ The fixed defaults are:
 ]
 ```
 
-BiBCode also generates these numbered defaults:
+Coddy Studio also generates these numbered defaults:
 
 - `mod+1` through `mod+9` run `thread.jump.1` through `thread.jump.9`.
 - While the model picker is open, the same keys run `modelPicker.jump.1` through

@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as HttpApiError from "effect/http-api/HttpApiError";
 import { lt } from "drizzle-orm";
 
-import { verifyDpopProof } from "@bibcode/shared/dpop";
+import { verifyDpopProof } from "@coddy/shared/dpop";
 import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 
@@ -45,7 +45,7 @@ export class DpopProofReplay extends Context.Service<
     }) => Effect.Effect<boolean, DpopProofReplayPersistenceError>;
     readonly pruneExpired: Effect.Effect<void, DpopProofReplayPersistenceError>;
   }
->()("bibcode-relay/auth/DpopProofs/DpopProofReplay") {}
+>()("coddy-studio-relay/auth/DpopProofs/DpopProofReplay") {}
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;

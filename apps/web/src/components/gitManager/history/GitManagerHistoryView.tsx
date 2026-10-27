@@ -1,12 +1,12 @@
-import { projectKey } from "@bibcode/client-runtime/state/entities";
+import { projectKey } from "@coddy/client-runtime/state/entities";
 import type {
   ContextMenuItem,
   GitManagerBlockedReason,
   GitManagerCommitEntry,
   GitManagerCommitPage,
   ScopedProjectRef,
-} from "@bibcode/contracts";
-import { GitManagerOperationError } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import { GitManagerOperationError } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";

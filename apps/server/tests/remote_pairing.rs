@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use bibcode_server::auth_pairing_code::{
+use coddy_studio_server::auth_pairing_code::{
     PairingCodeError, REMOTE_PAIRING_CODE_VERSION, RemotePairingCodePayload, RemotePairingReach,
     browser_pair_url, decode_pairing_code, encode_pairing_code, pairing_deep_link,
 };
@@ -54,7 +54,7 @@ fn unsupported_version_is_classified_distinctly() {
 
 #[test]
 fn deep_link_and_browser_url_shapes_are_stable() {
-    assert_eq!(pairing_deep_link("abc"), "bibcode://pair?code=abc");
+    assert_eq!(pairing_deep_link("abc"), "coddy-studio://pair?code=abc");
     assert_eq!(
         browser_pair_url("http://192.168.1.20:3773", "abc").expect("browser url"),
         "http://192.168.1.20:3773/pair?code=abc"

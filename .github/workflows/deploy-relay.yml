@@ -1,4 +1,4 @@
-name: Deploy BiBCode Connect relay
+name: Deploy Coddy Connect relay
 
 on:
   push:
@@ -50,7 +50,7 @@ jobs:
 
       - name: Deploy production relay stage
         id: deploy
-        run: vp run --filter bibcode-relay deploy --stage prod --yes --github-output
+        run: vp run --filter coddy-studio-relay deploy --stage prod --yes --github-output
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}

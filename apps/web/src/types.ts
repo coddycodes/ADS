@@ -12,12 +12,12 @@ import type {
   RuntimeMode,
   TurnDelivery as ContractTurnDelivery,
   TurnDeliveryResolutionAction as ContractTurnDeliveryResolutionAction,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
-} from "@bibcode/client-runtime/state/shell";
+} from "@coddy/client-runtime/state/shell";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";

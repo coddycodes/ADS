@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
-import { AVAILABLE_CONNECTION_STATE } from "@bibcode/client-runtime/connection";
-import type { GitManagerRefsSnapshot, ScopedProjectRef } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { AVAILABLE_CONNECTION_STATE } from "@coddy/client-runtime/connection";
+import type { GitManagerRefsSnapshot, ScopedProjectRef } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

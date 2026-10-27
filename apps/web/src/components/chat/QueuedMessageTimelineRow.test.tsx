@@ -1,9 +1,9 @@
-import { ProviderDriverKind } from "@bibcode/contracts";
+import { ProviderDriverKind } from "@coddy/contracts";
 // @vitest-environment happy-dom
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { MessageId, type ChatAttachmentId } from "@bibcode/contracts";
+import { MessageId, type ChatAttachmentId } from "@coddy/contracts";
 import { TooltipProvider } from "../ui/tooltip";
 import { QueuedMessageTimelineRow } from "./QueuedMessageTimelineRow";
 

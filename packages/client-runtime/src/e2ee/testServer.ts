@@ -1,5 +1,5 @@
-// Test-only: runs a real `bibcode serve` for the opt-in cross-language suites. Absent from the
-// package exports; set BIBCODE_E2EE_SERVER_BIN to a freshly built server binary to enable them.
+// Test-only: runs a real `coddy-studio serve` for the opt-in cross-language suites. Absent from the
+// package exports; set CODDY_STUDIO_E2EE_SERVER_BIN to a freshly built server binary to enable them.
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off - The process harness owns bounded watchdogs.
 import * as NodeChildProcess from "node:child_process";
@@ -10,7 +10,7 @@ import * as NodeReadline from "node:readline";
 
 import { expect } from "@effect/vitest";
 
-export const serverBinary = process.env["BIBCODE_E2EE_SERVER_BIN"];
+export const serverBinary = process.env["CODDY_STUDIO_E2EE_SERVER_BIN"];
 export interface RunningServer {
   process: NodeChildProcess.ChildProcess;
   httpBaseUrl: string;
@@ -25,7 +25,7 @@ export interface StartServerOptions {
 }
 
 export async function startServer(options: StartServerOptions = {}): Promise<RunningServer> {
-  const dataRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-e2ee-"));
+  const dataRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-e2ee-"));
   if (options.settings !== undefined) {
     // `serve --base-dir` keeps its state, settings included, under `userdata/`.
     const stateDir = NodePath.join(dataRoot, "userdata");

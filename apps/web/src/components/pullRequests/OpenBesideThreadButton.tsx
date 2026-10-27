@@ -1,4 +1,4 @@
-import type { ScopedProjectRef, SourceControlProviderKind } from "@bibcode/contracts";
+import type { ScopedProjectRef, SourceControlProviderKind } from "@coddy/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 

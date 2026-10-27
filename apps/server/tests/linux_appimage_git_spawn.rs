@@ -13,10 +13,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_server::git::{
+use coddy_studio_server::git::{
     GitRepository, OutputPolicy, ProcessRequest, ProcessRunner, manager::refs::build_refs_snapshot,
 };
-use bibcode_server::process::ProcessRunInput;
+use coddy_studio_server::process::ProcessRunInput;
 use tokio_util::sync::CancellationToken;
 
 #[path = "support/executable_fixture.rs"]
@@ -34,7 +34,7 @@ use isolated_git_config::IsolatedGitConfig;
 const GIT_RUNNER_TEST: &str = "git_runner_children_do_not_copy_the_server";
 const GENERIC_RUNNER_TEST: &str = "generic_runner_children_do_not_copy_the_server";
 const BENCH_TEST: &str = "refs_snapshot_timing_by_host_size";
-const PROBE: &str = "bibcode-spawn-probe";
+const PROBE: &str = "coddy-studio-spawn-probe";
 
 /// Re-executes `test` with the environment an AppImage launch gives the server, and a
 /// bare-named probe executable on its `PATH`.
@@ -115,7 +115,7 @@ fn generic_runner_children_do_not_copy_the_server() {
             "PATH".to_owned(),
             std::env::var("PATH").expect("isolated PATH"),
         )]));
-        let output = bibcode_server::process::ProcessRunner
+        let output = coddy_studio_server::process::ProcessRunner
             .run(input)
             .await
             .expect("probe runs through the generic runner");
@@ -123,9 +123,9 @@ fn generic_runner_children_do_not_copy_the_server() {
     });
 }
 
-/// `cargo test -p bibcode-server --test linux_appimage_git_spawn -- --ignored --nocapture`
+/// `cargo test -p coddy-studio-server --test linux_appimage_git_spawn -- --ignored --nocapture`
 /// prints the median `build_refs_snapshot` time with an idle host and with a host that
-/// holds `BIBCODE_BENCH_HEAP_GIB` (default 4) GiB of touched heap.
+/// holds `CODDY_STUDIO_BENCH_HEAP_GIB` (default 4) GiB of touched heap.
 #[test]
 #[ignore = "benchmark"]
 fn refs_snapshot_timing_by_host_size() {
@@ -135,7 +135,7 @@ fn refs_snapshot_timing_by_host_size() {
         return;
     }
     if let Some(child) = reexec::enter(BENCH_TEST, "large") {
-        let gib = std::env::var("BIBCODE_BENCH_HEAP_GIB")
+        let gib = std::env::var("CODDY_STUDIO_BENCH_HEAP_GIB")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(4);
@@ -152,8 +152,8 @@ fn refs_snapshot_timing_by_host_size() {
             config.apply_to_command(command);
             command
                 .arg("--include-ignored")
-                .env("BIBCODE_BENCH_REPOSITORY", repository.path())
-                .env("BIBCODE_BENCH_RESULTS", &results);
+                .env("CODDY_STUDIO_BENCH_REPOSITORY", repository.path())
+                .env("CODDY_STUDIO_BENCH_RESULTS", &results);
         });
     }
     print!(
@@ -225,7 +225,7 @@ fn print_refs_timing(heap_gib: usize) {
         heap.push(vec![1_u8; 1 << 20]);
     }
     let repository = PathBuf::from(
-        std::env::var_os("BIBCODE_BENCH_REPOSITORY").expect("repository fixture path"),
+        std::env::var_os("CODDY_STUDIO_BENCH_REPOSITORY").expect("repository fixture path"),
     );
     let mut samples = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -251,7 +251,7 @@ fn print_refs_timing(heap_gib: usize) {
         samples[0],
         samples[samples.len() - 1],
     );
-    let results = std::env::var_os("BIBCODE_BENCH_RESULTS").expect("benchmark results path");
+    let results = std::env::var_os("CODDY_STUDIO_BENCH_RESULTS").expect("benchmark results path");
     let mut existing = fs::read_to_string(&results).unwrap_or_default();
     existing.push_str(&line);
     fs::write(results, existing).expect("benchmark results");

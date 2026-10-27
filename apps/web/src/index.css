@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @font-face {
-  font-family: "BiBCode JetBrainsMono Nerd Font Mono";
+  font-family: "Coddy Studio JetBrainsMono Nerd Font Mono";
   src: url("./assets/fonts/jetbrains-mono-nerd-font/JetBrainsMonoNerdFontMono-Regular.woff2")
     format("woff2");
   font-style: normal;

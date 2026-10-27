@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::diagnostics::{
+use coddy_studio_server::diagnostics::{
     DesktopUiObservation, DesktopUiProcessObserver, ProcessIdentity, ProcessRow, UiCoverage,
     UiCoverageStatus,
 };
@@ -433,7 +433,7 @@ fn command_matches_role(command: &str, role: WebKitProcessRole) -> bool {
 mod tests {
     use std::{cell::RefCell, collections::HashMap};
 
-    use bibcode_server::diagnostics::{ProcessIdentity, ProcessRow, UiCoverageStatus};
+    use coddy_studio_server::diagnostics::{ProcessIdentity, ProcessRow, UiCoverageStatus};
 
     use super::{
         CoalitionIds, MacosObservationIssue, WebKitPidCollection, WebKitProcessCandidate,
@@ -458,7 +458,7 @@ mod tests {
         row(
             SERVER_PID,
             SERVER_STARTED_AT,
-            "/Applications/BiBCode.app/Contents/MacOS/BiBCode",
+            "/Applications/Coddy Studio.app/Contents/MacOS/Coddy Studio",
         )
     }
 
@@ -533,7 +533,7 @@ XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebC
         rows: &[ProcessRow],
         collection: WebKitPidCollection,
         coalitions: HashMap<u32, Result<CoalitionIds, ()>>,
-    ) -> bibcode_server::diagnostics::DesktopUiObservation {
+    ) -> coddy_studio_server::diagnostics::DesktopUiObservation {
         build_observation_with(rows, server_identity(), collection, |pid| {
             coalitions.get(&pid).copied().unwrap_or(Err(()))
         })

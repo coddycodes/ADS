@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 
 import { RemoteDirectoryBrowser } from "../RemoteDirectoryBrowser";
 import { Dialog, DialogDescription, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
@@ -23,7 +23,7 @@ export function RemoteDirectoryPickerDialog({
       <DialogPopup className="max-w-xl">
         <DialogHeader className="pb-4">
           <DialogTitle>Select Workspace folder</DialogTitle>
-          <DialogDescription>Browse directories on the selected BiBCode host.</DialogDescription>
+          <DialogDescription>Browse directories on the selected Coddy Studio host.</DialogDescription>
         </DialogHeader>
         <div className="px-6 pb-5">
           <RemoteDirectoryBrowser

@@ -1,4 +1,4 @@
-import type { AtomCommand } from "@bibcode/client-runtime/state/runtime";
+import type { AtomCommand } from "@coddy/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback } from "react";

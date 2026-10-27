@@ -9,7 +9,7 @@ import {
   type ProviderSessionDefault,
   type SelectProviderOptionDescriptor,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import {
   buildProviderOptionSelectionsFromDescriptors,

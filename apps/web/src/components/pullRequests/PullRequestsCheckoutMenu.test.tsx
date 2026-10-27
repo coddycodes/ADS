@@ -7,10 +7,10 @@ import type {
   PullRequestsCheckoutResult,
   PullRequestsPermission,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { MutationsDisabledContext } from "../ui/mutationAvailability";
 import { PullRequestsActionsContext } from "./usePullRequestsAction";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
+import { projectKey } from "@coddy/client-runtime/state/entities";
 import { useGitManagerStore } from "../../gitManagerStore";
 const h = vi.hoisted(() => ({
   command: vi.fn(),

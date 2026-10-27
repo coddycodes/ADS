@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@bibcode/contracts";
+import type { EnvironmentId } from "@coddy/contracts";
 import { useCallback, useEffect, useEffectEvent, useMemo } from "react";
 import { pullRequestsEnvironment } from "../../state/pullRequests";
 import { useEnvironmentQuery } from "../../state/query";

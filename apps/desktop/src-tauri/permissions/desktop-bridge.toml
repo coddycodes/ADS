@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "allow-desktop-bridge"
-description = "Allows the local BiBCode React shell to use the Rust desktop bridge command surface."
+description = "Allows the local Coddy Studio React shell to use the Rust desktop bridge command surface."
 commands.allow = [
   "desktop_bridge_get_bridge_metadata",
   "desktop_bridge_get_app_branding",

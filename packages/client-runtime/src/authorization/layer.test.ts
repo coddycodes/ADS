@@ -2,14 +2,14 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
@@ -142,7 +142,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
           ClientCapabilities.ClientPresentation,
           ClientCapabilities.ClientPresentation.of({
             metadata: {
-              label: "BiBCode Test",
+              label: "Coddy Studio Test",
               deviceType: "desktop",
               os: "test",
             },
@@ -228,7 +228,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(authorized.httpAuthorization).toBeNull();
       expect(harness.fetch.calls).toHaveLength(1);
       expect(String(harness.fetch.calls[0]?.[0])).toBe(
-        "https://environment.example.test/.well-known/bibcode/environment",
+        "https://environment.example.test/.well-known/coddy-studio/environment",
       );
     }),
   );
@@ -307,13 +307,13 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
       expect(harness.fetch.calls).toHaveLength(4);
       expect(String(harness.fetch.calls[0]?.[0])).toBe(
-        "https://environment.example.test/.well-known/bibcode/environment",
+        "https://environment.example.test/.well-known/coddy-studio/environment",
       );
       expect(String(harness.fetch.calls[1]?.[0])).toBe(
         "https://environment.example.test/api/auth/websocket-ticket",
       );
       expect(String(harness.fetch.calls[2]?.[0])).toBe(
-        "https://environment.example.test/.well-known/bibcode/environment",
+        "https://environment.example.test/.well-known/coddy-studio/environment",
       );
     }),
   );

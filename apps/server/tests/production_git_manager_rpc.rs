@@ -10,7 +10,7 @@ use std::{
 };
 
 use base64::Engine;
-use bibcode_server::{
+use coddy_studio_server::{
     CauseItem, RequestId, RpcExit, RpcRegistry, RpcRequest, ServerConfig, ServerHandle,
     ServerMessage, ServerRuntime,
     git::{GitRepository, MAX_DIFF_BUFFER_SIZE, NativeFileTrash, StatusBroadcaster},
@@ -435,7 +435,7 @@ struct GitHubProviderStub {
 #[cfg(unix)]
 impl GitHubProviderStub {
     fn install(fixture: &Fixture, checks_stdout: &str, checks_exit: u8) -> Self {
-        use bibcode_server::source_control::PullRequestService;
+        use coddy_studio_server::source_control::PullRequestService;
 
         git(
             &fixture.repository_path,
@@ -2577,7 +2577,7 @@ async fn remote_tags_read_lists_tags_on_the_remote_and_reports_an_unavailable_re
             "remote",
             "add",
             "elsewhere",
-            "/nonexistent/bibcode-missing-remote.git",
+            "/nonexistent/coddy-studio-missing-remote.git",
         ],
     );
     let unavailable = fixture
@@ -2727,7 +2727,7 @@ async fn tag_create_can_push_the_new_tag_to_a_remote() {
             "remote",
             "add",
             "elsewhere",
-            "/nonexistent/bibcode-missing-remote.git",
+            "/nonexistent/coddy-studio-missing-remote.git",
         ],
     );
     let failed = collect_events(fixture.operation(

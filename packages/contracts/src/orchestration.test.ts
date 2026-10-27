@@ -975,7 +975,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
         prepareWorktree: {
           projectCwd: "/tmp/workspace",
           baseBranch: "main",
-          branch: "bibcode/example",
+          branch: "coddy-studio/example",
           startFromOrigin: true,
         },
         runSetupScript: true,
@@ -1327,7 +1327,7 @@ it.effect("preserves intentional session stops in persisted snapshots", () =>
       status: "error",
       providerName: "codex",
       activeTurnId: null,
-      lastError: "Provider session ended when BiBCode stopped.",
+      lastError: "Provider session ended when Coddy Studio stopped.",
       lastErrorClass: "session_stopped",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });

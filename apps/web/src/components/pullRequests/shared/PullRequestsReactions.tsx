@@ -1,4 +1,4 @@
-import type { PullRequestsPermission, PullRequestsReactionSummary } from "@bibcode/contracts";
+import type { PullRequestsPermission, PullRequestsReactionSummary } from "@coddy/contracts";
 import { memo, useRef, useState } from "react";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../ui/menu";
 import { PermissionButton, constrainPermission } from "../../ui/permission-button";

@@ -1,4 +1,4 @@
-import type { DesktopPreviewBridge } from "@bibcode/contracts";
+import type { DesktopPreviewBridge } from "@coddy/contracts";
 
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 

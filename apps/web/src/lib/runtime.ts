@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
-import { remoteHttpClientLayer } from "@bibcode/client-runtime/rpc";
+import { remoteHttpClientLayer } from "@coddy/client-runtime/rpc";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import { tauriDesktopBridgeReady } from "../tauriDesktopBridge";

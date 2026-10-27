@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BiBCode",
+  "productName": "Coddy Studio",
   "version": "../package.json",
-  "identifier": "com.bibcode.desktop",
+  "identifier": "com.coddy.studio.desktop",
   "build": {
     "beforeDevCommand": "node ../../scripts/dev-runner.ts dev",
-    "beforeBuildCommand": "node ../../scripts/prepare-tauri-appimage-tools.ts && vp run --filter @bibcode/web build && node ../../scripts/apply-web-brand-assets.ts production apps/web/dist",
+    "beforeBuildCommand": "node ../../scripts/prepare-tauri-appimage-tools.ts && vp run --filter @coddy/web build && node ../../scripts/apply-web-brand-assets.ts production apps/web/dist",
     "devUrl": "http://localhost:5733",
     "frontendDist": "../../web/dist"
   },
@@ -15,7 +15,7 @@
       {
         "label": "main",
         "create": false,
-        "title": "BiBCode",
+        "title": "Coddy Studio",
         "width": 1280,
         "height": 900,
         "minWidth": 960,
@@ -36,7 +36,7 @@
     },
     "deep-link": {
       "desktop": {
-        "schemes": ["bibcode"]
+        "schemes": ["coddy-studio"]
       }
     }
   },
@@ -48,9 +48,9 @@
       "signingIdentity": "-"
     },
     "icon": [
-      "../../../assets/prod/black-universal-1024.png",
-      "../../../assets/prod/bibcode-black-windows.ico",
-      "../../../assets/prod/bibcode-black-macos.icns"
+      "../../../assets/prod/coddy-studio-universal-1024.png",
+      "../../../assets/prod/coddy-studio-windows.ico",
+      "../../../assets/prod/coddy-studio-macos.icns"
     ]
   }
 }

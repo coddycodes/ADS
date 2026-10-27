@@ -15,10 +15,10 @@ pub const HOP_BY_HOP: &[&str] = &[
     "upgrade",
 ];
 
-const GATEWAY_COOKIE_PREFIX: &str = "bibcode-gw-";
-/// Prefix of every BiBCode session cookie: desktop mode names it `bibcode_session_<port>`,
+const GATEWAY_COOKIE_PREFIX: &str = "coddy-studio-gw-";
+/// Prefix of every Coddy Studio session cookie: desktop mode names it `coddy_studio_session_<port>`,
 /// so another instance's session on the same host must stay protected too.
-const SESSION_COOKIE_PREFIX: &str = "bibcode_session";
+const SESSION_COOKIE_PREFIX: &str = "coddy_studio_session";
 
 pub fn gateway_cookie_name(gateway_port: u16) -> String {
     format!("{GATEWAY_COOKIE_PREFIX}{gateway_port}")
@@ -69,7 +69,7 @@ fn join_pairs<'a>(pairs: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
     joined
 }
 
-/// Request `Cookie` header without the BiBCode session cookie and any gateway cookie;
+/// Request `Cookie` header without the Coddy Studio session cookie and any gateway cookie;
 /// `None` when nothing is left to forward.
 pub fn strip_request_cookies(cookie_header: &[u8], session_cookie_name: &str) -> Option<Vec<u8>> {
     let kept = join_pairs(cookie_pairs(cookie_header).filter(|pair| {
@@ -79,8 +79,8 @@ pub fn strip_request_cookies(cookie_header: &[u8], session_cookie_name: &str) ->
 }
 
 /// Upstream `Set-Cookie` without its `Domain` attribute; `None` when it would overwrite a
-/// BiBCode session or gateway cookie, or when it is nameless. Browsers store a nameless
-/// cookie and send its bare value, so `=bibcode_session=x` would arrive as a reserved cookie.
+/// Coddy Studio session or gateway cookie, or when it is nameless. Browsers store a nameless
+/// cookie and send its bare value, so `=coddy_studio_session=x` would arrive as a reserved cookie.
 pub fn filter_set_cookie(value: &[u8], session_cookie_name: &str) -> Option<Vec<u8>> {
     let mut parts = cookie_pairs(value);
     let first = parts.next()?;
@@ -148,7 +148,7 @@ pub fn bootstrap_target(to: &str) -> Option<String> {
 
 /// Page that replaces the bootstrap URL, and its capability, with `to`. An invalid `to`
 /// falls back to `/` so the page can never navigate off the gateway origin. A validated
-/// BiBCode UI origin is kept in the frame's `sessionStorage` for the navigation reporter.
+/// Coddy Studio UI origin is kept in the frame's `sessionStorage` for the navigation reporter.
 pub fn bootstrap_page(to: &str, ui_origin: Option<&str>) -> String {
     let script_literal = |value: &str| {
         serde_json::to_string(value)
@@ -241,53 +241,59 @@ mod tests {
     fn cookies_are_stripped_and_filtered() {
         assert_eq!(
             strip(
-                "bibcode_session=x; app=1; bibcode-gw-40001=y",
-                "bibcode_session"
+                "coddy_studio_session=x; app=1; coddy-studio-gw-40001=y",
+                "coddy_studio_session"
             )
             .as_deref(),
             Some("app=1")
         );
-        assert_eq!(strip("bibcode-gw-1=a", "bibcode_session"), None);
+        assert_eq!(strip("coddy-studio-gw-1=a", "coddy_studio_session"), None);
         assert_eq!(
-            filter("sid=1; Domain=evil.test; Path=/", "bibcode_session").as_deref(),
+            filter("sid=1; Domain=evil.test; Path=/", "coddy_studio_session").as_deref(),
             Some("sid=1; Path=/")
         );
         assert_eq!(
-            filter("bibcode_session=evil; Path=/", "bibcode_session"),
+            filter("coddy_studio_session=evil; Path=/", "coddy_studio_session"),
             None
         );
-        assert_eq!(filter("bibcode-gw-40001=evil", "bibcode_session"), None);
         assert_eq!(
-            gateway_session_from_cookie(b"a=1; bibcode-gw-40001=sess; bibcode-gw-40002=o", 40001)
-                .as_deref(),
+            filter("coddy-studio-gw-40001=evil", "coddy_studio_session"),
+            None
+        );
+        assert_eq!(
+            gateway_session_from_cookie(
+                b"a=1; coddy-studio-gw-40001=sess; coddy-studio-gw-40002=o",
+                40001
+            )
+            .as_deref(),
             Some("sess")
         );
-        assert_eq!(gateway_cookie_name(40001), "bibcode-gw-40001");
+        assert_eq!(gateway_cookie_name(40001), "coddy-studio-gw-40001");
     }
 
     #[test]
     fn non_ascii_cookies_pass_through_byte_for_byte() {
         // Raw UTF-8 and a lone Latin-1 byte, as some apps and browsers send them.
         let header =
-            b"name=Jos\xc3\xa9; bibcode-gw-40001=sess; legacy=\xe9t\xe9; bibcode_session=x";
+            b"name=Jos\xc3\xa9; coddy-studio-gw-40001=sess; legacy=\xe9t\xe9; coddy_studio_session=x";
         assert_eq!(
             gateway_session_from_cookie(header, 40001).as_deref(),
             Some("sess")
         );
         assert_eq!(
-            strip_request_cookies(header, "bibcode_session").as_deref(),
+            strip_request_cookies(header, "coddy_studio_session").as_deref(),
             Some(&b"name=Jos\xc3\xa9; legacy=\xe9t\xe9"[..])
         );
         assert_eq!(
             filter_set_cookie(
                 b"pref=\xe9t\xe9; Domain=evil.test; Path=/",
-                "bibcode_session"
+                "coddy_studio_session"
             )
             .as_deref(),
             Some(&b"pref=\xe9t\xe9; Path=/"[..])
         );
         assert_eq!(
-            filter_set_cookie(b"bibcode-gw-1=\xe9", "bibcode_session"),
+            filter_set_cookie(b"coddy-studio-gw-1=\xe9", "coddy_studio_session"),
             None
         );
     }
@@ -295,27 +301,34 @@ mod tests {
     #[test]
     fn nameless_set_cookies_are_dropped() {
         for nameless in [
-            "=bibcode_session=evil",
-            "=bibcode-gw-40001=x",
+            "=coddy_studio_session=evil",
+            "=coddy-studio-gw-40001=x",
             "=x",
             "x",
             "; Path=/",
             "",
         ] {
-            assert_eq!(filter(nameless, "bibcode_session"), None, "{nameless:?}");
+            assert_eq!(
+                filter(nameless, "coddy_studio_session"),
+                None,
+                "{nameless:?}"
+            );
         }
     }
 
     #[test]
     fn instance_scoped_session_cookies_are_reserved() {
         assert_eq!(
-            filter("bibcode_session_3773=evil; Path=/", "bibcode_session_4000"),
+            filter(
+                "coddy_studio_session_3773=evil; Path=/",
+                "coddy_studio_session_4000"
+            ),
             None
         );
         assert_eq!(
             strip(
-                "bibcode_session_3773=a; app=1; bibcode_session_4000=b",
-                "bibcode_session_4000"
+                "coddy_studio_session_3773=a; app=1; coddy_studio_session_4000=b",
+                "coddy_studio_session_4000"
             )
             .as_deref(),
             Some("app=1")

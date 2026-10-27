@@ -1,4 +1,4 @@
-import type { VcsAdoptedWorktreeStatus } from "@bibcode/contracts";
+import type { VcsAdoptedWorktreeStatus } from "@coddy/contracts";
 import { AlertTriangleIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import type { MouseEvent } from "react";
 
@@ -77,7 +77,7 @@ export function WorktreeAvailabilityWarning({
           </Button>
           <Button type="button" size="xs" variant="outline" onClick={stopAndRun(onRemove)}>
             <Trash2Icon aria-hidden className="size-3" />
-            Remove from BiBCode
+            Remove from Coddy Studio
           </Button>
         </div>
       ) : null}

@@ -1,7 +1,7 @@
 //! AppImages use bundled Adwaita without pinning its light/dark variant through
 //! GTK_THEME. Setting gtk-theme-name on GtkSettings has application priority over
 //! XSETTINGS/settings.ini and changes only this process (GTK3 Settings docs).
-//! Tao owns portal updates; an explicit BiBCode choice must survive those updates.
+//! Tao owns portal updates; an explicit Coddy Studio choice must survive those updates.
 
 use std::{
     ffi::OsStr,

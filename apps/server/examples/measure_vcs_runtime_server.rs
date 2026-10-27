@@ -2,7 +2,7 @@
 use std::{env, path::PathBuf, process, time::Duration};
 
 #[cfg(windows)]
-use bibcode_server::{ServerConfig, ServerRuntime};
+use coddy_studio_server::{ServerConfig, ServerRuntime};
 #[cfg(windows)]
 use futures_util::{SinkExt, StreamExt};
 #[cfg(windows)]

@@ -101,7 +101,7 @@ export class EnvironmentCredentials extends Context.Service<
       readonly environmentId: string;
     }) => Effect.Effect<boolean, EnvironmentCredentialRevokePersistenceError>;
   }
->()("bibcode-relay/environments/EnvironmentCredentials") {}
+>()("coddy-studio-relay/environments/EnvironmentCredentials") {}
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
@@ -117,7 +117,7 @@ const make = Effect.gen(function* () {
     const secret = yield* randomTokenPart(3);
     return {
       credentialId,
-      token: `bibcodeenv_${credentialId}_${secret}`,
+      token: `coddystudioenv_${credentialId}_${secret}`,
     };
   });
 

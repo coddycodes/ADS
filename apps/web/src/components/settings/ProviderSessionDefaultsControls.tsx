@@ -2,13 +2,13 @@ import type {
   ProviderDriverKind,
   ProviderSessionDefault,
   ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useEffect, useId, useRef, useState } from "react";
 import {
   getProviderSessionDefaultControls,
   type ProviderSessionDefaultChange,
   updateProviderSessionDefault,
-} from "@bibcode/shared/providerSessionDefaults";
+} from "@coddy/shared/providerSessionDefaults";
 
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";

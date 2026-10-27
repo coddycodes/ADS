@@ -8,15 +8,15 @@ import {
   type ResolvedKeybindingsConfig,
   type ServerProvider,
   ThreadId,
-} from "@bibcode/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@bibcode/contracts/settings";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+} from "@coddy/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@coddy/contracts/settings";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import { act, type RefObject } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const h = vi.hoisted(() => ({
-  capabilityCatalogs: [] as import("@bibcode/contracts").ServerProvider[],
+  capabilityCatalogs: [] as import("@coddy/contracts").ServerProvider[],
   editorProps: null as Record<string, unknown> | null,
   menuProps: null as Record<string, unknown> | null,
   providerPickerProps: null as Record<string, unknown> | null,

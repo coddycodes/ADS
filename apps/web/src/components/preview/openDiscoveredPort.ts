@@ -1,9 +1,9 @@
-import type { DiscoveredLocalServer, ScopedThreadRef } from "@bibcode/contracts";
+import type { DiscoveredLocalServer, ScopedThreadRef } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import {
   mapAtomCommandResult,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 
 import { resolvePreviewTarget } from "~/browser/browserTargetResolver";
 import { showPreviewUnreachableNotice } from "~/browser/linkNotices";

@@ -98,7 +98,7 @@ impl FakeBackend {
         *lock(&self.no_video) = Some(reason.to_owned());
     }
 
-    /// `image` is in use outside BiBCode: `check_available` refuses it.
+    /// `image` is in use outside Coddy Studio: `check_available` refuses it.
     pub(crate) fn busy(self: &Arc<Self>, image: &str) {
         lock(&self.busy).insert(image.to_owned());
     }

@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 

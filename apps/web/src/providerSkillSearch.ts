@@ -1,9 +1,9 @@
-import type { ServerProviderSkill } from "@bibcode/contracts";
+import type { ServerProviderSkill } from "@coddy/contracts";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
-} from "@bibcode/shared/searchRanking";
+} from "@coddy/shared/searchRanking";
 
 import { formatProviderSkillDisplayName } from "./providerSkillPresentation";
 

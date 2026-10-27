@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import type { DeviceCatalog } from "@bibcode/contracts";
-import { EnvironmentId } from "@bibcode/contracts";
+import type { DeviceCatalog } from "@coddy/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, type ReactNode } from "react";
@@ -247,7 +247,7 @@ describe("DevicePreviewsSection", () => {
     const container = await render();
     expect((toggle(container) as HTMLButtonElement).disabled).toBe(true);
     expect(container.textContent).toContain(
-      "This server's BiBCode version has no device previews. Update the server to use them.",
+      "This server's Coddy Studio version has no device previews. Update the server to use them.",
     );
   });
 });

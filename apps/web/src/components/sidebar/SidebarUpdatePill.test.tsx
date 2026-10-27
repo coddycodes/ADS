@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { DesktopBridge, DesktopUpdateState } from "@bibcode/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@coddy/contracts";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -204,7 +204,7 @@ describe("SidebarUpdatePill", () => {
     await render(recoveryState);
     expect(actionButton().textContent).toBe("Update not installed");
     expect(actionButton().getAttribute("aria-label")).toBe(
-      "Update not installed: BiBCode's local server is stopped.",
+      "Update not installed: Coddy Studio's local server is stopped.",
     );
     expect(actionButton().querySelector("svg.lucide-triangle-alert")).not.toBeNull();
     await act(async () => actionButton().click());

@@ -3,12 +3,12 @@ import {
   scopeThreadRef,
   scopedProjectKey,
   scopedThreadKey,
-} from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/environment";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-} from "@bibcode/client-runtime/state/models";
-import type { EnvironmentAvailabilityStatus } from "@bibcode/client-runtime/state/shell";
+} from "@coddy/client-runtime/state/models";
+import type { EnvironmentAvailabilityStatus } from "@coddy/client-runtime/state/shell";
 import {
   type EnvironmentId,
   isProviderDriverKind,
@@ -16,7 +16,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderDriverKind,
   type ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { selectIsUnread } from "../../sidebarWorkspaceMetaStore";
 import { formatProviderSlugLabel } from "../../providerModels";

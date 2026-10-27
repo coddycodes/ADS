@@ -1,4 +1,4 @@
-import type { PullRequestsActor as Actor } from "@bibcode/contracts";
+import type { PullRequestsActor as Actor } from "@coddy/contracts";
 export function PullRequestsActor({
   actor,
   preferName = false,

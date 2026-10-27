@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { resolvePairingDeepLinkCode } from "@bibcode/shared/pairingCode";
+import { resolvePairingDeepLinkCode } from "@coddy/shared/pairingCode";
 import { useEffect } from "react";
 
 export function resolvePairingDeepLink(rawUrl: string): { readonly code: string } | null {

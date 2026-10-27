@@ -1,6 +1,6 @@
-import { projectKey } from "@bibcode/client-runtime/state/entities";
-import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+import { projectKey } from "@coddy/client-runtime/state/entities";
+import { EnvironmentRpcUnavailableError } from "@coddy/client-runtime/rpc";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import {
   type ContextMenuItem,
   GitManagerOperationError,
@@ -9,7 +9,7 @@ import {
   type GitManagerUndoCommitResult,
   type ScopedProjectRef,
   type VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import * as AsyncResult from "effect/reactivity/AsyncResult";

@@ -5,8 +5,8 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { PrimaryConnectionTarget } from "@bibcode/client-runtime/connection";
-import type { AtomCommand } from "@bibcode/client-runtime/state/runtime";
+import { PrimaryConnectionTarget } from "@coddy/client-runtime/connection";
+import type { AtomCommand } from "@coddy/client-runtime/state/runtime";
 import {
   AuthAccessWriteScope,
   AuthSessionId,
@@ -14,8 +14,8 @@ import {
   type AuthAccessStreamSnapshotEvent,
   type DesktopBridge,
   type DesktopServerExposureState,
-} from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -31,7 +31,7 @@ import type * as SessionPorts from "../../src/environments/primary/sessionState"
 import type { DesktopNetworkAccessSnapshot } from "../../src/state/desktopNetworkAccess";
 import type { ThreadPreviewState } from "../../src/previewStateStore";
 import { previewStateAtom } from "../../src/previewStateStore";
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
 
 import {
   fixtureEnvironmentId,

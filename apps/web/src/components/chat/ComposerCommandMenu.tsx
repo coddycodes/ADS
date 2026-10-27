@@ -21,7 +21,7 @@ type ComposerCommandGroup = {
 };
 
 const GROUPS = [
-  ["bibcode", "BiBCode"],
+  ["coddy-studio", "Coddy Studio"],
   ["commands", "Commands"],
   ["skills", "Skills"],
   ["files", "Files"],
@@ -201,7 +201,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           theme={props.resolvedTheme}
         />
       ) : null}
-      {props.item.type === "bibcode-action" ? (
+      {props.item.type === "coddy-studio-action" ? (
         <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
       {props.item.type === "agent-reference" ? (

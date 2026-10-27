@@ -257,8 +257,8 @@ pub fn user_service_events(proc_self_cgroup: &str) -> Option<PathBuf> {
 }
 
 /// The systemd user unit a process runs in, from its `/proc/<pid>/cgroup`: the innermost
-/// `.service` or `.scope` below the user manager, such as `bibcode-desktop.service` for a run
-/// started with `systemd-run --user --unit=bibcode-desktop`. `None` outside a user unit.
+/// `.service` or `.scope` below the user manager, such as `coddy-studio-desktop.service` for a run
+/// started with `systemd-run --user --unit=coddy-studio-desktop`. `None` outside a user unit.
 pub fn unit_of(proc_self_cgroup: &str) -> Option<String> {
     let path = proc_self_cgroup
         .lines()
@@ -355,10 +355,10 @@ mod tests {
         let cgroup = |path: &str| format!("0::{path}\n");
         assert_eq!(
             unit_of(&cgroup(
-                "/user.slice/user-1000.slice/user@1000.service/app.slice/bibcode-desktop.service"
+                "/user.slice/user-1000.slice/user@1000.service/app.slice/coddy-studio-desktop.service"
             ))
             .as_deref(),
-            Some("bibcode-desktop.service")
+            Some("coddy-studio-desktop.service")
         );
         assert_eq!(
             unit_of(&cgroup(
@@ -373,23 +373,23 @@ mod tests {
             )),
             None
         );
-        assert_eq!(unit_of(&cgroup("/system.slice/bibcode.service")), None);
+        assert_eq!(unit_of(&cgroup("/system.slice/coddy-studio.service")), None);
         assert_eq!(unit_of("garbage"), None);
     }
 
     #[test]
     fn unit_exit_lines_keep_systemds_account_of_the_ending() {
-        let journal = "Started [systemd-run] /opt/bibcode.appimage.\n\
-            bibcode-desktop.service: Main process exited, code=killed, status=9/KILL\n\
-            bibcode-desktop.service: Failed with result 'signal'.\n\
-            bibcode-desktop.service: Consumed 1h CPU time, 8G memory peak.\n\
-            Started [systemd-run] /opt/bibcode.appimage.\n";
+        let journal = "Started [systemd-run] /opt/coddy-studio.appimage.\n\
+            coddy-studio-desktop.service: Main process exited, code=killed, status=9/KILL\n\
+            coddy-studio-desktop.service: Failed with result 'signal'.\n\
+            coddy-studio-desktop.service: Consumed 1h CPU time, 8G memory peak.\n\
+            Started [systemd-run] /opt/coddy-studio.appimage.\n";
         assert_eq!(
             unit_exit_lines_of(journal),
             vec![
-                "bibcode-desktop.service: Main process exited, code=killed, status=9/KILL",
-                "bibcode-desktop.service: Failed with result 'signal'.",
-                "bibcode-desktop.service: Consumed 1h CPU time, 8G memory peak.",
+                "coddy-studio-desktop.service: Main process exited, code=killed, status=9/KILL",
+                "coddy-studio-desktop.service: Failed with result 'signal'.",
+                "coddy-studio-desktop.service: Consumed 1h CPU time, 8G memory peak.",
             ]
         );
         assert!(unit_exit_lines_of("").is_empty());
@@ -431,33 +431,33 @@ mod tests {
                 .map(|crash| crash.pid)
                 .collect::<Vec<_>>()
         };
-        let appimage = "/tmp/.mount_bibcodcDBndf/usr/bin/bibcode-desktop";
+        let appimage = "/tmp/.mount_bibcodcDBndf/usr/bin/coddy-studio-desktop";
         assert_eq!(
             pids(
                 appimage,
                 vec![
-                    entry(10, "/tmp/.mount_bibcodEBCJgP/usr/bin/bibcode-desktop"),
-                    entry(11, "/usr/bin/bibcode-desktop"),
+                    entry(10, "/tmp/.mount_bibcodEBCJgP/usr/bin/coddy-studio-desktop"),
+                    entry(11, "/usr/bin/coddy-studio-desktop"),
                     entry(
                         12,
-                        "/home/u/.cache/leak/appimage/squashfs-root/usr/bin/bibcode-desktop"
+                        "/home/u/.cache/leak/appimage/squashfs-root/usr/bin/coddy-studio-desktop"
                     ),
-                    entry(13, "/tmp/.mount_bibcodEBCJgP/usr/bin/bibcode-desktop"),
+                    entry(13, "/tmp/.mount_bibcodEBCJgP/usr/bin/coddy-studio-desktop"),
                     entry(14, "/usr/bin/firefox"),
-                    entry(15, "/var/tmp/.mount_bibcodX/usr/bin/bibcode-desktop"),
+                    entry(15, "/var/tmp/.mount_bibcodX/usr/bin/coddy-studio-desktop"),
                     entry(16, appimage),
                 ]
             ),
             [10, 11, 16]
         );
-        let built = "/home/u/src/bibcode/target/release/bibcode-desktop";
+        let built = "/home/u/src/coddy-studio/target/release/coddy-studio-desktop";
         assert_eq!(
             pids(
                 built,
                 vec![
                     entry(20, &format!("{built} (deleted)")),
-                    entry(21, "/usr/bin/bibcode-desktop"),
-                    entry(22, "/tmp/.mount_bibcodEBCJgP/usr/bin/bibcode-desktop"),
+                    entry(21, "/usr/bin/coddy-studio-desktop"),
+                    entry(22, "/tmp/.mount_bibcodEBCJgP/usr/bin/coddy-studio-desktop"),
                     entry(23, built),
                 ]
             ),
@@ -474,12 +474,12 @@ mod tests {
         let entry = matching_entry(
             entries.clone(),
             1_732_134,
-            "~/bin/bibcode_server-fe771ab9e6f4b1bc",
+            "~/bin/coddy_studio_server-fe771ab9e6f4b1bc",
         )
         .expect("matching entry");
         assert_eq!((entry.pid, entry.sig), (1_732_134, 6));
-        assert!(matching_entry(entries.clone(), 1_732_134, "bibcode").is_none());
-        assert!(matching_entry(entries, 1966, "bibcode_server-fe771ab9e6f4b1bc").is_none());
+        assert!(matching_entry(entries.clone(), 1_732_134, "coddy-studio").is_none());
+        assert!(matching_entry(entries, 1966, "coddy_studio_server-fe771ab9e6f4b1bc").is_none());
         assert!(parse_coredumpctl_list("").is_empty());
     }
 
@@ -501,7 +501,7 @@ mod tests {
         let entry = matching_entry(
             parse_coredumpctl_list(LIST),
             1_732_134,
-            "bibcode_server-fe771ab9e6f4b1bc",
+            "coddy_studio_server-fe771ab9e6f4b1bc",
         )
         .unwrap();
         let ours: Value = serde_json::from_str(JOURNAL).unwrap();
@@ -531,12 +531,12 @@ mod tests {
         reused["COREDUMP_EXE"] = "/usr/bin/other".into();
         reused["COREDUMP_SIGNAL_NAME"] = "SIGSEGV".into();
         let journal = format!("{ours}\n{reused}\n");
-        let record = journal_record_for_exe(&journal, "~/bin/bibcode_server-fe771ab9e6f4b1bc")
+        let record = journal_record_for_exe(&journal, "~/bin/coddy_studio_server-fe771ab9e6f4b1bc")
             .expect("our executable's record");
         assert_eq!(record.signal_or_code, "SIGABRT");
         assert_eq!(record.frames.len(), 8);
-        assert!(journal_record_for_exe(&journal, "bibcode").is_none());
-        assert!(journal_record_for_exe("", "bibcode_server-fe771ab9e6f4b1bc").is_none());
+        assert!(journal_record_for_exe(&journal, "coddy-studio").is_none());
+        assert!(journal_record_for_exe("", "coddy_studio_server-fe771ab9e6f4b1bc").is_none());
     }
 
     #[test]
@@ -580,7 +580,7 @@ mod tests {
             ))
         );
         assert_eq!(
-            user_service_events("0::/system.slice/bibcode.service\n"),
+            user_service_events("0::/system.slice/coddy-studio.service\n"),
             None
         );
         let dir = tempfile::tempdir().unwrap();

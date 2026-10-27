@@ -9,8 +9,8 @@ import {
   ThreadId,
   type ServerConfig as ServerConfigType,
   WS_METHODS,
-} from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -153,7 +153,7 @@ const SERVER_CONFIG: ServerConfigType = {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],
     sessionMethods: ["browser-session-cookie", "bearer-access-token"],
-    sessionCookieName: "bibcode_session",
+    sessionCookieName: "coddy_studio_session",
   },
   cwd: "/tmp/workspace",
   keybindingsConfigPath: "/tmp/workspace/keybindings.json",
@@ -1015,8 +1015,8 @@ describe("RpcSessionFactory", () => {
           yield* Effect.forkChild(session.ready);
           const socket = yield* awaitSocket(sockets);
           expect(socket.protocols).toEqual([
-            "bibcode.rpc.chunked-deflate.v1",
-            "bibcode.rpc.chunked.v1",
+            "coddy-studio.rpc.chunked-deflate.v1",
+            "coddy-studio.rpc.chunked.v1",
           ]);
           expect(socket.binaryType).toBe("arraybuffer");
         }),
@@ -1121,7 +1121,7 @@ describe("RpcSessionFactory", () => {
         const session = yield* factory.connect(PREPARED);
         const ready = yield* Effect.forkChild(session.ready);
         const socket = yield* awaitSocket(sockets);
-        socket.protocol = "bibcode.rpc.chunked.v1";
+        socket.protocol = "coddy-studio.rpc.chunked.v1";
         socket.open();
         yield* completeInitialConfig(socket);
         yield* Fiber.join(ready);
@@ -1156,7 +1156,7 @@ describe("RpcSessionFactory", () => {
         const session = yield* factory.connect(PREPARED);
         const ready = yield* Effect.forkChild(session.ready);
         const socket = yield* awaitSocket(sockets);
-        socket.protocol = "bibcode.rpc.chunked-deflate.v1";
+        socket.protocol = "coddy-studio.rpc.chunked-deflate.v1";
         socket.open();
         yield* completeInitialConfig(socket);
         yield* Fiber.join(ready);

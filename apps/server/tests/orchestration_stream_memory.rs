@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     orchestration::{EngineOptions, OrchestrationEngine},
     persistence::{Database, run_migrations},

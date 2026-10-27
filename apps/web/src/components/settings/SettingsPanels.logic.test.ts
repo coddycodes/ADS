@@ -5,7 +5,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderSessionDefault,
   type ServerSettings,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildProviderInstanceUpdatePatch,
@@ -95,7 +95,7 @@ describe("buildProviderInstanceUpdatePatch", () => {
       driver: ProviderDriverKind.make("codex"),
       enabled: true,
       config: {
-        binaryPath: "/opt/bibcode/codex",
+        binaryPath: "/opt/coddy-studio/codex",
       },
     } satisfies ProviderInstanceConfig;
 

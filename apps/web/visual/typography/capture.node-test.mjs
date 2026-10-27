@@ -9,7 +9,7 @@ NodeTest.test(
   "the complete capture caller serves its own build, writes both source-joined observations and cleans up",
   async () => {
     const root = await NodeFSP.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-typography-caller-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-typography-caller-"),
     );
     let deleted = false;
     try {
@@ -96,7 +96,7 @@ NodeTest.test(
     let closed = false;
     let deleted = false;
     const root = await NodeFSP.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-typography-failure-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-typography-failure-"),
     );
     try {
       await NodeAssert.rejects(
@@ -133,7 +133,7 @@ NodeTest.test(
   "a refused state preserves later accepted captures and remains incomplete",
   async () => {
     const root = await NodeFSP.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "bibcode-typography-partial-"),
+      NodePath.join(NodeOS.tmpdir(), "coddy-studio-typography-partial-"),
     );
     let theme = "light";
     let closed = false;

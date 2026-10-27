@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
+import type { AtomCommandResult } from "@coddy/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 

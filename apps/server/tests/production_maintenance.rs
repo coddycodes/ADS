@@ -3,7 +3,7 @@ mod hermetic_providers;
 
 use std::time::Duration;
 
-use bibcode_server::{
+use coddy_studio_server::{
     DESKTOP_MAINTENANCE_TOKEN_HEADER, DESKTOP_SHUTDOWN_PATH, MAINTENANCE_UPDATE_CANCEL_PATH,
     MAINTENANCE_UPDATE_PREPARE_PATH, MAINTENANCE_UPDATE_STATUS_PATH, ROUTE_INVENTORY,
     RpcAdmissionGate, RpcMutability, ServerConfig, ServerRuntime, http_mutability,
@@ -118,7 +118,7 @@ async fn expect_continue_upload_holds_real_update_admission_until_body_completio
             .form(&[
                 ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
                 ("subject_token", bootstrap),
-                ("subject_token_type", "urn:bibcode:params:oauth:token-type:environment-bootstrap"),
+                ("subject_token_type", "urn:coddy-studio:params:oauth:token-type:environment-bootstrap"),
                 ("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
             ])
             .send().await.map_err(|_| "fixture authentication failed")?
@@ -167,7 +167,7 @@ async fn expect_continue_upload_holds_real_update_admission_until_body_completio
         let admitted_files = std::fs::read_dir(&workspace)
             .map_err(|_| "admitted upload directory unreadable")?
             .collect::<Result<Vec<_>, _>>().map_err(|_| "admitted upload directory unreadable")?;
-        let partial_created = admitted_files.iter().any(|entry| entry.file_name().to_string_lossy().ends_with(".bibcode-upload.part"));
+        let partial_created = admitted_files.iter().any(|entry| entry.file_name().to_string_lossy().ends_with(".coddy-studio-upload.part"));
         let reservation_created = workspace.join("protection-witness.txt").is_file();
         stream.write_all(b"o").await.map_err(|_| "held upload prefix failed")?;
         sent_bytes = 1;
@@ -400,7 +400,7 @@ fn registered_http_route_inventory_has_no_unclassified_mutation_gap() {
         let control_exemption = matches!(
             route.path,
             MAINTENANCE_UPDATE_PREPARE_PATH
-                | bibcode_server::MAINTENANCE_UPDATE_COMMIT_PATH
+                | coddy_studio_server::MAINTENANCE_UPDATE_COMMIT_PATH
                 | MAINTENANCE_UPDATE_CANCEL_PATH
                 | DESKTOP_SHUTDOWN_PATH
         );
@@ -443,7 +443,7 @@ async fn desktop_prepare_is_authenticated_single_flight_and_cancel_is_identity_b
             ("subject_token", bootstrap),
             (
                 "subject_token_type",
-                "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
             ),
             (
                 "requested_token_type",
@@ -755,7 +755,7 @@ async fn commit_response_is_delivered_before_clean_backend_exit() {
     let committed = client
         .post(format!(
             "{base}{}",
-            bibcode_server::MAINTENANCE_UPDATE_COMMIT_PATH
+            coddy_studio_server::MAINTENANCE_UPDATE_COMMIT_PATH
         ))
         .header(DESKTOP_MAINTENANCE_TOKEN_HEADER, bootstrap)
         .json(&json!({"operationId":prepared["operationId"]}))
@@ -834,7 +834,7 @@ async fn abandoned_preparation_lease_expires_and_exits() {
 
 /// Exchanges the desktop bootstrap token and opens an authenticated RPC socket.
 async fn authenticated_socket(
-    server: &bibcode_server::ServerHandle,
+    server: &coddy_studio_server::ServerHandle,
     bootstrap: &str,
 ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let base = format!("http://{}", server.local_addr());
@@ -849,7 +849,7 @@ async fn authenticated_socket(
             ("subject_token", bootstrap),
             (
                 "subject_token_type",
-                "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
             ),
             (
                 "requested_token_type",
@@ -1030,7 +1030,7 @@ async fn in_process_cancel_exits_and_a_mismatched_operation_changes_nothing() {
     assert!(
         matches!(
             mismatch,
-            bibcode_server::MaintenanceError::OperationMismatch
+            coddy_studio_server::MaintenanceError::OperationMismatch
         ),
         "{mismatch:?}"
     );

@@ -28,7 +28,7 @@ import {
   RuntimeMode,
   UploadError,
   RpcResponseTooLargeError,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   describeUnavailableEnvironment,
   selectQueuedMessages,
@@ -50,32 +50,32 @@ import {
   UploadClientError,
   type StartThreadTurnInput,
   type AttachmentAdmissionAuthority,
-} from "@bibcode/client-runtime/operations";
+} from "@coddy/client-runtime/operations";
 import { RpcClientError } from "effect/rpc";
-import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
+import { EnvironmentRpcUnavailableError } from "@coddy/client-runtime/rpc";
 import {
   prepareTurnAttachments,
   mergeInterruptedComposerContent,
   reusableStagedAttachmentAttempt,
 } from "./ChatView.logic";
-import type { TimestampFormat } from "@bibcode/contracts/settings";
+import type { TimestampFormat } from "@coddy/contracts/settings";
 import {
   type EnvironmentConnectionPresentation,
   isConnectionUnavailable,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
-import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@bibcode/shared/model";
-import { canonicalizeLegacyComposerFileReferences } from "@bibcode/shared/composerReferences";
-import { resolveProviderSessionDefault } from "@bibcode/shared/providerSessionDefaults";
-import { CHAT_LIST_ANCHOR_OFFSET } from "@bibcode/shared/chatList";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@bibcode/shared/projectScripts";
-import { truncate } from "@bibcode/shared/String";
-import { resolveTerminalSessionLabel } from "@bibcode/shared/terminalLabels";
+} from "@coddy/client-runtime/environment";
+import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@coddy/shared/model";
+import { canonicalizeLegacyComposerFileReferences } from "@coddy/shared/composerReferences";
+import { resolveProviderSessionDefault } from "@coddy/shared/providerSessionDefaults";
+import { CHAT_LIST_ANCHOR_OFFSET } from "@coddy/shared/chatList";
+import { projectScriptCwd, projectScriptRuntimeEnv } from "@coddy/shared/projectScripts";
+import { truncate } from "@coddy/shared/String";
+import { resolveTerminalSessionLabel } from "@coddy/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
@@ -99,11 +99,11 @@ import {
   settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   selectWorktreeCatalogCapabilityPolicy,
   selectWorktreeWorkspaceActionsAvailable,
-} from "@bibcode/client-runtime/state/worktrees";
+} from "@coddy/client-runtime/state/worktrees";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -111,12 +111,12 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import {
   EMPTY_ENVIRONMENT_ACTIVITY_STATE,
   type EnvironmentActivityState,
-} from "@bibcode/client-runtime/state/activity";
+} from "@coddy/client-runtime/state/activity";
 import { isDesktopHost } from "../env";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { selectActivityDockExpanded, useActivityDockStore } from "../activityDockStore";
-import { parseStandaloneComposerBiBCodeAction } from "../composer-logic";
+import { parseStandaloneComposerCoddyStudioAction } from "../composer-logic";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -164,7 +164,7 @@ import {
 } from "./terminalTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteContext";
-import { buildTemporaryWorktreeBranchName } from "@bibcode/shared/git";
+import { buildTemporaryWorktreeBranchName } from "@coddy/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { resolveProviderSessionSelectionForInstance } from "../providerSessionSelection";
 import { formatProviderSlugLabel } from "../providerModels";
@@ -959,7 +959,7 @@ type EnvironmentUnavailableState = {
 };
 
 const WORKSPACE_UNAVAILABLE_REASON =
-  "Workspace unavailable. Retry detection or remove it from BiBCode.";
+  "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
@@ -1774,13 +1774,13 @@ function ChatViewContent(props: ChatViewProps) {
     ? (localServerError ?? serverThread?.session?.lastError ?? null)
     : localDraftError;
   // Attribute the banner. `session.lastError` is mixed-provenance and
-  // `localServerError` is a BiBCode command that failed, so rendering them
-  // identically made a provider outage read as a BiBCode defect.
+  // `localServerError` is a Coddy Studio command that failed, so rendering them
+  // identically made a provider outage read as a Coddy Studio defect.
   const threadErrorAttributionText =
     threadError === null || !isServerThread
       ? null
       : threadErrorAttribution({
-          isBiBCodeAction: localServerError !== null,
+          isCoddyStudioAction: localServerError !== null,
           errorClass: serverThread?.session?.lastErrorClass ?? null,
           providerName: serverThread?.session?.providerName ?? null,
         });
@@ -5404,7 +5404,7 @@ function ChatViewContent(props: ChatViewProps) {
           composerPreviewAnnotations.length +
           composerReviewComments.length,
       });
-      const standaloneColonAction = parseStandaloneComposerBiBCodeAction(trimmed);
+      const standaloneColonAction = parseStandaloneComposerCoddyStudioAction(trimmed);
       if (standaloneColonAction === "plan" || standaloneColonAction === "default") {
         handleInteractionModeChange(standaloneColonAction);
         promptRef.current = "";
@@ -6409,7 +6409,7 @@ function ChatViewContent(props: ChatViewProps) {
       const error = squashAtomCommandFailure(startResult);
       setThreadError(
         threadIdForSend,
-        error instanceof Error ? error.message : "BiBCode could not send /compact.",
+        error instanceof Error ? error.message : "Coddy Studio could not send /compact.",
       );
     }
     resetLocalDispatch();
@@ -6431,7 +6431,7 @@ function ChatViewContent(props: ChatViewProps) {
     threadError === null || !isServerThread
       ? null
       : threadErrorCompactAction({
-          isBiBCodeAction: localServerError !== null,
+          isCoddyStudioAction: localServerError !== null,
           errorClass: serverThread?.session?.lastErrorClass ?? null,
           busy: phase === "running" || isSendBusy || isConnecting,
         });

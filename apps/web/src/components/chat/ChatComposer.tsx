@@ -11,16 +11,16 @@ import type {
   ServerProvider,
   ThreadId,
   TurnId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { isSteerQueuedMessageShortcut } from "../../keybindings";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENT_BYTES,
-} from "@bibcode/contracts";
-import { type EnvironmentConnectionPresentation } from "@bibcode/client-runtime/connection";
-import { createModelSelection, normalizeModelSlug } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { type EnvironmentConnectionPresentation } from "@coddy/client-runtime/connection";
+import { createModelSelection, normalizeModelSlug } from "@coddy/shared/model";
 import {
   memo,
   useCallback,
@@ -37,8 +37,8 @@ import {
   type ComposerInlineTokenContext,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
-  parseStandaloneComposerBiBCodeAction,
-  type ComposerBiBCodeAction,
+  parseStandaloneComposerCoddyStudioAction,
+  type ComposerCoddyStudioAction,
   type ComposerTrigger,
   replaceTextRange,
 } from "../../composer-logic";
@@ -121,7 +121,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
-import type { UnifiedSettings } from "@bibcode/contracts/settings";
+import type { UnifiedSettings } from "@coddy/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
@@ -182,8 +182,8 @@ const composerItemMatchesTrigger = (
   item: ComposerCommandItem,
   trigger: ComposerTrigger,
 ): boolean => {
-  if (trigger.kind === "bibcode-action") {
-    return item.type === "bibcode-action";
+  if (trigger.kind === "coddy-studio-action") {
+    return item.type === "coddy-studio-action";
   }
   if (trigger.kind === "provider-slash") {
     return (
@@ -1676,8 +1676,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderStatus?.instanceId,
   ]);
 
-  const executeBiBCodeAction = useCallback(
-    (action: ComposerBiBCodeAction) => {
+  const executeCoddyStudioAction = useCallback(
+    (action: ComposerCoddyStudioAction) => {
       if (action === "model") {
         setIsComposerModelPickerOpen(true);
         return;
@@ -1715,14 +1715,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger || !composerItemMatchesTrigger(item, trigger)) return;
-      if (item.type === "bibcode-action") {
+      if (item.type === "coddy-studio-action") {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
         if (applied) {
           setComposerHighlightedItemId(null);
           setComposerHighlightedSearchKey(null);
-          executeBiBCodeAction(item.action);
+          executeCoddyStudioAction(item.action);
         }
         return;
       }
@@ -1743,7 +1743,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setComposerHighlightedSearchKey(null);
       }
     },
-    [applyPromptReplacement, executeBiBCodeAction, resolveActiveComposerTrigger],
+    [applyPromptReplacement, executeCoddyStudioAction, resolveActiveComposerTrigger],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
@@ -1809,8 +1809,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       const currentPrompt = promptRef.current;
-      const bibcodeAction = parseStandaloneComposerBiBCodeAction(currentPrompt);
-      if (bibcodeAction) {
+      const coddyStudioAction = parseStandaloneComposerCoddyStudioAction(currentPrompt);
+      if (coddyStudioAction) {
         event?.preventDefault();
         const applied = applyPromptReplacement(0, currentPrompt.length, "", {
           expectedText: currentPrompt,
@@ -1820,7 +1820,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         setComposerHighlightedItemId(null);
         setComposerHighlightedSearchKey(null);
-        executeBiBCodeAction(bibcodeAction);
+        executeCoddyStudioAction(coddyStudioAction);
         return;
       }
       onSend(event);
@@ -1831,7 +1831,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       applyPromptReplacement,
       blurMobileComposerAfterSend,
-      executeBiBCodeAction,
+      executeCoddyStudioAction,
       isProviderBindingConflicted,
       onSend,
       promptRef,
@@ -2676,7 +2676,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               `${environmentUnavailable.label} is not connected`
                             : phase === "disconnected"
                               ? "Ask for follow-up changes or attach files"
-                              : "Ask anything, @ files, : BiBCode actions, or a provider-native command"
+                              : "Ask anything, @ files, : Coddy Studio actions, or a provider-native command"
                 }
                 disabled={
                   isConnecting ||

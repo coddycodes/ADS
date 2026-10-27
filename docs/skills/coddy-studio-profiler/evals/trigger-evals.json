@@ -1,0 +1,82 @@
+[
+  {
+    "query": "coddy-studio desktop just vanished on me again mid-conversation, third time today on my fedora laptop. no dialog, nothing. can you figure out what's killing it?",
+    "should_trigger": true
+  },
+  {
+    "query": "The Coddy Studio window goes completely white if I leave it open overnight and I have to restart it every morning. Dig into what's happening.",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm about to reproduce the hang that happens when I switch threads quickly in Coddy Studio. Watch it while I do it and tell me what you see.",
+    "should_trigger": true
+  },
+  {
+    "query": "htop shows coddy-studio-desktop at 4.3 GB after a day of use and it keeps climbing. is something leaking? which process is it?",
+    "should_trigger": true
+  },
+  {
+    "query": "My laptop is connected to the Coddy Studio server on my homelab box (ssh devbox) and every click takes 2-3 seconds. Is it the server, the network or the UI that's slow?",
+    "should_trigger": true
+  },
+  {
+    "query": "removing a worktree from the Coddy Studio sidebar spins forever and ~/code/api/.worktrees/fix-auth is still on disk afterwards. why won't it go away?",
+    "should_trigger": true
+  },
+  {
+    "query": "check what the coddy-studio profiler picked up since yesterday and file GitHub issues for anything new, but look for duplicates first",
+    "should_trigger": true
+  },
+  {
+    "query": "codex keeps dying inside Coddy Studio with no error, the session just stops responding mid-turn. can you look at what crashed and why?",
+    "should_trigger": true
+  },
+  {
+    "query": "the fans spin up whenever Coddy Studio is open, even when I'm not doing anything in it. find out which Coddy Studio process is burning CPU",
+    "should_trigger": true
+  },
+  {
+    "query": "is profiling turned on for my remote Coddy Studio server, and what has it caught this week? give me a summary by severity",
+    "should_trigger": true
+  },
+  {
+    "query": "the Coddy Studio desktop e2e suite hangs in CI: apps/desktop/e2e/worktree-removal.spec.ts never finishes and wdio times out after 10 minutes. figure out why the test hangs",
+    "should_trigger": false
+  },
+  {
+    "query": "add a setting to Coddy Studio that lets users choose the default terminal shell, with a dropdown in the Terminal settings panel",
+    "should_trigger": false
+  },
+  {
+    "query": "release Coddy Studio 0.9.1: bump the version, tag it and publish the GitHub release",
+    "should_trigger": false
+  },
+  {
+    "query": "write a Rust unit test for the Theil-Sen slope in apps/server/src/diagnostics/profiler/leak.rs that covers a flat memory series",
+    "should_trigger": false
+  },
+  {
+    "query": "vp check fails with a type error in packages/client-runtime after my rebase onto main, can you fix the Coddy Studio build?",
+    "should_trigger": false
+  },
+  {
+    "query": "my node script leaks memory, I took a heap snapshot in chrome devtools. what's retaining all these closures?",
+    "should_trigger": false
+  },
+  {
+    "query": "go through the open GitHub issues labelled bug in mubeda/CoddyStudio and close the obvious duplicates",
+    "should_trigger": false
+  },
+  {
+    "query": "cargo build of coddy-studio-server gets OOM-killed on my 16GB laptop, how do I limit the parallel jobs?",
+    "should_trigger": false
+  },
+  {
+    "query": "help me add my devbox as a remote server in Coddy Studio, the pairing dialog keeps asking for a code I don't have",
+    "should_trigger": false
+  },
+  {
+    "query": "git worktree prune left stale entries in a plain git repo that has nothing to do with Coddy Studio. how do I clean them up?",
+    "should_trigger": false
+  }
+]

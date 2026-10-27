@@ -12,11 +12,11 @@ use super::TransferError;
 /// name never share one.
 static PARTIAL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// One path component may hold 255 bytes on every filesystem BiBCode supports.
+/// One path component may hold 255 bytes on every filesystem Coddy Studio supports.
 pub const MAX_PATH_COMPONENT_BYTES: usize = 255;
 
 /// The tail `write_upload` gives its partial files.
-pub const UPLOAD_PARTIAL_SUFFIX: &str = "bibcode-upload.part";
+pub const UPLOAD_PARTIAL_SUFFIX: &str = "coddy-studio-upload.part";
 
 /// Path separators, refused wherever the file lands: they would change which entry is addressed
 /// rather than merely how it is spelled. Control characters (NUL included) are refused with them.
@@ -44,7 +44,7 @@ pub fn max_transfer_stem_bytes(suffix: &str) -> usize {
     MAX_PATH_COMPONENT_BYTES.saturating_sub(partial_name_overhead(suffix))
 }
 
-/// The file-name policy a BiBCode transfer applies.
+/// The file-name policy a Coddy Studio transfer applies.
 ///
 /// The rules that hold everywhere always apply: a non-empty name, not `.` or `..`, no path
 /// separator, no control character, and short enough that its partial sibling still fits one
@@ -428,7 +428,7 @@ mod tests {
             MAX_PATH_COMPONENT_BYTES
         );
         // A longer suffix buys a shorter stem, and the two always add up to the component limit.
-        assert!(max_transfer_stem_bytes("bibcode-download.part") < budget);
+        assert!(max_transfer_stem_bytes("coddy-studio-download.part") < budget);
         // Any name the validator accepts still yields a partial inside one component, because
         // the partial echoes only what fits rather than the whole name.
         for name in [
@@ -585,7 +585,7 @@ mod tests {
         assert_ne!(first, second);
         for name in [&first, &second] {
             assert!(name.len() <= MAX_PATH_COMPONENT_BYTES, "{name}");
-            assert!(name.ends_with(".bibcode-upload.part"));
+            assert!(name.ends_with(".coddy-studio-upload.part"));
             assert!(!name.contains('/'));
         }
         // A budget that lands mid-scalar backs off to a boundary: one ASCII byte then 3-byte

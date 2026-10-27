@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ServerProviderModel } from "@bibcode/contracts";
+import type { ServerProviderModel } from "@coddy/contracts";
 
 import { deriveProviderModelsForDisplay } from "./ProviderInstanceCard";
 

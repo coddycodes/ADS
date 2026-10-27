@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

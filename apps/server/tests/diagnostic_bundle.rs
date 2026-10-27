@@ -6,7 +6,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use bibcode_server::diagnostic_bundle::{DiagnosticBundleService, MAX_DIAGNOSTIC_ARCHIVE_BYTES};
+use coddy_studio_server::diagnostic_bundle::{
+    DiagnosticBundleService, MAX_DIAGNOSTIC_ARCHIVE_BYTES,
+};
 use tempfile::TempDir;
 use time::OffsetDateTime;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -76,7 +78,10 @@ async fn bundle_contains_exact_root_entries_and_oldest_first_server_rotations() 
         .await
         .expect("diagnostic bundle");
 
-    assert_eq!(bundle.filename, "bibcode-diagnostics-20260715T123456Z.zip");
+    assert_eq!(
+        bundle.filename,
+        "coddy-studio-diagnostics-20260715T123456Z.zip"
+    );
     let (names, entries) = validated_zip_entries(&bundle.bytes).expect("safe diagnostic zip");
     assert_eq!(
         names,

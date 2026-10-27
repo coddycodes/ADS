@@ -4,7 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   createTerminalInputScheduler,
   createTerminalInputSchedulerRegistry,
@@ -12,7 +12,7 @@ import {
   type TerminalInputSendResult,
   type TerminalRenderSignal,
   terminalInputKey,
-} from "@bibcode/client-runtime/state/terminal";
+} from "@coddy/client-runtime/state/terminal";
 import {
   Plus,
   SquareSplitHorizontal,
@@ -29,8 +29,8 @@ import {
   type TerminalResizeInput,
   type ThreadId,
   type ProjectId,
-} from "@bibcode/contracts";
-import { getTerminalLabel } from "@bibcode/shared/terminalLabels";
+} from "@coddy/contracts";
+import { getTerminalLabel } from "@coddy/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
@@ -587,7 +587,7 @@ function isDocumentVisible(): boolean {
     typeof document === "undefined" ||
     resolveTerminalDocumentVisibility(
       document.visibilityState,
-      import.meta.env.VITE_BIBCODE_DESKTOP_E2E === "1",
+      import.meta.env.VITE_CODDY_STUDIO_DESKTOP_E2E === "1",
     )
   );
 }
@@ -1919,7 +1919,7 @@ export function TerminalViewport({
       if (staging === null) {
         writeSystemMessage(
           terminal,
-          "Image paste needs a newer BiBCode server on this environment.",
+          "Image paste needs a newer Coddy Studio server on this environment.",
         );
         return;
       }

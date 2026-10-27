@@ -3,9 +3,9 @@ import * as NodeCrypto from "node:crypto";
 import type {
   RelayEnvironmentLinkProofPayload,
   RelayEnvironmentLinkRequest,
-} from "@bibcode/contracts/relay";
-import { RELAY_LINK_PROOF_TYP } from "@bibcode/shared/relayJwt";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/contracts/relay";
+import { RELAY_LINK_PROOF_TYP } from "@coddy/shared/relayJwt";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -37,7 +37,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "bibcode-relay",
+  clerkJwtAudience: "coddy-studio-relay",
   cloudMintPrivateKey: Redacted.make(relayKeyPair.privateKey),
   cloudMintPublicKey: relayKeyPair.publicKey,
   managedEndpointBaseDomain: undefined,
@@ -67,7 +67,7 @@ const makeRequestFor = (managedTunnelsEnabled: boolean) =>
       expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
     });
     const payload = {
-      iss: "bibcode-env:env-link-test",
+      iss: "coddy-studio-env:env-link-test",
       aud: "https://relay.example.test",
       sub: "env-link-test",
       jti: "link-proof-jti",
@@ -154,11 +154,11 @@ function testLayer(input?: {
           revokeForUser: input?.revokeLink ?? (() => Effect.succeed(false)),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
-          create: input?.createCredential ?? (() => Effect.succeed("bibcodeenv_credential_secret")),
+          create: input?.createCredential ?? (() => Effect.succeed("coddystudioenv_credential_secret")),
           rotate:
             input?.rotateCredential ??
             ((rotationInput) =>
-              (input?.createCredential ?? (() => Effect.succeed("bibcodeenv_credential_secret")))(
+              (input?.createCredential ?? (() => Effect.succeed("coddystudioenv_credential_secret")))(
                 rotationInput,
               ).pipe(
                 Effect.map((token) => ({
@@ -403,7 +403,7 @@ describe("EnvironmentLinker", () => {
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
       const result = yield* linker.link({ userId: "user_123", request });
       expect(result.environmentId).toBe(payload.environmentId);
-      expect(result.environmentCredential).toBe("bibcodeenv_credential_secret");
+      expect(result.environmentCredential).toBe("coddystudioenv_credential_secret");
       expect(persistedEnvironmentId).toBe(payload.environmentId);
     }).pipe(
       Effect.provide(
@@ -667,7 +667,7 @@ describe("EnvironmentLinker", () => {
         createCredential: () =>
           Effect.sync(() => {
             credentialsActive = true;
-            return "bibcodeenv_credential_secret";
+            return "coddystudioenv_credential_secret";
           }),
         revokeLink: () =>
           Effect.sync(() => {
@@ -720,7 +720,7 @@ describe("EnvironmentLinker", () => {
         linkedAt: "2026-01-01T00:00:00.000Z",
       };
       const rotation = {
-        token: "bibcodeenv_undisclosed_replacement",
+        token: "coddystudioenv_undisclosed_replacement",
         credentialId: "replacement-credential",
         previousCredentialId: "prior-credential",
         environmentId: "env-link-test",
@@ -810,7 +810,7 @@ describe("EnvironmentLinker", () => {
         providerKind: "cloudflare_tunnel" as const,
       };
       const rotation = {
-        token: "bibcodeenv_undisclosed_replacement",
+        token: "coddystudioenv_undisclosed_replacement",
         credentialId: "replacement-credential",
         previousCredentialId: "prior-credential",
         environmentId: "env-link-test",
@@ -890,7 +890,7 @@ describe("EnvironmentLinker", () => {
       const credentialCreated = yield* Deferred.make<void>();
       let destructiveCleanup = 0;
       const rotation = {
-        token: "bibcodeenv_undisclosed_replacement",
+        token: "coddystudioenv_undisclosed_replacement",
         credentialId: "replacement-credential",
         previousCredentialId: null,
         environmentId: "env-link-test",

@@ -1,6 +1,6 @@
 //! The OpenCode 2 (`/api/*`) wire layer: request bodies, the permission ruleset, forms, error
 //! classification and the root-turn event translator. `runtime.rs` owns the I/O and turns these
-//! values into BiBCode provider events. Shapes are those of OpenCode 2.0.29, captured from a real
+//! values into Coddy Studio provider events. Shapes are those of OpenCode 2.0.29, captured from a real
 //! server; see `docs/superpowers/specs/2026-10-15-opencode-v2-client-design.md`.
 
 use std::collections::{HashMap, HashSet};
@@ -14,7 +14,7 @@ const MAX_TRACKED_DESCENDANTS: usize = 256;
 /// Bounds the per-message text kept to complete a missed delta from `session.text.ended`.
 const MAX_TRACKED_TEXT_STREAMS: usize = 256;
 
-/// BiBCode's permission modes as an OpenCode 2 ruleset. The last matching rule wins, so the
+/// Coddy Studio's permission modes as an OpenCode 2 ruleset. The last matching rule wins, so the
 /// broad rule comes first. V2 renamed `bash` to `shell` and `task` to `subagent`; `codesearch` and
 /// `doom_loop` are not V2 actions.
 pub(crate) fn permission_rules(runtime_mode: &str) -> Vec<Value> {
@@ -80,7 +80,7 @@ pub(crate) fn session_create_body(
     body
 }
 
-/// A prompt body. `attachments` are the V1 file parts BiBCode materializes
+/// A prompt body. `attachments` are the V1 file parts Coddy Studio materializes
 /// (`{type:"file", mime, url, filename}`); OpenCode 2 takes `{uri, name}`.
 pub(crate) fn prompt_body(text: Option<&str>, attachments: &[Value], id: Option<&str>) -> Value {
     let files = attachments
@@ -202,7 +202,7 @@ fn interrupted() -> OpenCodeFailure {
     }
 }
 
-/// One field of a pending OpenCode 2 form, kept to coerce BiBCode's answer to its type and to
+/// One field of a pending OpenCode 2 form, kept to coerce Coddy Studio's answer to its type and to
 /// turn a chosen option's label back into its value.
 #[derive(Clone, Debug)]
 pub(crate) struct FormField {
@@ -211,7 +211,7 @@ pub(crate) struct FormField {
     options: Vec<(String, String)>,
 }
 
-/// A form as BiBCode questions, or `None` when a field cannot be answered here: BiBCode's question
+/// A form as Coddy Studio questions, or `None` when a field cannot be answered here: Coddy Studio's question
 /// UI offers choices, so a field without options (free text, numbers) or an `external` field
 /// (such as an OAuth link) makes the form unanswerable.
 pub(crate) fn form_questions(form: &Value) -> Option<(Vec<Value>, Vec<FormField>)> {
@@ -224,7 +224,7 @@ pub(crate) fn form_questions(form: &Value) -> Option<(Vec<Value>, Vec<FormField>
         if field.get("hidden").and_then(Value::as_bool) == Some(true) {
             continue;
         }
-        // BiBCode asks every question it shows, so a field that is active only for some answers
+        // Coddy Studio asks every question it shows, so a field that is active only for some answers
         // could not be submitted.
         if field
             .get("when")
@@ -273,7 +273,7 @@ pub(crate) fn form_questions(form: &Value) -> Option<(Vec<Value>, Vec<FormField>
     (!questions.is_empty()).then_some((questions, fields))
 }
 
-/// BiBCode's answers (question id → string or list) as an OpenCode 2 form answer, each value
+/// Coddy Studio's answers (question id → string or list) as an OpenCode 2 form answer, each value
 /// coerced to its field's type. Unanswered fields are left out.
 pub(crate) fn form_answer(fields: &[FormField], answers: &Value) -> Value {
     let mut answer = serde_json::Map::new();
@@ -348,7 +348,7 @@ fn non_empty(value: Option<&Value>) -> Option<&str> {
 /// What the root-turn translator asks the runtime to do for one OpenCode 2 event.
 #[derive(Debug)]
 pub(crate) enum V2Output {
-    /// The root session started executing (BiBCode's prompt, or OpenCode delivering a
+    /// The root session started executing (Coddy Studio's prompt, or OpenCode delivering a
     /// background result on its own).
     ExecutionStarted,
     TextDelta {
@@ -374,7 +374,7 @@ pub(crate) enum V2Output {
         questions: Vec<Value>,
         fields: Vec<FormField>,
     },
-    /// A form BiBCode cannot show, to be cancelled so the agent is told nobody answered.
+    /// A form Coddy Studio cannot show, to be cancelled so the agent is told nobody answered.
     FormUnanswerable {
         form_id: String,
         session_id: String,
@@ -656,7 +656,7 @@ mod tests {
             })
             .expect("permission asked");
         assert!(asked.0.starts_with("per_"));
-        assert_eq!(asked.1, "shell: echo bibcode-v2");
+        assert_eq!(asked.1, "shell: echo coddy-studio-v2");
         assert!(outputs.iter().any(|output| matches!(
             output,
             V2Output::PermissionSettled { request_id } if *request_id == asked.0
@@ -1059,7 +1059,7 @@ pub(crate) mod catalog {
         )
     }
 
-    /// Commands, then skills as `source: "skill"` entries (BiBCode offers both under `/`).
+    /// Commands, then skills as `source: "skill"` entries (Coddy Studio offers both under `/`).
     pub(crate) fn commands(commands: &Value, skills: &Value) -> Value {
         Value::Array(
             data(commands)

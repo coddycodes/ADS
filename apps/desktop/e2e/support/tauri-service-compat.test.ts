@@ -41,7 +41,7 @@ describe("@wdio/tauri-service compatibility", () => {
     expect(cargoManifest).toContain(
       'desktop-e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]',
     );
-    expect(desktopLibrary).toContain("bibcode_server::logging::initialize");
+    expect(desktopLibrary).toContain("coddy_studio_server::logging::initialize");
     const loggingPluginIndex = desktopLibrary.indexOf(".plugin(desktop_e2e_logging_plugin())");
     const wdioPluginIndex = desktopLibrary.indexOf(".plugin(tauri_plugin_wdio::init())");
     expect(loggingPluginIndex).toBeGreaterThan(-1);
@@ -53,7 +53,7 @@ describe("@wdio/tauri-service compatibility", () => {
     expect(webEntry.indexOf('import("@wdio/tauri-plugin")')).toBeLessThan(
       webEntry.indexOf('import("./bootstrap")'),
     );
-    expect(e2eConfig.identifier).toBe("com.bibcode.desktop.e2e");
+    expect(e2eConfig.identifier).toBe("com.coddy.studio.desktop.e2e");
     expect(e2eConfig.app.withGlobalTauri).toBe(true);
     expect(e2eConfig.app.security.capabilities[0]?.permissions).toContain("wdio:default");
   });
@@ -75,12 +75,12 @@ describe("@wdio/tauri-service compatibility", () => {
     expect(wdioConfig).not.toContain("sheet.insertRule");
     expect(wdioConfig).toContain("window.localStorage.clear()");
     expect(wdioConfig).toContain("window.sessionStorage.clear()");
-    expect(wdioConfig).toContain('indexedDB.open("bibcode:connection-runtime", 2)');
+    expect(wdioConfig).toContain('indexedDB.open("coddy-studio:connection-runtime", 2)');
     expect(wdioConfig).toContain('["catalog", "shell", "thread"]');
     expect(wdioConfig).toContain("transaction.objectStore(storeName).clear()");
     expect(wdioConfig).not.toContain("indexedDB.deleteDatabase");
     expect(wdioConfig.indexOf("window.localStorage.clear()")).toBeLessThan(
-      wdioConfig.indexOf('indexedDB.open("bibcode:connection-runtime", 2)'),
+      wdioConfig.indexOf('indexedDB.open("coddy-studio:connection-runtime", 2)'),
     );
     expect(wdioConfig.indexOf("transaction.objectStore(storeName).clear()")).toBeLessThan(
       wdioConfig.indexOf("await refreshDesktopUiDocument()"),

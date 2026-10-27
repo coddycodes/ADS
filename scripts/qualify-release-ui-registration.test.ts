@@ -45,7 +45,7 @@ describe("controlled remote UI dispatch registration", () => {
       expect(job.env).toEqual({
         CARGO_BUILD_JOBS: "2",
         CARGO_PROFILE_DEV_DEBUG: "0",
-        BIBCODE_RELEASE_UI_MATRIX: "${{ inputs.matrix || 'core' }}",
+        CODDY_STUDIO_RELEASE_UI_MATRIX: "${{ inputs.matrix || 'core' }}",
       });
     }
   });
@@ -76,10 +76,10 @@ describe("controlled remote UI dispatch registration", () => {
       );
       expect(named("Required static gates").run).toContain("vp check");
       expect(named("Build guarded server and maintained interactive fake host").run).toBe(
-        "cargo build -p bibcode-server --bin bibcode --example remote_update_fake_host --features hermetic-test-guard -j 2",
+        "cargo build -p coddy-studio-server --bin coddy-studio --example remote_update_fake_host --features hermetic-test-guard -j 2",
       );
       expect(named("Run contained remote update UI selection").run).toBe(
-        'python3 -B scripts/qualify-chat-uploads.py --scenario remote-updates-ui --matrix "$BIBCODE_RELEASE_UI_MATRIX"',
+        'python3 -B scripts/qualify-chat-uploads.py --scenario remote-updates-ui --matrix "$CODDY_STUDIO_RELEASE_UI_MATRIX"',
       );
       const evidence = named("Retain explicit safe evidence");
       expect(evidence.if).toBe("always()");

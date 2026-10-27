@@ -1,4 +1,4 @@
-import type { PullRequestsDetail, PullRequestsContext, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsDetail, PullRequestsContext, ScopedProjectRef } from "@coddy/contracts";
 import { PullRequestsBaseBranchPicker } from "../edit/PullRequestsBaseBranchPicker";
 import { PullRequestsCheckoutMenu } from "../PullRequestsCheckoutMenu";
 import type { PullRequestsScope } from "../usePullRequestsAction";

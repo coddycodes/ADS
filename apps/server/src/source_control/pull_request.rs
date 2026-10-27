@@ -55,7 +55,7 @@ impl ProviderCommandSpec {
     }
 }
 
-/// Environment for every provider CLI BiBCode starts. Without it, glab sends a
+/// Environment for every provider CLI Coddy Studio starts. Without it, glab sends a
 /// telemetry event to the host before each command returns: one more HTTPS
 /// connection per call, about 1.2 s on a VPN.
 pub(crate) fn provider_cli_environment(provider: ProviderKind) -> Vec<(OsString, OsString)> {
@@ -143,7 +143,7 @@ impl PrivateJsonBody {
         body: &serde_json::Value,
     ) -> std::io::Result<Self> {
         std::fs::create_dir_all(directory)?;
-        let path = directory.join(format!("bibcode-body-{}.json", uuid::Uuid::new_v4()));
+        let path = directory.join(format!("coddy-studio-body-{}.json", uuid::Uuid::new_v4()));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -1253,7 +1253,7 @@ impl PullRequestService {
                     operation,
                     None,
                     reference,
-                    "Set BIBCODE_BITBUCKET_EMAIL and BIBCODE_BITBUCKET_API_TOKEN, or BIBCODE_BITBUCKET_ACCESS_TOKEN.",
+                    "Set CODDY_STUDIO_BITBUCKET_EMAIL and CODDY_STUDIO_BITBUCKET_API_TOKEN, or CODDY_STUDIO_BITBUCKET_ACCESS_TOKEN.",
                 )
             })?;
         let response = tokio::select! {
@@ -1797,23 +1797,23 @@ fn urls_have_same_origin(configured: &reqwest::Url, candidate: &reqwest::Url) ->
 }
 
 fn bitbucket_api_base_url() -> String {
-    environment_value("BIBCODE_BITBUCKET_API_BASE_URL")
+    environment_value("CODDY_STUDIO_BITBUCKET_API_BASE_URL")
         .unwrap_or_else(|| "https://api.bitbucket.org/2.0".to_owned())
         .trim_end_matches('/')
         .to_owned()
 }
 
 fn bitbucket_credentials() -> Option<BitbucketCredentials> {
-    if let Some(token) = environment_value("BIBCODE_BITBUCKET_ACCESS_TOKEN") {
+    if let Some(token) = environment_value("CODDY_STUDIO_BITBUCKET_ACCESS_TOKEN") {
         return Some(BitbucketCredentials::Bearer(token));
     }
-    let email = environment_value("BIBCODE_BITBUCKET_EMAIL")?;
-    let token = environment_value("BIBCODE_BITBUCKET_API_TOKEN")?;
+    let email = environment_value("CODDY_STUDIO_BITBUCKET_EMAIL")?;
+    let token = environment_value("CODDY_STUDIO_BITBUCKET_API_TOKEN")?;
     Some(BitbucketCredentials::Basic { email, token })
 }
 
 fn environment_value(name: &str) -> Option<String> {
-    crate::environment_identity::bibcode_env_string(name)
+    crate::environment_identity::coddy_studio_env_string(name)
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
@@ -3581,7 +3581,7 @@ esac
             )
             .await
             .expect_err("missing Bitbucket credentials");
-        assert!(error.detail.contains("BIBCODE_BITBUCKET_ACCESS_TOKEN"));
+        assert!(error.detail.contains("CODDY_STUDIO_BITBUCKET_ACCESS_TOKEN"));
 
         let oversized_detail = "x".repeat(2_100);
         let status_server = spawn_http_server(vec![(503, oversized_detail)]).await;

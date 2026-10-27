@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@coddy/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => {
@@ -70,7 +70,7 @@ vi.mock("./threads", () => ({
     sessionAtom: harness.sessionAtom,
   },
 }));
-vi.mock("@bibcode/client-runtime/state/threads", () => ({
+vi.mock("@coddy/client-runtime/state/threads", () => ({
   mergeEnvironmentThread: harness.mergeThread,
 }));
 

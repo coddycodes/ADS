@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
-use bibcode_server::remote_update::{
+use coddy_studio_server::remote_update::{
     HostUpdaterFuture, HostUpdaterStatus, RemoteUpdateDelegate, RemoteUpdateInstallMode,
     RemoteUpdateRequester, RemoteUpdateState, RemoteUpdateSupport, RemoteUpdateSupportReason,
 };
-use bibcode_server::{
+use coddy_studio_server::{
     RemoteUpdateInstallKind, RpcExit, ServerConfig, ServerHandle, ServerMessage, ServerRuntime,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -15,7 +15,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const TOKEN_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
-const BOOTSTRAP_TOKEN_TYPE: &str = "urn:bibcode:params:oauth:token-type:environment-bootstrap";
+const BOOTSTRAP_TOKEN_TYPE: &str = "urn:coddy-studio:params:oauth:token-type:environment-bootstrap";
 
 #[path = "support/hermetic_providers.rs"]
 mod hermetic_providers;
@@ -47,7 +47,7 @@ fn the_status_contract_shape_round_trips_through_the_rust_snapshot() {
         serde_json::from_str(&std::fs::read_to_string(path).expect("contract-shape fixture"))
             .expect("fixture JSON");
     let wire = fixture["exit"]["value"].clone();
-    let snapshot: bibcode_server::RemoteUpdateSnapshot =
+    let snapshot: coddy_studio_server::RemoteUpdateSnapshot =
         serde_json::from_value(wire.clone()).expect("the Rust mirror decodes the TS shape");
     assert_eq!(snapshot.download_percent, Some(42));
     assert_eq!(
@@ -127,7 +127,7 @@ async fn headless_server_answers_manual_update_surface() {
 
     // Descriptor advertises the surface before any RPC (covers apps/server/src/http.rs).
     let descriptor: Value = reqwest::get(format!(
-        "http://{}/.well-known/bibcode/environment",
+        "http://{}/.well-known/coddy-studio/environment",
         handle.local_addr()
     ))
     .await
@@ -210,7 +210,7 @@ async fn boot_id_changes_on_every_start_while_storage_identity_stays() {
     };
     let descriptor = |handle: &ServerHandle| {
         let url = format!(
-            "http://{}/.well-known/bibcode/environment",
+            "http://{}/.well-known/coddy-studio/environment",
             handle.local_addr()
         );
         async move {
@@ -297,7 +297,7 @@ async fn desktop_integrated_server_routes_install_through_the_delegate() {
         });
     let handle = ServerRuntime::start_with_desktop_integration(
         config,
-        std::sync::Arc::new(bibcode_server::diagnostics::UnavailableDesktopUiProcessObserver),
+        std::sync::Arc::new(coddy_studio_server::diagnostics::UnavailableDesktopUiProcessObserver),
         Arc::new(FixtureHostUpdater::default()),
     )
     .await
@@ -344,11 +344,11 @@ async fn install_passes_the_callers_client_metadata_and_logs_the_request_once() 
             reason: RemoteUpdateSupportReason::Available,
             install_kind: RemoteUpdateInstallKind::Unknown,
         });
-    let log_path = bibcode_server::persistence::StatePaths::from_config(&config).server_log;
+    let log_path = coddy_studio_server::persistence::StatePaths::from_config(&config).server_log;
     let updater = Arc::new(FixtureHostUpdater::default());
     let handle = ServerRuntime::start_with_desktop_integration(
         config,
-        Arc::new(bibcode_server::diagnostics::UnavailableDesktopUiProcessObserver),
+        Arc::new(coddy_studio_server::diagnostics::UnavailableDesktopUiProcessObserver),
         updater.clone(),
     )
     .await

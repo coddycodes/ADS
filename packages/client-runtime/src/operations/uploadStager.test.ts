@@ -1,4 +1,4 @@
-import { UploadError, type UploadAppendInput } from "@bibcode/contracts";
+import { UploadError, type UploadAppendInput } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import { sha256 } from "@noble/hashes/sha2.js";
 import * as Cause from "effect/Cause";

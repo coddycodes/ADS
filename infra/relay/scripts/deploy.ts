@@ -95,7 +95,7 @@ export function reconcileRootEnvRelayUrl(contents: string, relayUrl: string): st
     relayUrl,
     "Relay deployment environment values cannot contain line breaks.",
   );
-  const assignment = /^\s*(?:export\s+)?BIBCODE_RELAY_URL\s*(?:=|:)/u;
+  const assignment = /^\s*(?:export\s+)?CODDY_STUDIO_RELAY_URL\s*(?:=|:)/u;
   const lines = contents.length === 0 ? [] : contents.split(/\r?\n/u);
   if (/\r?\n$/u.test(contents)) {
     lines.pop();
@@ -108,12 +108,12 @@ export function reconcileRootEnvRelayUrl(contents: string, relayUrl: string): st
       continue;
     }
     if (!seen) {
-      next.push(`BIBCODE_RELAY_URL=${relayUrl}`);
+      next.push(`CODDY_STUDIO_RELAY_URL=${relayUrl}`);
       seen = true;
     }
   }
   if (!seen) {
-    next.push(`BIBCODE_RELAY_URL=${relayUrl}`);
+    next.push(`CODDY_STUDIO_RELAY_URL=${relayUrl}`);
   }
   return `${next.join("\n")}\n`;
 }
@@ -165,7 +165,7 @@ export class RelayDeployOperations extends Context.Service<
     readonly stack: (requirements: RelayProvisioningRequirements) => RelayStackEffect;
     readonly state: typeof Cloudflare.state;
   }
->()("bibcode-relay/scripts/deploy/RelayDeployOperations") {}
+>()("coddy-studio-relay/scripts/deploy/RelayDeployOperations") {}
 
 export function serializeGithubOutput(entries: Readonly<Record<string, string | boolean>>): string {
   return Object.entries(entries)
@@ -414,7 +414,7 @@ export function publicConfigFromOutput(output: unknown): RelayPublicConfig | nul
 const readRelayPublicConfig = Effect.fn("relay.deploy.readState")(function* (stage: string) {
   const state = yield* State.State;
   const service = yield* state;
-  const output = yield* service.getOutput({ stack: "BiBCodeRelay", stage });
+  const output = yield* service.getOutput({ stack: "CoddyStudioRelay", stage });
   const publicConfig = publicConfigFromOutput(output);
   if (publicConfig === null) {
     return yield* new RelayDeployError({
@@ -597,7 +597,7 @@ export const relayDeployCommand = Command.make(
     ),
   },
   deploy,
-).pipe(Command.withDescription("Deploy the BiBCode relay through Alchemy."));
+).pipe(Command.withDescription("Deploy the Coddy Studio relay through Alchemy."));
 
 if (import.meta.main) {
   Command.run(relayDeployCommand, { version: "0.0.0" }).pipe(

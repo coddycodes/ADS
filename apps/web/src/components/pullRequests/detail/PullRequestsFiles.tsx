@@ -14,8 +14,8 @@ import type {
   PullRequestsFiles as Files,
   ScopedProjectRef,
   PullRequestsTimeline,
-} from "@bibcode/contracts";
-import { projectKey } from "@bibcode/client-runtime/state/entities";
+} from "@coddy/contracts";
+import { projectKey } from "@coddy/client-runtime/state/entities";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiffIcon, FileMinusIcon, FilePlusIcon, FolderIcon, MoveRightIcon } from "lucide-react";
 import { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";

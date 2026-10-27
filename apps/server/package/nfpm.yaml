@@ -1,31 +1,31 @@
-name: bibcode-server
-arch: ${BIBCODE_SERVER_PACKAGE_ARCH}
+name: coddy-studio-server
+arch: ${CODDY_STUDIO_SERVER_PACKAGE_ARCH}
 platform: linux
-version: ${BIBCODE_SERVER_PACKAGE_VERSION}
+version: ${CODDY_STUDIO_SERVER_PACKAGE_VERSION}
 release: 1
 section: devel
 priority: optional
-maintainer: BiBCode Maintainers <mubeda@users.noreply.github.com>
-description: Native BiBCode server and version-matched web client
-homepage: https://github.com/mubeda/BibCode
+maintainer: CoddyStudio Maintainers <mubeda@users.noreply.github.com>
+description: Native CoddyStudio server and version-matched web client
+homepage: https://github.com/mubeda/CoddyStudio
 license: MIT
 contents:
-  - src: ${BIBCODE_SERVER_PACKAGE_ROOT}/bibcode
+  - src: ${CODDY_STUDIO_SERVER_PACKAGE_ROOT}/coddy-studio
     expand: true
-    dst: /usr/bin/bibcode
+    dst: /usr/bin/coddy-studio
     file_info:
       mode: 0755
-  - src: ${BIBCODE_SERVER_PACKAGE_ROOT}/web
+  - src: ${CODDY_STUDIO_SERVER_PACKAGE_ROOT}/web
     expand: true
-    dst: /usr/share/bibcode/web
+    dst: /usr/share/coddy-studio/web
     type: tree
-  - src: ${BIBCODE_SERVER_PACKAGE_ROOT}/README.md
+  - src: ${CODDY_STUDIO_SERVER_PACKAGE_ROOT}/README.md
     expand: true
-    dst: /usr/share/doc/bibcode-server/README.md
+    dst: /usr/share/doc/coddy-studio-server/README.md
     file_info:
       mode: 0644
-  - src: ${BIBCODE_SERVER_PACKAGE_ROOT}/LICENSE
+  - src: ${CODDY_STUDIO_SERVER_PACKAGE_ROOT}/LICENSE
     expand: true
-    dst: /usr/share/doc/bibcode-server/LICENSE
+    dst: /usr/share/doc/coddy-studio-server/LICENSE
     file_info:
       mode: 0644

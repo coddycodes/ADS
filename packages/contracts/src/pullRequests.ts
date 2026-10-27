@@ -125,7 +125,7 @@ export const PullRequestsHostCapabilities = Schema.Struct({
   vocabulary: Schema.Struct({
     // Compatibility-only request nouns: both fields remain required for older
     // clients. Current clients derive them from the provider kind through
-    // @bibcode/shared/sourceControl instead of using this server copy.
+    // @coddy/shared/sourceControl instead of using this server copy.
     pullRequest: TrimmedNonEmptyStringSchema,
     pullRequests: TrimmedNonEmptyStringSchema,
     checks: TrimmedNonEmptyStringSchema,

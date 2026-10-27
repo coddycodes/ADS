@@ -2,7 +2,7 @@ import type {
   PullRequestsCheckoutInput,
   PullRequestsCheckoutResult,
   VcsWorktreeDescriptor,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 export type CheckoutWorktree = Pick<
   VcsWorktreeDescriptor,
   "path" | "branch" | "isBare" | "directoryState"

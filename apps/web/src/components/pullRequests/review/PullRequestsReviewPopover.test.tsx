@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { PullRequestsOperationError, type PullRequestsPermissions } from "@bibcode/contracts";
+import { PullRequestsOperationError, type PullRequestsPermissions } from "@coddy/contracts";
 import { usePullRequestsStore, type PendingInlineComment } from "../../../pullRequestsStore";
 import { context, detail } from "../detail/testFixtures";
 import { allowed, button, click, input, mount, projectRef, mockRun } from "./testHelpers";

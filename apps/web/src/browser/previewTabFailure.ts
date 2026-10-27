@@ -1,4 +1,4 @@
-import type { PreviewReportStatusInput, ScopedThreadRef } from "@bibcode/contracts";
+import type { PreviewReportStatusInput, ScopedThreadRef } from "@coddy/contracts";
 
 import { setPreviewLocalFailure } from "~/previewStateStore";
 
@@ -22,7 +22,7 @@ export async function failPreviewTabNavigation(input: {
   }) => Promise<unknown>;
 }): Promise<void> {
   const { threadRef, tabId, url, failure } = input;
-  // Code 0: the description is a sentence from BiBCode, not a network error name.
+  // Code 0: the description is a sentence from Coddy Studio, not a network error name.
   if (!failure.refusedByServer) {
     setPreviewLocalFailure(threadRef, tabId, { url, code: 0, description: failure.message });
     return;

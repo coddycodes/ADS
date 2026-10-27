@@ -13,22 +13,22 @@ import {
   type ProviderInstanceId,
   type ProviderSessionDefault,
   type WorktreeRemovalResult,
-} from "@bibcode/contracts";
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { safeErrorLogAttributes } from "@bibcode/client-runtime/errors";
+} from "@coddy/contracts";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
+import { safeErrorLogAttributes } from "@coddy/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
-import { selectWorktreeCatalogCapabilityPolicy } from "@bibcode/client-runtime/state/worktrees";
+} from "@coddy/client-runtime/state/runtime";
+import { selectWorktreeCatalogCapabilityPolicy } from "@coddy/client-runtime/state/worktrees";
 import {
   BUNDLED_TERMINAL_FONT_PREFERENCE,
   DEFAULT_DEFAULT_AGENT_SELECTION,
   DEFAULT_UNIFIED_SETTINGS,
   type TerminalFontPreference,
-} from "@bibcode/contracts/settings";
-import { createModelSelection } from "@bibcode/shared/model";
+} from "@coddy/contracts/settings";
+import { createModelSelection } from "@coddy/shared/model";
 import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
@@ -177,7 +177,7 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 const BROWSER_LINK_TARGET_LABELS = {
-  app: "BiBCode browser",
+  app: "Coddy Studio browser",
   system: "System browser",
 } as const;
 
@@ -424,7 +424,7 @@ export function useGeneralSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  // The link target row is hidden where the BiBCode browser can't open every
+  // The link target row is hidden where the Coddy Studio browser can't open every
   // link (browser mode frames only this server's localhost previews).
   const linkTargetShown = canPreviewAnyUrlInRuntime();
 
@@ -537,7 +537,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
-          description="Choose how BiBCode looks across the app."
+          description="Choose how Coddy Studio looks across the app."
           resetAction={
             theme !== "system" ? (
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
@@ -2046,7 +2046,7 @@ export function ArchivedThreadsPanel() {
         if (isLegacyWorktreeDetach) {
           const confirmed = await api.dialogs.confirm(
             [
-              `Remove worktree "${thread.title}" from BiBCode?`,
+              `Remove worktree "${thread.title}" from Coddy Studio?`,
               "The Git worktree and its files will be left untouched.",
             ].join("\n"),
           );

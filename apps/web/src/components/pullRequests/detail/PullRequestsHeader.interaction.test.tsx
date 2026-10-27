@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { PullRequestsDetail } from "@bibcode/contracts";
+import type { PullRequestsDetail } from "@coddy/contracts";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { allowed, button, click, mount, projectRef } from "../review/testHelpers";

@@ -1,5 +1,5 @@
-import { getChangeRequestTerminologyForKind } from "@bibcode/shared/sourceControl";
-import type { PullRequestsChecks as Checks, PullRequestsContext } from "@bibcode/contracts";
+import { getChangeRequestTerminologyForKind } from "@coddy/shared/sourceControl";
+import type { PullRequestsChecks as Checks, PullRequestsContext } from "@coddy/contracts";
 import { CircleCheckIcon, CircleDotIcon, CircleMinusIcon, CircleXIcon } from "lucide-react";
 import { memo } from "react";
 import { PullRequestsExternalLink } from "../shared/PullRequestsMarkdown";

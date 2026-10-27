@@ -1,4 +1,4 @@
-import type { VcsStagingArea, VcsWorkingTreeFileStatus } from "@bibcode/contracts";
+import type { VcsStagingArea, VcsWorkingTreeFileStatus } from "@coddy/contracts";
 
 export type ChangeInclusion = "all" | "partial" | "none";
 

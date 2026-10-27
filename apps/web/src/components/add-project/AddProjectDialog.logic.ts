@@ -1,7 +1,7 @@
-import { VcsCloneStoppedError } from "@bibcode/client-runtime/state/vcs";
-import type { EnvironmentId } from "@bibcode/contracts";
-import { GitCloneOperationError } from "@bibcode/contracts";
-import { isWindowsAbsolutePath } from "@bibcode/shared/path";
+import { VcsCloneStoppedError } from "@coddy/client-runtime/state/vcs";
+import type { EnvironmentId } from "@coddy/contracts";
+import { GitCloneOperationError } from "@coddy/contracts";
+import { isWindowsAbsolutePath } from "@coddy/shared/path";
 import * as Schema from "effect/Schema";
 
 import {

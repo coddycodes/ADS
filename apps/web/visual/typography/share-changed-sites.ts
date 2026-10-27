@@ -2,7 +2,7 @@ import {
   AuthAccessWriteScope,
   AuthSessionId,
   type AuthAccessStreamSnapshotEvent,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { DesktopNetworkAccessSnapshot } from "../../src/state/desktopNetworkAccess";
 import * as DateTime from "effect/DateTime";
 

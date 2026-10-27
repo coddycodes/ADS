@@ -1,14 +1,14 @@
-import type { RemoteUpdateSnapshot } from "@bibcode/contracts";
+import type { RemoteUpdateSnapshot } from "@coddy/contracts";
 import {
   isRemoteUpdateRunActive,
   type RemoteUpdateRunState,
-} from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+} from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import {
   REMOTE_UPDATE_CHECK_TIMEOUT_MS,
   type RemoteUpdateCheckState,
   isRemoteUpdateConnectionFailure,
   isRemoteUpdateUnchecked,
-} from "@bibcode/client-runtime/state/remoteUpdates";
+} from "@coddy/client-runtime/state/remoteUpdates";
 import * as Cause from "effect/Cause";
 import type { AsyncResult } from "effect/reactivity";
 

@@ -16,7 +16,7 @@ use subtle::ConstantTimeEq;
 use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) const CLAUDE_HOOK_TOKEN_ENV: &str = "BIBCODE_CLAUDE_HOOK_TOKEN";
+pub(crate) const CLAUDE_HOOK_TOKEN_ENV: &str = "CODDY_STUDIO_CLAUDE_HOOK_TOKEN";
 const CLAUDE_HOOK_BODY_LIMIT: usize = 64 * 1024;
 const CLAUDE_HOOK_CHANNEL_CAPACITY: usize = 128;
 const CLAUDE_HOOK_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);

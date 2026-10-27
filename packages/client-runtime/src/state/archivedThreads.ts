@@ -1,4 +1,4 @@
-import { EnvironmentId, type OrchestrationShellSnapshot } from "@bibcode/contracts";
+import { EnvironmentId, type OrchestrationShellSnapshot } from "@coddy/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Option from "effect/Option";

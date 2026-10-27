@@ -3,7 +3,7 @@ import {
   type CompatVerdict,
   type ConnectionTransportSecurityInput,
   type PairingAddFailureReason,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 
 /**
  * Toast after an SSH environment is saved. Registration returns before any
@@ -20,10 +20,10 @@ export function describeSshEnvironmentAddedToast(input: {
   };
 }
 
-/** D16: version strings render as "BiBCode v<serverVersion>". */
+/** D16: version strings render as "Coddy Studio v<serverVersion>". */
 export function formatServerVersionLabel(serverVersion: string | null | undefined): string | null {
   const trimmed = serverVersion?.trim() ?? "";
-  return trimmed.length > 0 ? `BiBCode v${trimmed}` : null;
+  return trimmed.length > 0 ? `Coddy Studio v${trimmed}` : null;
 }
 
 export type CompatBadge = {
@@ -59,7 +59,7 @@ export type TransportBadge =
   | { readonly kind: "unencrypted"; readonly label: string; readonly guidance: string };
 
 export function resolveTransportBadge(environment: TransportBadgeInput): TransportBadge | null {
-  if (environment.relayManaged) return { kind: "relay", label: "BiBCode Connect" };
+  if (environment.relayManaged) return { kind: "relay", label: "Coddy Connect" };
   const target = environment.entry.target;
   if (target._tag === "SshConnectionTarget") return { kind: "ssh", label: "SSH tunnel" };
   if (target._tag !== "BearerConnectionTarget") return null;
@@ -185,7 +185,7 @@ export function describeRenameServerFailure(error: unknown): string {
   return "Couldn't save the name on this device. Try again.";
 }
 
-/** Accepts bare codes, bibcode deep links, and HTTP(S) pairing URLs. */
+/** Accepts bare codes, coddy-studio deep links, and HTTP(S) pairing URLs. */
 export function normalizePairingCodeInput(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;

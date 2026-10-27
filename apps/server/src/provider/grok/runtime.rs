@@ -173,7 +173,7 @@ impl GrokSessionRuntime {
                 json!({
                     "protocolVersion": 1,
                     "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false },
-                    "clientInfo": { "name": "bibcode-rust", "version": "0.1.1" },
+                    "clientInfo": { "name": "coddy-studio-rust", "version": "0.1.1" },
                 }),
             )
             .await?;

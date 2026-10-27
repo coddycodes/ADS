@@ -1,4 +1,4 @@
-import { DesktopSshEnvironmentTargetSchema, EnvironmentId } from "@bibcode/contracts";
+import { DesktopSshEnvironmentTargetSchema, EnvironmentId } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

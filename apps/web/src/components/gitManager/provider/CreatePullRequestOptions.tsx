@@ -1,4 +1,4 @@
-import type { EnvironmentId, PullRequestsCreateDefaults } from "@bibcode/contracts";
+import type { EnvironmentId, PullRequestsCreateDefaults } from "@coddy/contracts";
 import { memo, type ReactNode, useId, useMemo } from "react";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";

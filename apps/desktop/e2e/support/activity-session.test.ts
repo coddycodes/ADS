@@ -339,10 +339,10 @@ describe("materializeDesktopActivitySession", () => {
     expect(sentRequests).toHaveLength(1);
     expect(sentRequests[0]?.payload).toEqual({
       type: "thread.turn.start",
-      commandId: "bibcode-ui-activity-followup-turn-start",
-      threadId: "bibcode-ui-activity-thread",
+      commandId: "coddy-studio-ui-activity-followup-turn-start",
+      threadId: "coddy-studio-ui-activity-thread",
       message: {
-        messageId: "bibcode-ui-activity-followup-message",
+        messageId: "coddy-studio-ui-activity-followup-message",
         role: "user",
         text: "publish deterministic live activity update",
         attachments: [],
@@ -367,10 +367,10 @@ describe("materializeDesktopActivitySession", () => {
     expect(sentRequests[0]?.payload).toEqual(
       expect.objectContaining({
         type: "thread.turn.start",
-        commandId: "bibcode-ui-activity-composer-followup-turn-start",
-        threadId: "bibcode-ui-activity-thread",
+        commandId: "coddy-studio-ui-activity-composer-followup-turn-start",
+        threadId: "coddy-studio-ui-activity-thread",
         message: expect.objectContaining({
-          messageId: "bibcode-ui-activity-composer-followup-message",
+          messageId: "coddy-studio-ui-activity-composer-followup-message",
           text: "publish deterministic composer activity update",
         }),
         createdAt: expect.any(String),

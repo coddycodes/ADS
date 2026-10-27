@@ -1,7 +1,7 @@
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import {

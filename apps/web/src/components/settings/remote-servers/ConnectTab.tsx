@@ -23,23 +23,23 @@ import type {
   DesktopDiscoveredSshHost,
   DesktopSshEnvironmentTarget,
   EnvironmentId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   connectionStatusText,
   type CompatVerdict,
   type PairingAddFailureReason,
   RelayConnectionRegistration,
   RelayConnectionTarget,
-} from "@bibcode/client-runtime/connection";
-import { classifyPairingEndpoint } from "@bibcode/shared/advertisedEndpoint";
-import { parsePairingCode } from "@bibcode/shared/pairingCode";
-import { findErrorTraceId } from "@bibcode/client-runtime/errors";
+} from "@coddy/client-runtime/connection";
+import { classifyPairingEndpoint } from "@coddy/shared/advertisedEndpoint";
+import { parsePairingCode } from "@coddy/shared/pairingCode";
+import { findErrorTraceId } from "@coddy/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
-import { fanOutRemoteUpdateChecks } from "@bibcode/client-runtime/state/remoteUpdates";
-import type { RelayClientEnvironmentRecord } from "@bibcode/contracts/relay";
+} from "@coddy/client-runtime/state/runtime";
+import { fanOutRemoteUpdateChecks } from "@coddy/client-runtime/state/remoteUpdates";
+import type { RelayClientEnvironmentRecord } from "@coddy/contracts/relay";
 import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard";
@@ -65,7 +65,7 @@ import {
 import {
   isRemoteUpdateRunActive,
   type RemoteUpdateRunState,
-} from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+} from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import {
   manualUpdateSteps,
   remoteUpdateActionLabel,
@@ -282,7 +282,7 @@ function RemoteServerRow({
       : null;
   const metadataBits = [
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
-    environment.relayManaged ? "BiBCode Connect" : null,
+    environment.relayManaged ? "Coddy Connect" : null,
   ].filter((value): value is string => value !== null);
 
   // The WSL backend is a desktop-managed local backend (it surfaces as a bearer
@@ -651,7 +651,7 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from BiBCode Connect."
+            ? "Click “Add environment” to pair another environment, or connect one from Coddy Connect."
             : "Click “Add environment” to pair another environment."}
         </EmptyDescription>
       </EmptyHeader>
@@ -716,7 +716,7 @@ function ConfiguredCloudRemoteEnvironmentRows({
       toastManager.add({
         type: "success",
         title: "Environment connected",
-        description: `${environment.label} is available through BiBCode Connect.`,
+        description: `${environment.label} is available through Coddy Connect.`,
       });
       return;
     }
@@ -725,9 +725,9 @@ function ConfiguredCloudRemoteEnvironmentRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : "Could not connect the BiBCode Connect environment.";
+      cause instanceof Error ? cause.message : "Could not connect the Coddy Connect environment.";
     const traceId = findErrorTraceId(cause);
-    console.error("[bibcode-connect] Could not connect environment", { message, traceId, cause });
+    console.error("[coddy-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
       type: "error",
       title: "Could not connect environment",
@@ -1427,7 +1427,7 @@ export function ConnectTab({
               setAddServerFailure(null);
               setSavedBackendError(null);
             }}
-            placeholder="bibcode://pair?code=…"
+            placeholder="coddy-studio://pair?code=…"
             disabled={isAddingSavedBackend}
             spellCheck={false}
           />
@@ -1486,7 +1486,7 @@ export function ConnectTab({
                 <span className="font-medium text-foreground">Still stuck?</span> Confirm both
                 devices are on the same network or connected through a tunnel, then generate a fresh
                 pairing code on the server&apos;s Share tab or with{" "}
-                <code>bibcode pairing offer</code> on the server.
+                <code>coddy-studio pairing offer</code> on the server.
               </li>
             </ul>
           </CollapsibleContent>
@@ -1647,7 +1647,7 @@ export function ConnectTab({
                 <DialogHeader>
                   <DialogTitle>Add Server</DialogTitle>
                   <DialogDescription>
-                    Connect this device to another BiBCode server.
+                    Connect this device to another Coddy Studio server.
                   </DialogDescription>
                 </DialogHeader>
                 <DialogPanel>
@@ -1657,7 +1657,7 @@ export function ConnectTab({
                         mode: "pairing-code",
                         title: "Pairing code",
                         description:
-                          "Paste a pairing code from the server's Share tab or its bibcode pairing offer command.",
+                          "Paste a pairing code from the server's Share tab or its coddy-studio pairing offer command.",
                         icon: <QrCodeIcon aria-hidden className="size-4" />,
                       })}
                       {desktopBridge

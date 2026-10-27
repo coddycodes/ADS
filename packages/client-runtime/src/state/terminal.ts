@@ -5,7 +5,7 @@ import {
   type TerminalSummary,
   type TerminalSessionSnapshot,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";

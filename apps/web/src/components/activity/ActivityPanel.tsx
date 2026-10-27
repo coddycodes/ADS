@@ -5,8 +5,8 @@ import {
   type ActivityRecordKind,
   type ActivityRecordSummary,
   type ActivitySnapshot,
-} from "@bibcode/contracts";
-import type { TimestampFormat } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import type { TimestampFormat } from "@coddy/contracts/settings";
 import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 

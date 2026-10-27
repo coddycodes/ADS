@@ -1,4 +1,4 @@
-import type { PullRequestsPermission } from "@bibcode/contracts";
+import type { PullRequestsPermission } from "@coddy/contracts";
 
 /** Release placeholder only; a host denial and its wording always take precedence. */
 export function readOnlyPermission(

@@ -8,46 +8,46 @@ describe("resolveDesktopAppPath", () => {
       resolveDesktopAppPath({
         platform: "mac",
         environment: {
-          BIBCODE_E2E_APP_PATH: "/Volumes/BiBCode/BiBCode.app",
+          CODDY_STUDIO_E2E_APP_PATH: "/Volumes/Coddy Studio/Coddy Studio.app",
         },
       }),
-    ).toBe("/Volumes/BiBCode/BiBCode.app/Contents/MacOS/bibcode-desktop");
+    ).toBe("/Volumes/Coddy Studio/Coddy Studio.app/Contents/MacOS/coddy-studio-desktop");
   });
 
   it("accepts a direct macOS application executable", () => {
-    const executable = "/private/tmp/BiBCode.app/Contents/MacOS/BiBCode";
+    const executable = "/private/tmp/Coddy Studio.app/Contents/MacOS/Coddy Studio";
 
     expect(
       resolveDesktopAppPath({
         platform: "mac",
-        environment: { BIBCODE_E2E_APP_PATH: executable },
+        environment: { CODDY_STUDIO_E2E_APP_PATH: executable },
       }),
     ).toBe(executable);
   });
 
   it("resolves a Linux AppImage without changing paths that contain spaces", () => {
-    const appImage = "/tmp/BiBCode UI Smoke/BiBCode_0.2.2_amd64.AppImage";
+    const appImage = "/tmp/Coddy Studio UI Smoke/Coddy Studio_0.2.2_amd64.AppImage";
 
     expect(
       resolveDesktopAppPath({
         platform: "linux",
-        environment: { BIBCODE_E2E_APP_PATH: appImage },
+        environment: { CODDY_STUDIO_E2E_APP_PATH: appImage },
       }),
     ).toBe(appImage);
   });
 
   it("resolves an NSIS-installed Windows executable with win32 path rules", () => {
-    const executable = String.raw`C:\Program Files\BiBCode\BiBCode.exe`;
+    const executable = String.raw`C:\Program Files\Coddy Studio\Coddy Studio.exe`;
 
     expect(
       resolveDesktopAppPath({
         platform: "win",
-        environment: { BIBCODE_E2E_APP_PATH: executable },
+        environment: { CODDY_STUDIO_E2E_APP_PATH: executable },
       }),
     ).toBe(executable);
   });
 
-  it("rejects a missing BIBCODE_E2E_APP_PATH", () => {
+  it("rejects a missing CODDY_STUDIO_E2E_APP_PATH", () => {
     expect(() =>
       resolveDesktopAppPath({
         platform: "linux",
@@ -60,14 +60,14 @@ describe("resolveDesktopAppPath", () => {
     expect(() =>
       resolveDesktopAppPath({
         platform: "mac",
-        environment: { BIBCODE_E2E_APP_PATH: "/tmp/BiBCode.dmg" },
+        environment: { CODDY_STUDIO_E2E_APP_PATH: "/tmp/Coddy Studio.dmg" },
       }),
     ).toThrowError(/copy the app from the DMG/i);
 
     expect(() =>
       resolveDesktopAppPath({
         platform: "win",
-        environment: { BIBCODE_E2E_APP_PATH: String.raw`C:\tmp\BiBCode-setup.msi` },
+        environment: { CODDY_STUDIO_E2E_APP_PATH: String.raw`C:\tmp\Coddy Studio-setup.msi` },
       }),
     ).toThrowError(/installed executable/i);
   });

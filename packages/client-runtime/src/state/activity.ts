@@ -5,7 +5,7 @@ import {
   type ActivitySnapshot,
   type ActivityStreamItem,
   type EnvironmentId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";

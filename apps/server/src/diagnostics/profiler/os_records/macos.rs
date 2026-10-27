@@ -187,11 +187,11 @@ mod tests {
         let record = parse_ips(IPS).expect("record");
         assert_eq!(record.source, "ips");
         assert_eq!(record.signal_or_code, "SIGSEGV");
-        assert_eq!(record.module.as_deref(), Some("bibcode"));
+        assert_eq!(record.module.as_deref(), Some("coddy-studio"));
         assert_eq!(
             record.frames,
             vec![
-                "bibcode_server::crash_here (bibcode + 0x12d687)".to_owned(),
+                "coddy_studio_server::crash_here (coddy-studio + 0x12d687)".to_owned(),
                 "libsystem_kernel.dylib + 0x929".to_owned(),
             ]
         );
@@ -199,14 +199,26 @@ mod tests {
 
     #[test]
     fn only_reports_named_after_the_process_are_read() {
-        assert!(is_candidate("bibcode-2026-10-09-100500.ips", "bibcode"));
-        assert!(is_candidate("BiBCode-2026-10-09-100500.ips", "bibcode"));
-        assert!(!is_candidate(
-            "bibcode-helper-2026-10-09-100500.ips",
-            "bibcode"
+        assert!(is_candidate(
+            "coddy-studio-2026-10-09-100500.ips",
+            "coddy-studio"
         ));
-        assert!(!is_candidate("Safari-2026-10-09-100500.ips", "bibcode"));
-        assert!(!is_candidate("bibcode-2026-10-09-100500.diag", "bibcode"));
+        assert!(is_candidate(
+            "Coddy Studio-2026-10-09-100500.ips",
+            "coddy-studio"
+        ));
+        assert!(!is_candidate(
+            "coddy-studio-helper-2026-10-09-100500.ips",
+            "coddy-studio"
+        ));
+        assert!(!is_candidate(
+            "Safari-2026-10-09-100500.ips",
+            "coddy-studio"
+        ));
+        assert!(!is_candidate(
+            "coddy-studio-2026-10-09-100500.diag",
+            "coddy-studio"
+        ));
     }
 
     #[test]
@@ -223,7 +235,7 @@ mod tests {
                 .set_modified(at - age)
                 .unwrap();
         };
-        let ours = IPS.replace("bibcode_server::crash_here", "WebCore::crash_here");
+        let ours = IPS.replace("coddy_studio_server::crash_here", "WebCore::crash_here");
         write(
             "com.apple.WebKit.WebContent-2026-10-09-100500.ips",
             &ours,
@@ -248,7 +260,10 @@ mod tests {
         let (earliest, latest) = window(at);
 
         let record = web_content_report(dir.path(), None, earliest, latest).expect("report");
-        assert_eq!(record.frames[0], "WebCore::crash_here (bibcode + 0x12d687)");
+        assert_eq!(
+            record.frames[0],
+            "WebCore::crash_here (coddy-studio + 0x12d687)"
+        );
         // The fixture's process is pid 4242.
         assert!(web_content_report(dir.path(), Some(4242), earliest, latest).is_some());
         assert_eq!(

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, ThreadId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { createAttachmentAdmissionOwner } from "./attachmentAdmissionOwner.ts";
 

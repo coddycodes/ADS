@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
 import { RegistryContext } from "@effect/atom-react";
-import type { ServerProviderUsageResult } from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
+import type { ServerProviderUsageResult } from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import { AtomRegistry } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";

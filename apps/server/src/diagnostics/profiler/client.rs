@@ -133,7 +133,7 @@ struct ClientBatch {
     stalls: Stalls,
     interactions: Interactions,
     js_heap_bytes: Option<f64>,
-    /// The client's own BiBCode version (#98): in browser or remote mode it can differ from
+    /// The client's own Coddy Studio version (#98): in browser or remote mode it can differ from
     /// the server's. Older clients send none.
     #[serde(default)]
     app_version: Option<String>,

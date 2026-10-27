@@ -52,7 +52,7 @@ pub struct GatewayOpenResult {
     pub gateway_port: u16,
     pub capability: String,
     pub expires_at_ms: u64,
-    /// For a caller that came through BiBCode Connect: `https://<preview hostname>`, the
+    /// For a caller that came through Coddy Connect: `https://<preview hostname>`, the
     /// origin to bootstrap on instead of the server's address.
     pub origin: Option<String>,
 }
@@ -67,9 +67,9 @@ pub enum GatewayError {
     NoUpstream,
     #[error("{0}")]
     NotReachable(Unreachable),
-    #[error("Previews over BiBCode Connect aren't set up for this environment yet.")]
+    #[error("Previews over Coddy Connect aren't set up for this environment yet.")]
     RelayNotProvisioned,
-    #[error("Every BiBCode Connect preview address of this environment is in use.")]
+    #[error("Every Coddy Connect preview address of this environment is in use.")]
     RelayBusy,
     #[error("unavailable: {0}")]
     Unavailable(String),
@@ -357,7 +357,7 @@ impl PreviewGateway {
                 else {
                     tracing::warn!(
                         upstream_port,
-                        "every BiBCode Connect preview hostname is in use"
+                        "every Coddy Connect preview hostname is in use"
                     );
                     // A target this refused open created serves no one; don't let it hold
                     // capacity until the idle sweep.
@@ -377,7 +377,7 @@ impl PreviewGateway {
 
     /// The preview slot a request that reached the main port names: it arrived on a
     /// loopback socket (the tunnel connector runs on this machine) under a published preview
-    /// hostname. `None` for every other request, which keeps BiBCode's own routes.
+    /// hostname. `None` for every other request, which keeps Coddy Studio's own routes.
     #[must_use]
     pub fn relay_slot(&self, local_ip: Option<IpAddr>, host: Option<&str>) -> Option<usize> {
         local_ip
@@ -387,7 +387,7 @@ impl PreviewGateway {
     }
 
     /// Where to send a request that reached Cloudflare over plain HTTP for a published relay
-    /// hostname: the same URL over `https`. BiBCode and its previews are served through the
+    /// hostname: the same URL over `https`. Coddy Studio and its previews are served through the
     /// tunnel over HTTPS only (a page there over HTTP would frame previews it can't load).
     #[must_use]
     pub fn relay_https_redirect(

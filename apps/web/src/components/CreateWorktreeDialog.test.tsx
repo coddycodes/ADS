@@ -2,7 +2,7 @@ import {
   scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/environment";
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -10,7 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -163,7 +163,7 @@ const testState = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => testState.navigate }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { interrupted?: boolean }) => result.interrupted === true,
   squashAtomCommandFailure: (result: { error?: unknown }) => result.error,
 }));
@@ -335,7 +335,7 @@ function project(overrides: Record<string, unknown> = {}) {
   return {
     id: PROJECT_ID,
     environmentId: ENVIRONMENT_ID,
-    title: "BiBCode",
+    title: "Coddy Studio",
     workspaceRoot: "/repo",
     defaultModelSelection: null,
     ...overrides,

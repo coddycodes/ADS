@@ -1,4 +1,4 @@
-import type { GitManagerBlockedReason, GitManagerStashEntry } from "@bibcode/contracts";
+import type { GitManagerBlockedReason, GitManagerStashEntry } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

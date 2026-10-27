@@ -1,12 +1,12 @@
-import { scopeProjectRef, scopeThreadRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentAvailabilityStatus } from "@bibcode/client-runtime/state/shell";
+import { scopeProjectRef, scopeThreadRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentAvailabilityStatus } from "@coddy/client-runtime/state/shell";
 import type {
   EnvironmentId,
   ProjectId,
   ScopedProjectRef,
   ScopedThreadRef,
   ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =

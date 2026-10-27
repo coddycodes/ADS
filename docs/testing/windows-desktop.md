@@ -88,9 +88,9 @@ Computer Use capture:
   `vp run check:contracts` stay correct under a global `vp`; record which
   launcher each directly typed `vp test` command used.
 
-- Use an isolated `BIBCODE_HOME` for every launch and keep the production
+- Use an isolated `CODDY_STUDIO_HOME` for every launch and keep the production
   installer output (`release/desktop`) and the E2E build
-  (`target/<triple>/release/bibcode-desktop.exe` from `test:ui:desktop:build`)
+  (`target/<triple>/release/coddy-studio-desktop.exe` from `test:ui:desktop:build`)
   in distinct, recorded paths.
 - Before Codex Computer Use captures the guest, return Parallels to **Windowed**
   (not Full Screen or Coherence) mode; ScreenCaptureKit cannot capture the
@@ -135,7 +135,7 @@ Select focused tests from affected source and verify at least:
   calling runtime's only blocking thread held, a stand-in ssh's pairing line is
   still parsed, and after a descendant holding its pipes makes the drain give
   up, no pipe read stays parked
-  (`node scripts/run-msvc.mjs cargo test -p bibcode-desktop --lib ssh::tests::windows_drain`;
+  (`node scripts/run-msvc.mjs cargo test -p coddy-studio-desktop --lib ssh::tests::windows_drain`;
   the tests start `cmd.exe` and the built-in `powershell.exe`, and kill the
   descendant they record);
 - saved remote environments appear in the environment rail without exposing
@@ -156,10 +156,10 @@ Before measuring an idle window, verify the current event-driven observation
 boundary on native Windows:
 
 ```powershell
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib git::broadcaster::tests::ref_poll_is_replaced_by_watcher_and_safety_status_reads -- --exact --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib git::watcher -- --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --lib production::runtime::tests::structured_terminal_process_exit_immediately_invalidates_status_under_watcher_fallback -- --exact --nocapture
-node scripts/run-msvc.mjs cargo test -p bibcode-server --test production_git_vcs_rpc native_watcher_publishes_external_worktree_and_head_changes_to_status_subscribers -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib git::broadcaster::tests::ref_poll_is_replaced_by_watcher_and_safety_status_reads -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib git::watcher -- --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --lib production::runtime::tests::structured_terminal_process_exit_immediately_invalidates_status_under_watcher_fallback -- --exact --nocapture
+node scripts/run-msvc.mjs cargo test -p coddy-studio-server --test production_git_vcs_rpc native_watcher_publishes_external_worktree_and_head_changes_to_status_subscribers -- --exact --nocapture
 node scripts/run-local-vp.mjs test run packages/client-runtime/src/state/vcs.test.ts apps/web/src/components/GitActionsControl.test.tsx
 ```
 
@@ -249,7 +249,7 @@ Use a unique test-owned root, never a user project. One example shape is:
 
 ```powershell
 $runId = [guid]::NewGuid().ToString('N')
-$testRoot = Join-Path $env:TEMP "bibcode-win-validation-$runId"
+$testRoot = Join-Path $env:TEMP "coddy-studio-win-validation-$runId"
 $repository = Join-Path $testRoot 'Repository With Spaces'
 $worktrees = Join-Path $testRoot 'External Worktrees'
 $junction = Join-Path $testRoot 'Junction Alias'
@@ -257,8 +257,8 @@ $junction = Join-Path $testRoot 'Junction Alias'
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 New-Item -ItemType Directory -Path $repository, $worktrees | Out-Null
 git -C $repository init
-git -C $repository config user.name 'BiBCode Test'
-git -C $repository config user.email 'bibcode-test@example.invalid'
+git -C $repository config user.name 'Coddy Studio Test'
+git -C $repository config user.email 'coddy-studio-test@example.invalid'
 Set-Content -LiteralPath (Join-Path $repository 'README.md') -Value 'fixture'
 git -C $repository add README.md
 git -C $repository commit -m 'fixture baseline'
@@ -273,9 +273,9 @@ Resolve-Path -LiteralPath $junction
 ```
 
 Check that a drive-letter case variant, separator variant, and junction alias
-cannot create another BiBCode owner for the same physical worktree. Confirm the
+cannot create another Coddy Studio owner for the same physical worktree. Confirm the
 UI retains useful Git-reported display spelling and restart reconstructs the
-same identity. **Keep hidden** and removal from BiBCode must not unexpectedly
+same identity. **Keep hidden** and removal from Coddy Studio must not unexpectedly
 delete the external Git worktree.
 
 Use only fixture-owned paths for deletion/replacement identity tests. Record
@@ -318,7 +318,7 @@ Do not install a distribution or change system WSL configuration without
 permission. Remote-server targets and exposure controls are validated in the
 packaged UI scenarios independently of the WSL branch.
 
-For update validation, use an isolated `BIBCODE_HOME` and disposable native
+For update validation, use an isolated `CODDY_STUDIO_HOME` and disposable native
 project; include a disposable WSL project when WSL is usable. Keep a read
 subscription open while installing an available test update and confirm it
 does not block protection. During a deliberately held mutation, confirm the
@@ -346,15 +346,15 @@ the package-specific MSVC launcher. When a direct native Rust command needs the
 same environment, use:
 
 ```powershell
-node scripts/run-msvc.mjs cargo check -p bibcode-server --all-targets
+node scripts/run-msvc.mjs cargo check -p coddy-studio-server --all-targets
 node scripts/run-msvc.mjs cargo test --workspace -j 2 -- --test-threads=2
-node scripts/run-msvc.mjs cargo clean -p bibcode-server -p bibcode-desktop -p bibcode-updater-verifier
+node scripts/run-msvc.mjs cargo clean -p coddy-studio-server -p coddy-studio-desktop -p coddy-studio-updater-verifier
 node scripts/run-msvc.mjs cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 Run the `--all-targets` check first. Unix-only test helpers and imports must sit
 behind the same `cfg(unix)` as their consumers; an unused import in a Windows
-test target fails the whole `bibcode-server` test build under `-D warnings` and
+test target fails the whole `coddy-studio-server` test build under `-D warnings` and
 blocks every focused server test below. CI's Windows native rows run the same
 command.
 
@@ -405,7 +405,7 @@ there with the same path filters the root `build` script uses, which selects
 every workspace package except `infra/relay`:
 
 ```powershell
-vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-bibcode' --filter './scripts' test
+vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-coddy-studio' --filter './scripts' test
 ```
 
 Record the relay package as unavailable evidence and leave its coverage to the
@@ -456,20 +456,20 @@ and any version already read, and that sample does not satisfy the predicate.
 After the candidate is installed, the harness also requires the relaunched app:
 `tasklist.exe /V` must list the installed executable with a window (helpers such
 as the crash monitor have none) within the restart bound, so an update that
-closes BiBCode without starting the new version fails the lane instead of
+closes Coddy Studio without starting the new version fails the lane instead of
 passing a cleanup that found nothing to stop.
 When either wait times out, the harness saves `windows-processes-at-timeout.txt`
 (`tasklist.exe /V`), `windows-ui-at-timeout.txt` (top-level windows and their
 UI Automation names, which shows a waiting installer dialog), and
 `windows-process-audit-at-timeout.txt`: the updater's temporary directories,
-the BiBCode uninstall entries, then process starts and exits from the Security
-log for BiBCode executables (including the updater's installer) and the
+the Coddy Studio uninstall entries, then process starts and exits from the Security
+log for Coddy Studio executables (including the updater's installer) and the
 WebDriver processes, newest first and capped, with command lines only for
-`bibcode-desktop.exe` and its updater installer. The workflow turns on
+`coddy-studio-desktop.exe` and its updater installer. The workflow turns on
 process-creation and process-termination auditing before the lane runs; a local
 run without it still records the directories and uninstall entries and notes
 that no audit events were found. The workflow also turns on Windows Error
-Reporting minidumps for `bibcode-desktop.exe` and uploads any it writes as the
+Reporting minidumps for `coddy-studio-desktop.exe` and uploads any it writes as the
 `seeded-upgrade-crash-dumps-<arch>` artifact: an exit status of `0xc00000fd`
 in the audit is a stack overflow, and its dump holds the crash site.
 The protected-baseline install command stays open until the host exits into that
@@ -485,23 +485,23 @@ cleanup errors remain fatal. An unavailable sample never satisfies the exact
 version/hash/no-installer predicate.
 
 Build and run packaged E2E with the supported platform value
-`BIBCODE_E2E_PLATFORM=win`:
+`CODDY_STUDIO_E2E_PLATFORM=win`:
 
 ```powershell
-$env:BIBCODE_E2E_PLATFORM = 'win'
+$env:CODDY_STUDIO_E2E_PLATFORM = 'win'
 vp run test:ui:desktop:build
-$env:BIBCODE_E2E_APP_PATH = (Resolve-Path 'target/release/bibcode-desktop.exe').Path
+$env:CODDY_STUDIO_E2E_APP_PATH = (Resolve-Path 'target/release/coddy-studio-desktop.exe').Path
 vp run test:ui:desktop
 ```
 
-When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+When the run ends, the artifact directory (`CODDY_STUDIO_E2E_ARTIFACT_DIR`) also holds
 `app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
 page-load lifecycle and webview process failures, next to the screenshots and
 WebdriverIO logs.
 
 Use a unique test profile supported by the E2E harness. Do not launch an
-installed BiBCode executable or overwrite `%APPDATA%`/`%LOCALAPPDATA%` user
-data. `BIBCODE_E2E_APP_PATH` deliberately selects the executable produced by
+installed Coddy Studio executable or overwrite `%APPDATA%`/`%LOCALAPPDATA%` user
+data. `CODDY_STUDIO_E2E_APP_PATH` deliberately selects the executable produced by
 the E2E build in the current worktree, not an installed production copy.
 
 The embedded test WebDriver server (`tauri-plugin-wdio-webdriver`) binds
@@ -544,10 +544,10 @@ minimum-size, and relevant Windows DPI states. Verify:
   list and environment rail show that alias after reconnecting and restarting
   the app. Blank aliases use the pairing code's server name; failed pairing
   preserves the alias for retry. The remote server's own name remains unchanged;
-- Add a headless web-mode `bibcode serve` server without an alias (pairing code
+- Add a headless web-mode `coddy-studio serve` server without an alias (pairing code
   or **Advanced: manual endpoint and token**) and confirm its name is the
   machine's hostname, with "Local" only if no usable hostname is reported.
-  `bibcode start`, bare `bibcode`, and desktop-owned backends keep "Local".
+  `coddy-studio start`, bare `coddy-studio`, and desktop-owned backends keep "Local".
   Select this server in the rail, then open **Settings → Remote Servers**.
   Choose **Rename…** from its **⋯** menu: the dialog is prefilled, refuses a
   blank name with **Enter a name for this server.**, and Enter in the name field
@@ -566,16 +566,16 @@ minimum-size, and relevant Windows DPI states. Verify:
   use the server's reported name;
 - With that renamed test server connected, check a stalled connection on a
   Windows remote host: open Resource Monitor (`resmon.exe`) on that host, select
-  the **CPU** tab, find the test server's `bibcode` process in the process list,
+  the **CPU** tab, find the test server's `coddy-studio` process in the process list,
   right-click it, and choose **Suspend process**. Hover the Settings row's status
   dot and wait for
   `No data from <saved name> for 30 seconds. The connection is too slow or was lost. Reconnecting…`,
   followed by
-  `Remote environment endpoint <base URL>/.well-known/bibcode/environment timed out after 10000ms. Reconnecting…`
+  `Remote environment endpoint <base URL>/.well-known/coddy-studio/environment timed out after 10000ms. Reconnecting…`
   with the test server's endpoint URL. The disconnect reason uses the saved
   name (**Edge box**) and appears 27–33 seconds after the last data from the
   stopped server, when the client's liveness timeout closes the socket with
-  code 4408. Keep BiBCode visible and focused for the whole stall: the
+  code 4408. Keep Coddy Studio visible and focused for the whole stall: the
   disconnect then appears before a health-check message can become visible. If
   the window is restored from hidden or minimized during the stall, the
   application-active health check can report
@@ -597,24 +597,24 @@ minimum-size, and relevant Windows DPI states. Verify:
   grant-driven sharing appears because the desktop bridge is present.
   remote targeting is driven by the environment rail rather than mixing saved
   servers into the Local WSL picker;
-- Headless pairing: on a second machine or VM run `bibcode serve --host
+- Headless pairing: on a second machine or VM run `coddy-studio serve --host
   <routable address>`, confirm the startup line contains `pairingCode`, and add it
   through **Add Server → Pairing code**. Confirm the saved server appears
   alongside — not in place of — the app's own **Local** environment, since both
-  hosts declare the environment id `local`. Mint a second offer with `bibcode
+  hosts declare the environment id `local`. Mint a second offer with `coddy-studio
   pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   it by name ("<label> is already saved."): two offers describe one environment.
   Then restart the headless server and confirm the saved server reconnects
   without re-pairing.
-- Headless service: on the second machine run `bibcode service install --host
-  <routable address>`, confirm `bibcode service status` reports `active`,
+- Headless service: on the second machine run `coddy-studio service install --host
+  <routable address>`, confirm `coddy-studio service status` reports `active`,
   reboot that machine, and confirm the desktop's saved server reconnects
   without re-pairing. On Linux confirm `loginctl show-user $USER` reports
   `Linger=yes`; on macOS confirm automatic login is enabled; on Windows confirm
-  the `BiBCode Server` task shows `Running` after logon. Finish with
-  `bibcode service uninstall` and confirm the definition is gone.
-- Remote server updates: with a second BiBCode server saved (headless
-  `bibcode serve` is sufficient), open Remote Servers settings, run **Check for
+  the `Coddy Studio Server` task shows `Running` after logon. Finish with
+  `coddy-studio service uninstall` and confirm the definition is gone.
+- Remote server updates: with a second Coddy Studio server saved (headless
+  `coddy-studio serve` is sufficient), open Remote Servers settings, run **Check for
   Server Updates**, and confirm each saved server row shows an update badge
   (**Manual updates** for a headless server) and a manual-instructions block
   with a copy button. An offline server must not block the rest of the batch and
@@ -644,11 +644,11 @@ minimum-size, and relevant Windows DPI states. Verify:
 
 - in **Settings → Remote Servers → Share this host**, generate an **Another
   device** offer. Confirm the local server restarts before the pairing offer is
-  shown, and that the result contains the browser URL, `bibcode://` deep link,
+  shown, and that the result contains the browser URL, `coddy-studio://` deep link,
   pairing code, and QR code. Then inspect the firewall rule:
 
   ```powershell
-  netsh advfirewall firewall show rule name="BiBCode Remote Access"
+  netsh advfirewall firewall show rule name="Coddy Studio Remote Access"
   ```
 
   Confirm it is enabled, program-scoped to the exact packaged executable,
@@ -688,7 +688,7 @@ minimum-size, and relevant Windows DPI states. Verify:
 
 - with WSL-only primary mode active, generate an **Another device** offer from
   a usable WSL advertised endpoint. Confirm the native Windows backend process,
-  native exposure state, and `BiBCode Remote Access` firewall rule do not change;
+  native exposure state, and `Coddy Studio Remote Access` firewall rule do not change;
   the ceremony and reconciler must not call the native exposure bridge for this
   topology. In the Exposure section, confirm the available off-host WSL URL is
   shown, exposure is described as externally managed by WSL/Hyper-V policy, and
@@ -726,7 +726,7 @@ minimum-size, and relevant Windows DPI states. Verify:
   parameters are removed from both `/pair` and Remote Servers history after
   being retained for the current attempt;
 
-- from the OS, opening a well-formed `bibcode://pair?code=...` link while the
+- from the OS, opening a well-formed `coddy-studio://pair?code=...` link while the
   packaged app is running focuses that instance and lands on Add Server with
   the code prefilled;
 - provider settings and action menus contain Claude, Codex, Cursor, and
@@ -776,19 +776,19 @@ Windows ships the binary as linked, and its symbols come from the PDB: the store
 under `target\<triple>\release\symbols` names the module after the PDB. On a
 Windows ARM64 host, build with `--arch arm64` and expect
 `nativeDumps: "disabled"`: no hook is attached there, so
-`BIBCODE_PROFILER_CRASH_TEST` does nothing, and the crash steps are unavailable
+`CODDY_STUDIO_PROFILER_CRASH_TEST` does nothing, and the crash steps are unavailable
 evidence.
 
-- **Executable.** Use the release `bibcode-desktop.exe` that the symbol build
+- **Executable.** Use the release `coddy-studio-desktop.exe` that the symbol build
   produced under `target\<triple>\release\`, never an installed copy, with
-  `$env:BIBCODE_HOME` set to the test-owned root. The release build is a
+  `$env:CODDY_STUDIO_HOME` set to the test-owned root. The release build is a
   GUI-subsystem program, so PowerShell waits for it only when its output is
   piped: run `& $exe profiler status --json | Out-String`, then read
   `$LASTEXITCODE`.
 - **Capabilities.** Expect `nativeDumps: "available"` on x64 and
   `osCrashRecords: "available"`. While the profiler is on, the per-user
-  `%TEMP%` holds one `bibcode-<random>` directory with `monitor.sock`.
-- **Crash.** Set `$env:BIBCODE_PROFILER_CRASH_TEST = '1'`, start the app, and
+  `%TEMP%` holds one `coddy-studio-<random>` directory with `monitor.sock`.
+- **Crash.** Set `$env:CODDY_STUDIO_PROFILER_CRASH_TEST = '1'`, start the app, and
   remove the variable from the shell once it has started. The callback leaves
   the crash to Windows Error Reporting after the dump, so the process ends with
   an access violation (`0xC0000005`), an Application log Event 1000 is written,
@@ -824,7 +824,7 @@ ones:
   (a `ProcessFailed` raised during shutdown) or `subprocess.crash` finding
   exists.
 - **Windows ends the session.** With the profiler on and the app open, sign
-  out of Windows (or shut down) without quitting BiBCode. After signing back in
+  out of Windows (or shut down) without quitting Coddy Studio. After signing back in
   and starting the app, `profiler findings --json` holds no new `crash.panic`
   (`cannot move state from Destroyed`), `crash.unclean-exit` or `crash.system`
   finding for that run, and `session.json` from before the start recorded
@@ -842,10 +842,10 @@ ones:
   input. Then register the same command in an MCP client and call
   `profiler_status`.
 - **Update with the profiler on.** With the profiler on, an MCP server from
-  the step above running, and the app started with `$env:BIBCODE_HOME` and
-  `$env:BIBCODE_PORT` set, install an update through the in-app updater. Record
+  the step above running, and the app started with `$env:CODDY_STUDIO_HOME` and
+  `$env:CODDY_STUDIO_PORT` set, install an update through the in-app updater. Record
   that the passive installer ended the MCP server, that the app came back on
-  the same data root and port, and that `%TEMP%\bibcode-desktop-restart.json`
+  the same data root and port, and that `%TEMP%\coddy-studio-desktop-restart.json`
   is gone once it is running. After the restart, `profiler findings --json`
   holds no new `crash.unclean-exit` or `shutdown.incomplete` finding: the update
   quiesced the server and marked the session clean first. Then quit the app
@@ -889,21 +889,21 @@ Remove the junction before its target, then remove only the exact fixture and
 profile roots created by this run. Never delete a pre-existing `%TEMP%`, build,
 or user directory.
 
-After the last packaged launch, confirm no BiBCode, WebDriver, or Tauri process
+After the last packaged launch, confirm no Coddy Studio, WebDriver, or Tauri process
 from the run survives, then remove any firewall rules Windows generated for the
 exact test executable and prove none remain. From an elevated PowerShell:
 
 ```powershell
-Get-Process | Where-Object { $_.Path -and ($_.Path -ieq $env:BIBCODE_E2E_APP_PATH) }
-node scripts/remove-test-firewall-rules.ts --executable $env:BIBCODE_E2E_APP_PATH --dry-run
-node scripts/remove-test-firewall-rules.ts --executable $env:BIBCODE_E2E_APP_PATH
+Get-Process | Where-Object { $_.Path -and ($_.Path -ieq $env:CODDY_STUDIO_E2E_APP_PATH) }
+node scripts/remove-test-firewall-rules.ts --executable $env:CODDY_STUDIO_E2E_APP_PATH --dry-run
+node scripts/remove-test-firewall-rules.ts --executable $env:CODDY_STUDIO_E2E_APP_PATH
 Get-NetFirewallApplicationFilter |
-  Where-Object { $_.Program -ieq $env:BIBCODE_E2E_APP_PATH } |
+  Where-Object { $_.Program -ieq $env:CODDY_STUDIO_E2E_APP_PATH } |
   Get-NetFirewallRule
 ```
 
 The helper selects rules by that exact program path, refuses installed
-locations, never removes `BiBCode Remote Access`, and exits non-zero unless the
+locations, never removes `Coddy Studio Remote Access`, and exits non-zero unless the
 final query returns zero matching rules; the last command must print nothing.
 Record the rule names removed and the empty verification in the report.
 

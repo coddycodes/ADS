@@ -579,7 +579,7 @@ mod tests {
         };
         let rows = [
             {
-                let mut row = ProcessRow::fixture(10, 1, "bibcode");
+                let mut row = ProcessRow::fixture(10, 1, "coddy-studio");
                 row.started_at = 100;
                 row
             },
@@ -692,7 +692,7 @@ mod tests {
             started_at: 100,
         };
         let snapshot = |sampled_at_ms: i128, label: &str| {
-            let mut row = ProcessRow::fixture(10, 1, "bibcode serve");
+            let mut row = ProcessRow::fixture(10, 1, "coddy-studio serve");
             row.started_at = 100;
             AttributedProcessSnapshot {
                 sampled_at_ms,
@@ -733,7 +733,7 @@ mod tests {
             Duration::from_secs(1),
         );
         assert_eq!(history.processes[0].label, "renamed");
-        assert_eq!(history.processes[0].command, "bibcode serve");
+        assert_eq!(history.processes[0].command, "coddy-studio serve");
         assert_eq!(history.processes[0].sample_count, 3);
     }
 

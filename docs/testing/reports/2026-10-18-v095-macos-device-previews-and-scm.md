@@ -116,18 +116,18 @@ The fix types one character per send, paced at 5 ms, and refuses (all or nothing
 | Rotation left and right    | PASS           | `ios-landscape.png`, `ios-rot-sheet.png`                                    | Island on the expected side; landscape tap lands                                        |
 | Refused rotation note      | Not applicable | `ios-rotate-refused.png`                                                    | iOS `rotate` returns the requested orientation by design (pinned by a test), so no note |
 | Stop                       | PASS           | `01-ios-after-stop.txt`                                                     | `Shutdown`, no pid, 3.2 s                                                               |
-| Ended outside BiBCode      | PASS           | `ios-ended-outside.png`; findings JSON                                      | See below                                                                               |
+| Ended outside Coddy Studio      | PASS           | `ios-ended-outside.png`; findings JSON                                      | See below                                                                               |
 
-**Simulator shut down outside BiBCode** (the merge's `Exited { started }` change). The simulator was booted from the pane, and `xcrun simctl shutdown 308FD3CD-…` ran 90.014 s after the server's `ready`.
+**Simulator shut down outside Coddy Studio** (the merge's `Exited { started }` change). The simulator was booted from the pane, and `xcrun simctl shutdown 308FD3CD-…` ran 90.014 s after the server's `ready`.
 
-- **The pane:** "Failed: Shutdown outside BiBCode".
-- **The finding:** exactly one `subprocess.crash` for `ios-simulator`: "The command process ios-simulator exited with code 1 after 91 s; BiBCode did not stop it.", `uptimeMs` 91375.
+- **The pane:** "Failed: Shutdown outside Coddy Studio".
+- **The finding:** exactly one `subprocess.crash` for `ios-simulator`: "The command process ios-simulator exited with code 1 after 91 s; Coddy Studio did not stop it.", `uptimeMs` 91375.
 - **The uptime:** the measured interval from `ready` to detection was 91375.6 ms, a difference of −0.6 ms.
 - **Lifecycle:** `device.lifecycle` recorded `fail` with `failureKind` `exited`.
 
 ## Packaged UI and visual evidence: #119 and #96
 
-- **The app:** `target/aarch64-apple-darwin/release/bundle/dmg/BiBCode_0.9.5_aarch64.dmg`, from `vp run test:ui:desktop:build`.
+- **The app:** `target/aarch64-apple-darwin/release/bundle/dmg/Coddy Studio_0.9.5_aarch64.dmg`, from `vp run test:ui:desktop:build`.
   - It was installed by mount → `ditto` → `cmp` → `codesign --verify --deep --strict`.
   - The signature is ad-hoc; the app is not notarized.
 - **The driver:** WebDriver (`vp run test:ui:desktop`), with scratch specs outside the repository.
@@ -167,7 +167,7 @@ The fixture has 312 staged, 50 conflicted (`UU`, merge in progress) and about 3,
 
 - **Devices and servers:** no emulator, qemu or netsimd; no adb device or forward; no booted simulator; no dev server or E2E app of this run.
 - **Restored files:** `~/.bibcode/dev/settings.json` and `Pixel_8.avd/config.ini`, matching their backups by hash.
-- **Left untouched:** the user's own BiBCode (pid 64525), and a Vite on :5740 that this run did not start.
+- **Left untouched:** the user's own Coddy Studio (pid 64525), and a Vite on :5740 that this run did not start.
 - **Renderer-data isolation deviation.** `~/Library/WebKit/com.bibcode.desktop.e2e` already existed (584 KB). WebKit used it despite the harness's `HOME` and wrote that origin's IndexedDB and LocalStorage to it (now 6,676 KB). The runbook says to stop and get authority first; this run did not. Nothing was deleted. The user's production `com.bibcode.desktop` profile and production store were not touched; the dev store's `settings.json` was changed for the run and restored from its backup.
 
 ## Source changes and commits created

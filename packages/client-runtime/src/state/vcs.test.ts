@@ -8,7 +8,7 @@ import {
   GitManagerError,
   WS_METHODS,
   type VcsStatusSummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";

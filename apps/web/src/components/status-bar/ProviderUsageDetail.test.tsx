@@ -3,8 +3,8 @@
 import type {
   ConsumeCodexRateLimitResetResult,
   ServerProviderUsageResetError,
-} from "@bibcode/contracts";
-import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/contracts";
+import type { AtomCommandResult } from "@coddy/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import { AsyncResult } from "effect/reactivity";
@@ -331,7 +331,7 @@ describe("ProviderUsageDetail", () => {
     vi.spyOn(globalThis.crypto, "randomUUID")
       .mockReturnValueOnce("019f8aad-253c-77b0-9f6f-77b45f149efb")
       .mockReturnValueOnce("019f8aad-253c-77b0-9f6f-77b45f149efc");
-    const resetError = new (await import("@bibcode/contracts")).ServerProviderUsageResetError({
+    const resetError = new (await import("@coddy/contracts")).ServerProviderUsageResetError({
       message: "Codex reset service is unavailable.",
     });
     const onConsumeCodexRateLimitReset = vi

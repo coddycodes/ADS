@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";

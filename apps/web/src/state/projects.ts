@@ -1,5 +1,5 @@
-import { createEnvironmentProjectAtoms } from "@bibcode/client-runtime/state/projects";
-import { createProjectEnvironmentAtoms } from "@bibcode/client-runtime/state/projects";
+import { createEnvironmentProjectAtoms } from "@coddy/client-runtime/state/projects";
+import { createProjectEnvironmentAtoms } from "@coddy/client-runtime/state/projects";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";

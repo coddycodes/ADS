@@ -1,12 +1,12 @@
 import {
   ConnectionOnboarding,
   type VerifyPairingCodeInput,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
-} from "@bibcode/client-runtime/state/runtime";
-import type { DesktopSshEnvironmentTarget } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/runtime";
+import type { DesktopSshEnvironmentTarget } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "./runtime";

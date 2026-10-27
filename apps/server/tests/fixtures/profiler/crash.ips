@@ -1,4 +1,4 @@
-{"app_name":"bibcode","timestamp":"2026-10-09 10:05:00.00 +0000","app_version":"0.9.0","slice_uuid":"4c4c4422-5555-3144-a1b2-c3d4e5f60718","build_version":"0.9.0","platform":1,"bundleID":"com.bibcode.desktop","share_with_app_devs":0,"is_first_party":0,"bug_type":"309","os_version":"macOS 15.0 (24A335)","roots_installed":0,"name":"bibcode","incident_id":"8F1C2D3E-4A5B-4C6D-8E7F-901A2B3C4D5E"}
+{"app_name":"coddy-studio","timestamp":"2026-10-09 10:05:00.00 +0000","app_version":"0.9.0","slice_uuid":"4c4c4422-5555-3144-a1b2-c3d4e5f60718","build_version":"0.9.0","platform":1,"bundleID":"com.coddy.studio.desktop","share_with_app_devs":0,"is_first_party":0,"bug_type":"309","os_version":"macOS 15.0 (24A335)","roots_installed":0,"name":"coddy-studio","incident_id":"8F1C2D3E-4A5B-4C6D-8E7F-901A2B3C4D5E"}
 {
   "uptime" : 86400,
   "procRole" : "Foreground",
@@ -10,8 +10,8 @@
   "incident" : "8F1C2D3E-4A5B-4C6D-8E7F-901A2B3C4D5E",
   "pid" : 4242,
   "cpuType" : "ARM-64",
-  "procName" : "bibcode",
-  "procPath" : "\/Applications\/BiBCode.app\/Contents\/MacOS\/bibcode",
+  "procName" : "coddy-studio",
+  "procPath" : "\/Applications\/Coddy Studio.app\/Contents\/MacOS\/coddy-studio",
   "procLaunch" : "2026-10-09 10:00:00.0000 +0000",
   "osVersion" : {
     "train" : "macOS 15.0",
@@ -21,7 +21,7 @@
   "exception" : {"codes":"0x0000000000000001, 0x0000000000000000","rawCodes":[1,0],"type":"EXC_BAD_ACCESS","signal":"SIGSEGV","subtype":"KERN_INVALID_ADDRESS at 0x0000000000000000"},
   "termination" : {"flags":0,"code":11,"namespace":"SIGNAL","indicator":"Segmentation fault: 11","byProc":"exc handler","byPid":4242},
   "faultingThread" : 0,
-  "threads" : [{"triggered":true,"id":1001,"queue":"com.apple.main-thread","frames":[{"imageOffset":1234567,"symbol":"bibcode_server::crash_here","symbolLocation":12,"imageIndex":0},{"imageOffset":2345,"imageIndex":1}]},{"id":1002,"frames":[{"imageOffset":4096,"imageIndex":1}]}],
+  "threads" : [{"triggered":true,"id":1001,"queue":"com.apple.main-thread","frames":[{"imageOffset":1234567,"symbol":"coddy_studio_server::crash_here","symbolLocation":12,"imageIndex":0},{"imageOffset":2345,"imageIndex":1}]},{"id":1002,"frames":[{"imageOffset":4096,"imageIndex":1}]}],
   "usedImages" : [
   {
     "source" : "P",
@@ -29,8 +29,8 @@
     "base" : 4294967296,
     "size" : 104857600,
     "uuid" : "4c4c4422-5555-3144-a1b2-c3d4e5f60718",
-    "path" : "\/Applications\/BiBCode.app\/Contents\/MacOS\/bibcode",
-    "name" : "bibcode"
+    "path" : "\/Applications\/Coddy Studio.app\/Contents\/MacOS\/coddy-studio",
+    "name" : "coddy-studio"
   },
   {
     "source" : "P",

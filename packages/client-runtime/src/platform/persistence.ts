@@ -3,7 +3,7 @@ import {
   type OrchestrationThread,
   type OrchestrationShellSnapshot,
   type ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -40,7 +40,7 @@ export class ConnectionTargetStore extends Context.Service<
   {
     readonly list: Effect.Effect<ReadonlyArray<ConnectionTarget>, ConnectionPersistenceError>;
   }
->()("@bibcode/client-runtime/platform/persistence/ConnectionTargetStore") {}
+>()("@coddy/client-runtime/platform/persistence/ConnectionTargetStore") {}
 
 export interface ConnectionRegistrationRemovalResult {
   readonly removed: boolean;
@@ -68,7 +68,7 @@ export class ConnectionRegistrationStore extends Context.Service<
       label: string,
     ) => Effect.Effect<Option.Option<PersistedConnectionTarget>, ConnectionPersistenceError>;
   }
->()("@bibcode/client-runtime/platform/persistence/ConnectionRegistrationStore") {}
+>()("@coddy/client-runtime/platform/persistence/ConnectionRegistrationStore") {}
 
 export interface AcceptedStorageIdentity {
   readonly targetKey: string;
@@ -112,7 +112,7 @@ export class AcceptedStorageIdentityStore extends Context.Service<
       decide: (acceptedStorageInstanceId: string | null) => AcceptedStorageIdentityTransition<A>,
     ) => Effect.Effect<A, ConnectionPersistenceError>;
   }
->()("@bibcode/client-runtime/platform/persistence/AcceptedStorageIdentityStore") {}
+>()("@coddy/client-runtime/platform/persistence/AcceptedStorageIdentityStore") {}
 
 export type ConnectionCatalogHealth =
   | { readonly status: "ready" }
@@ -124,7 +124,7 @@ export class ConnectionCatalogHealthStore extends Context.Service<
     readonly state: SubscriptionRef.SubscriptionRef<ConnectionCatalogHealth>;
     readonly reset: Effect.Effect<void, ConnectionPersistenceError>;
   }
->()("@bibcode/client-runtime/platform/persistence/ConnectionCatalogHealthStore") {}
+>()("@coddy/client-runtime/platform/persistence/ConnectionCatalogHealthStore") {}
 
 export class EnvironmentCacheStore extends Context.Service<
   EnvironmentCacheStore,
@@ -152,11 +152,11 @@ export class EnvironmentCacheStore extends Context.Service<
       environmentId: EnvironmentId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
->()("@bibcode/client-runtime/platform/persistence/EnvironmentCacheStore") {}
+>()("@coddy/client-runtime/platform/persistence/EnvironmentCacheStore") {}
 
 export class EnvironmentOwnedDataCleanup extends Context.Reference<{
   readonly clear: (environmentId: EnvironmentId) => Effect.Effect<void>;
-}>("@bibcode/client-runtime/platform/persistence/EnvironmentOwnedDataCleanup", {
+}>("@coddy/client-runtime/platform/persistence/EnvironmentOwnedDataCleanup", {
   defaultValue: () => ({
     clear: () => Effect.void,
   }),

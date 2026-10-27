@@ -3,8 +3,8 @@ import type {
   EnvironmentId,
   PullRequestsActionRequest,
   PullRequestsActionResult,
-} from "@bibcode/contracts";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/contracts";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import {
   createContext,
   createElement,

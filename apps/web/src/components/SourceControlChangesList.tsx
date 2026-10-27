@@ -1,4 +1,4 @@
-import type { VcsStagingArea } from "@bibcode/contracts";
+import type { VcsStagingArea } from "@coddy/contracts";
 import { ChevronDownIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 

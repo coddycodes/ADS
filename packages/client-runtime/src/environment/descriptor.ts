@@ -1,4 +1,4 @@
-import type { ExecutionEnvironmentDescriptor } from "@bibcode/contracts";
+import type { ExecutionEnvironmentDescriptor } from "@coddy/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
@@ -44,7 +44,7 @@ export const fetchRemoteEnvironmentDescriptor = Effect.fn(
   }
   const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
   const descriptor = yield* executeEnvironmentHttpRequest(
-    environmentEndpointUrl(input.httpBaseUrl, "/.well-known/bibcode/environment"),
+    environmentEndpointUrl(input.httpBaseUrl, "/.well-known/coddy-studio/environment"),
     input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
     client.metadata.descriptor(),
   );

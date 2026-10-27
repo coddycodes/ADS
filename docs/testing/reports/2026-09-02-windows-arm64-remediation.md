@@ -85,7 +85,7 @@ first, so only workspace crates compiled.
 | Global `C:\bibcode-validation\npm-global\vp.cmd test run packages/contracts/scripts/export-rust-rpc-fixtures.test.ts`                                                                                                                                                                                                                                                | Native: fails with `Vitest failed to find the runner`                                                                                                                                                                       |                       | Reproduces the duplicate-runtime finding                                                                                                                              |
 | `node_modules\.bin\vp.CMD test run` and `node scripts/run-local-vp.mjs test run` of the same file                                                                                                                                                                                                                                                                    | Native: exit 0 each                                                                                                                                                                                                         |                       | 1 passed each                                                                                                                                                         |
 | `node scripts/remove-test-firewall-rules.ts --executable <E2E exe> --dry-run`                                                                                                                                                                                                                                                                                        | Native: exit 0, no rules                                                                                                                                                                                                    | 3 s                   | Read-only query against the live firewall store                                                                                                                       |
-| `node scripts/remove-test-firewall-rules.ts --executable "C:\Program Files\BiBCode\BiBCode.exe"`                                                                                                                                                                                                                                                                     | Native: exit 2, refused                                                                                                                                                                                                     |                       | Installed-location guard                                                                                                                                              |
+| `node scripts/remove-test-firewall-rules.ts --executable "C:\Program Files\Coddy Studio\Coddy Studio.exe"`                                                                                                                                                                                                                                                                     | Native: exit 2, refused                                                                                                                                                                                                     |                       | Installed-location guard                                                                                                                                              |
 
 ## VCS observation evidence
 
@@ -160,7 +160,7 @@ refreshing reads, and per-repository scoping.
 
 | Kind                                    | Artifact                        | Absolute path                                                                                                                                                                        | Version/architecture                                                      | Identity/trust verification                                                                                                       |
 | --------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| NSIS installer                          | `BiBCode_0.4.2_arm64-setup.exe` | `C:\Users\admin\Projects\GitHub\BibCode\release\desktop\win-arm64\BiBCode_0.4.2_arm64-setup.exe`                                                                                     | 0.4.2; PE machine x86 (I386) NSIS bootstrapper carrying the ARM64 payload | 12,887,779 bytes; SHA-256 `92F1B18355B2E7619F328A5692A2FA948766F9F025F8DA3AD1EE8587335113D3`; Authenticode `NotSigned` (expected) |
+| NSIS installer                          | `Coddy Studio_0.4.2_arm64-setup.exe` | `C:\Users\admin\Projects\GitHub\BibCode\release\desktop\win-arm64\Coddy Studio_0.4.2_arm64-setup.exe`                                                                                     | 0.4.2; PE machine x86 (I386) NSIS bootstrapper carrying the ARM64 payload | 12,887,779 bytes; SHA-256 `92F1B18355B2E7619F328A5692A2FA948766F9F025F8DA3AD1EE8587335113D3`; Authenticode `NotSigned` (expected) |
 | Production application                  | `bibcode-desktop.exe`           | `C:\Users\admin\Projects\GitHub\BibCode\release\desktop\win-arm64-app\bibcode-desktop.exe` (copied from `target\aarch64-pc-windows-msvc\release\` before the E2E build overwrote it) | 0.4.2; PE machine ARM64                                                   | 31,261,184 bytes; SHA-256 `855F58A930B4A39C3FA8090375C052E53796B0CB580A96E8AD883F413741246E`; `NotSigned`                         |
 | E2E application (`desktop-e2e` feature) | `bibcode-desktop.exe`           | `C:\Users\admin\Projects\GitHub\BibCode\target\aarch64-pc-windows-msvc\release\bibcode-desktop.exe`                                                                                  | ARM64                                                                     | SHA-256 `80EA7D6DEB1975B8E0FB8F067212A50702D1C2024D99F7BA3E439B972207741A`                                                        |
 
@@ -192,7 +192,7 @@ exit 0 in 2m 48s; WDIO reported 6 passing in one worker
 
 - Exact executable launched: the E2E executable above (SHA-256 `80EA7D6D...`)
 - Exact PID/start identity: recorded by WDIO in the artifact directory
-- Other installed or development copies excluded: no installed BiBCode present; production binary preserved separately
+- Other installed or development copies excluded: no installed Coddy Studio present; production binary preserved separately
 - External tool, command, and path used for the Files Refresh rescan: n/a
 - Authentication-dependent scenarios unavailable: GitHub CLI unauthenticated (unchanged)
 
@@ -213,7 +213,7 @@ exit 0 in 2m 48s; WDIO reported 6 passing in one worker
   and every retained toolchain component
 - Package mounts or platform resources released: none used
 - Firewall: `Get-NetFirewallApplicationFilter | Where-Object Program -like '*bibcode*'`
-  returned no rules for any BiBCode executable after the packaged runs; no
+  returned no rules for any Coddy Studio executable after the packaged runs; no
   Windows Security Alert appeared for either freshly built executable
 
 ## Non-native compatibility evidence
@@ -322,7 +322,7 @@ exit 0 in 2m 48s; WDIO reported 6 passing in one worker
   listening sockets on wildcard addresses.
   - Impact: none observed; no prompt and no rules appeared for either freshly
     built executable in this run.
-  - Evidence that bounds it: post-run firewall query returned zero BiBCode
+  - Evidence that bounds it: post-run firewall query returned zero Coddy Studio
     rules; `portpicker::pick_unused_port` remains a last-resort fallback that
     still listens on wildcard TCP and UDP.
   - Required follow-up: none unless a prompt reappears.

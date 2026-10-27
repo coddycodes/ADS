@@ -3,9 +3,9 @@ import * as NodePath from "node:path";
 
 import { ensureMainSidebarOpen, setDesktopUiWindowSize } from "../support/ui-state.ts";
 
-const artifactDirectory = process.env.BIBCODE_E2E_ARTIFACT_DIR;
+const artifactDirectory = process.env.CODDY_STUDIO_E2E_ARTIFACT_DIR;
 if (!artifactDirectory) {
-  throw new Error("BIBCODE_E2E_ARTIFACT_DIR is required.");
+  throw new Error("CODDY_STUDIO_E2E_ARTIFACT_DIR is required.");
 }
 
 describe("packaged preferences, native integrations, and platform capabilities", () => {
@@ -58,7 +58,7 @@ describe("packaged preferences, native integrations, and platform capabilities",
     );
     await expect(browser.$("//*[normalize-space()='Connect to a host']")).toBeDisplayed();
     await expect(browser.$("//*[normalize-space()='Share this host']")).toBeDisplayed();
-    if (process.env.BIBCODE_E2E_PLATFORM === "win") {
+    if (process.env.CODDY_STUDIO_E2E_PLATFORM === "win") {
       const wslState = await browser.execute(async () => {
         const bridge = Reflect.get(window, "desktopBridge") as
           | {

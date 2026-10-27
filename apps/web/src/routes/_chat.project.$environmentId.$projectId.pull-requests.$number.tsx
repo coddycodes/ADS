@@ -1,5 +1,5 @@
-import { scopeProjectRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentId, ProjectId } from "@bibcode/contracts";
+import { scopeProjectRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentId, ProjectId } from "@coddy/contracts";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 

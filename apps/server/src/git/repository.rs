@@ -62,9 +62,9 @@ pub(crate) const NETWORK_TRANSFER_STALLED: &str = "The transfer stalled (under 1
 const MAX_AUTOMATIC_WORKTREE_SUFFIX_ATTEMPTS: usize = 100;
 const WORKTREE_REMOVE_RETRY_ATTEMPTS: usize = 20;
 const WORKTREE_REMOVE_RETRY_DELAY: Duration = Duration::from_millis(50);
-const WORKTREE_REMOVAL_IDENTITY_FILE: &str = "bibcode-removal-identity";
-const WORKTREE_REMOVAL_ROOT_IDENTITY_FILE: &str = ".bibcode-removal-identity";
-const WORKTREE_REMOVAL_TOMBSTONE_FILE: &str = ".bibcode-removal-tombstone";
+const WORKTREE_REMOVAL_IDENTITY_FILE: &str = "coddy-studio-removal-identity";
+const WORKTREE_REMOVAL_ROOT_IDENTITY_FILE: &str = ".coddy-studio-removal-identity";
+const WORKTREE_REMOVAL_TOMBSTONE_FILE: &str = ".coddy-studio-removal-tombstone";
 
 #[derive(Clone, Copy)]
 struct GitExecutionOptions {
@@ -236,7 +236,7 @@ impl WorktreePathPolicy {
         let base = self
             .configured_base
             .clone()
-            .unwrap_or_else(|| cwd.parent().unwrap_or(cwd).join(".bibcode-worktrees"));
+            .unwrap_or_else(|| cwd.parent().unwrap_or(cwd).join(".coddy-studio-worktrees"));
         base.join(repo).join(target_ref.replace('/', "-"))
     }
 
@@ -3280,7 +3280,7 @@ impl GitRepository {
                 &input.cwd,
                 &[
                     "config".into(),
-                    format!("branch.{new_ref}.bibcode-base-ref"),
+                    format!("branch.{new_ref}.coddy-studio-base-ref"),
                     base_ref.into(),
                 ],
                 cancellation,
@@ -4102,7 +4102,9 @@ impl GitRepository {
         let common_dir = tokio::fs::canonicalize(&common_dir)
             .await
             .unwrap_or(common_dir);
-        Ok(common_dir.join("bibcode-worktree-removals").join(nonce))
+        Ok(common_dir
+            .join("coddy-studio-worktree-removals")
+            .join(nonce))
     }
 
     async fn linked_worktree_admin_path_from_quarantine(
@@ -6059,7 +6061,7 @@ async fn write_durable_identity_marker(path: PathBuf, nonce: String) -> Result<(
             ".{}.{}.tmp",
             path.file_name()
                 .and_then(|value| value.to_str())
-                .unwrap_or("bibcode-removal-identity"),
+                .unwrap_or("coddy-studio-removal-identity"),
             Uuid::new_v4()
         ));
         let result = (|| {
@@ -6231,7 +6233,7 @@ fn worktree_removal_quarantine_path(path: &Path, nonce: &str) -> Result<PathBuf,
         )
     })?;
     Ok(parent.join(format!(
-        ".{}.bibcode-removal-{nonce}",
+        ".{}.coddy-studio-removal-{nonce}",
         file_name.to_string_lossy()
     )))
 }
@@ -7808,8 +7810,10 @@ async fn create_rewrite_temp_files(
 ) -> Result<RewriteTempFiles, GitCommandError> {
     let mut directory = None;
     for _ in 0..8 {
-        let candidate =
-            std::env::temp_dir().join(format!("bibcode-git-manager-rewrite-{}", Uuid::new_v4()));
+        let candidate = std::env::temp_dir().join(format!(
+            "coddy-studio-git-manager-rewrite-{}",
+            Uuid::new_v4()
+        ));
         match tokio::fs::create_dir(&candidate).await {
             Ok(()) => {
                 #[cfg(unix)]
@@ -8150,7 +8154,7 @@ mod tests {
     fn no_in_progress_paths() -> ProcessOutput {
         process_output(
             &(0..11)
-                .map(|index| format!(".git/bibcode-none-{index}"))
+                .map(|index| format!(".git/coddy-studio-none-{index}"))
                 .collect::<Vec<_>>()
                 .join("\n"),
         )
@@ -11754,7 +11758,7 @@ fn worktree_reservation_error(
 
     let detail = if error.kind() == io::ErrorKind::AlreadyExists {
         format!(
-            "The requested worktree path '{}' already exists. Choose an absent path so BiBCode can safely own its cleanup.",
+            "The requested worktree path '{}' already exists. Choose an absent path so Coddy Studio can safely own its cleanup.",
             display_path(path)
         )
     } else {
@@ -12470,10 +12474,10 @@ mod worktree_ownership_tests {
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_AUTHOR_NAME", "BiBCode Test")
-            .env("GIT_AUTHOR_EMAIL", "bibcode@example.invalid")
-            .env("GIT_COMMITTER_NAME", "BiBCode Test")
-            .env("GIT_COMMITTER_EMAIL", "bibcode@example.invalid")
+            .env("GIT_AUTHOR_NAME", "Coddy Studio Test")
+            .env("GIT_AUTHOR_EMAIL", "coddy-studio@example.invalid")
+            .env("GIT_COMMITTER_NAME", "Coddy Studio Test")
+            .env("GIT_COMMITTER_EMAIL", "coddy-studio@example.invalid")
             .output()
             .expect("git starts");
         assert!(

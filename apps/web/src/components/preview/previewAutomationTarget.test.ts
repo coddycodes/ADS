@@ -1,4 +1,4 @@
-import type { PreviewSessionSnapshot } from "@bibcode/contracts";
+import type { PreviewSessionSnapshot } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

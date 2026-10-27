@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@bibcode/contracts";
+import { WS_METHODS } from "@coddy/contracts";
 import { Atom } from "effect/reactivity";
 
 import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";

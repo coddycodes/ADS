@@ -10,7 +10,7 @@
   ${OrIf} ${Silent}
     ${If} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
       StrCpy $R9 0
-      bibcode_preinstall_retry:
+      coddy_studio_preinstall_retry:
         nsis_tauri_utils::KillProcessCurrentUser "${MAINBINARYNAME}.exe"
         Pop $R8
         ClearErrors
@@ -19,7 +19,7 @@
           IntOp $R9 $R9 + 1
           ${If} $R9 < 60
             Sleep 250
-            Goto bibcode_preinstall_retry
+            Goto coddy_studio_preinstall_retry
           ${EndIf}
         ${EndIf}
     ${EndIf}

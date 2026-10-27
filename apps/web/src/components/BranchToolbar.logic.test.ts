@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveEnvironmentOptionLabel, resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 
@@ -44,7 +44,7 @@ describe("resolveEffectiveEnvMode", () => {
   it("treats draft threads already attached to a worktree as current-checkout mode", () => {
     expect(
       resolveEffectiveEnvMode({
-        activeWorktreePath: "/repo/.bibcode/worktrees/feature-a",
+        activeWorktreePath: "/repo/.coddy/studio/worktrees/feature-a",
         hasServerThread: false,
         draftThreadEnvMode: "worktree",
       }),

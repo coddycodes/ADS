@@ -1,4 +1,4 @@
-import { deriveLogicalProjectKey } from "@bibcode/client-runtime/state/project-grouping";
+import { deriveLogicalProjectKey } from "@coddy/client-runtime/state/project-grouping";
 
 import type { Project } from "./types";
 
@@ -30,4 +30,4 @@ export {
   selectProjectGroupingSettings,
   type ProjectGroupingMode,
   type ProjectGroupingSettings,
-} from "@bibcode/client-runtime/state/project-grouping";
+} from "@coddy/client-runtime/state/project-grouping";

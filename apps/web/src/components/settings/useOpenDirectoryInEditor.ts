@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { useCallback, useState } from "react";
 
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";

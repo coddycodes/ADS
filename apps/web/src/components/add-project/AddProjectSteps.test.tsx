@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -582,7 +582,7 @@ describe("Add Project presentational steps", () => {
     expect(document.querySelector('[role="status"]')?.textContent).toBe(line);
   });
 
-  it("shows BiBCode create copy and target summary", async () => {
+  it("shows Coddy Studio create copy and target summary", async () => {
     await mount(
       <AddProjectCreateStep
         name="demo"
@@ -598,7 +598,7 @@ describe("Add Project presentational steps", () => {
       />,
     );
     expect(document.body.textContent).toContain(
-      "Name it and BiBCode will create a real project with sensible defaults.",
+      "Name it and Coddy Studio will create a real project with sensible defaults.",
     );
     expect(document.body.textContent).toContain("Git repository in ~/projects");
     expect(document.body.textContent).toContain("~/projects/demo");

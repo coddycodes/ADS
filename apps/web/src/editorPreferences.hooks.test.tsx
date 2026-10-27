@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EditorId, EnvironmentId } from "@bibcode/contracts";
+import { EditorId, EnvironmentId } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, type ReactElement } from "react";

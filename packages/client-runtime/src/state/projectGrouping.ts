@@ -1,6 +1,6 @@
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
-import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@bibcode/contracts";
-import type { ClientSettings } from "@bibcode/contracts/settings";
+import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@coddy/contracts";
+import type { ClientSettings } from "@coddy/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";

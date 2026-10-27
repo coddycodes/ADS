@@ -8,14 +8,14 @@
  * tracked chat panel that leaves the live thread list (closed, so archived, or
  * deleted elsewhere) loses its tab, and is adopted again if it is reopened.
  */
-import { scopedThreadKey, scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   ThreadId,
   type EnvironmentId,
   type OrchestrationThreadShell,
   type TerminalMetadataStreamEvent,
   type TerminalSummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { useCenterPanelStore } from "./centerPanelStore";
 import { isTerminalIdReserved } from "./terminalIdReservations";

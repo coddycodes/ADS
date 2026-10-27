@@ -1,4 +1,4 @@
-import type { ServerProvider } from "@bibcode/contracts";
+import type { ServerProvider } from "@coddy/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 

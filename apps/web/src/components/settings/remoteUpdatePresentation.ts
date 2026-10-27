@@ -1,10 +1,10 @@
-import type { RemoteUpdateActiveWork, RemoteUpdateSnapshot } from "@bibcode/contracts";
+import type { RemoteUpdateActiveWork, RemoteUpdateSnapshot } from "@coddy/contracts";
 import {
   isRemoteUpdateRunActive,
   type RemoteUpdateFailure,
   type RemoteUpdateRunState,
-} from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
-import { compareSemverVersions } from "@bibcode/shared/semver";
+} from "@coddy/client-runtime/state/remoteUpdateCoordinator";
+import { compareSemverVersions } from "@coddy/shared/semver";
 
 export interface RemoteUpdateConfirmationInput {
   readonly name: string;
@@ -37,21 +37,21 @@ export interface ManualUpdateStepsInput {
 export function manualUpdateSteps(input: ManualUpdateStepsInput): string {
   const running = `# Currently running: v${input.serverVersion}`;
   const generic = [
-    "# Update this BiBCode server on its host:",
+    "# Update this Coddy Studio server on its host:",
     "# 1. Stop the running server (Ctrl+C or its service manager).",
-    "# 2. Install the new bibcode distribution for this host.",
+    "# 2. Install the new coddy-studio distribution for this host.",
     "# 3. Restart it or its service:",
-    "bibcode serve",
+    "coddy-studio serve",
     "",
     running,
   ];
   if (input.sshLaunched) {
     return [
-      "# This server was started by BiBCode over SSH.",
-      "# 1. Install the new bibcode on the host; check bibcode --version.",
-      "# 2. Locate this connection's pid record under ~/.bibcode-ssh-launch/.",
-      "# Verify that it still belongs to this bibcode server before stopping it.",
-      "# 3. Reconnect from BiBCode to start the new server.",
+      "# This server was started by Coddy Studio over SSH.",
+      "# 1. Install the new coddy-studio on the host; check coddy-studio --version.",
+      "# 2. Locate this connection's pid record under ~/.coddy/studio/ssh-launch/.",
+      "# Verify that it still belongs to this coddy-studio server before stopping it.",
+      "# 3. Reconnect from Coddy Studio to start the new server.",
       "",
       running,
     ].join("\n");
@@ -59,25 +59,25 @@ export function manualUpdateSteps(input: ManualUpdateStepsInput): string {
   if (input.os === "unknown" || input.arch === "other") return generic.join("\n");
   const archiveArch = input.arch === "arm64" ? "aarch64" : "x86_64";
   const release =
-    "# Replace VERSION with the release to install from https://github.com/mubeda/BibCode/releases.";
+    "# Replace VERSION with the release to install from https://github.com/mubeda/CoddyStudio/releases.";
   if (input.installKind === "archive") {
-    const asset = `bibcode-server-vVERSION-${input.os}-${archiveArch}.${input.os === "windows" ? "zip" : "tar.gz"}`;
+    const asset = `coddy-studio-server-vVERSION-${input.os}-${archiveArch}.${input.os === "windows" ? "zip" : "tar.gz"}`;
     const check =
       input.os === "windows"
         ? [
             `Get-FileHash -Algorithm SHA256 '${asset}'`,
-            `# Compare its Hash with the ${asset} line in bibcode-server-SHA256SUMS.`,
+            `# Compare its Hash with the ${asset} line in coddy-studio-server-SHA256SUMS.`,
           ]
         : [
-            `grep "  ${asset}$" bibcode-server-SHA256SUMS | ${input.os === "darwin" ? "shasum -a 256 -c" : "sha256sum --check -"}`,
+            `grep "  ${asset}$" coddy-studio-server-SHA256SUMS | ${input.os === "darwin" ? "shasum -a 256 -c" : "sha256sum --check -"}`,
           ];
     return [
       release,
-      `# 1. Download ${asset} and bibcode-server-SHA256SUMS.`,
+      `# 1. Download ${asset} and coddy-studio-server-SHA256SUMS.`,
       "# 2. Check the download:",
       ...check,
       "# 3. Stop the server, replace the extracted distribution, and restart it or its service:",
-      "bibcode serve",
+      "coddy-studio serve",
       "",
       running,
     ].join("\n");
@@ -85,10 +85,10 @@ export function manualUpdateSteps(input: ManualUpdateStepsInput): string {
   if (input.installKind === "system-package" && input.os === "linux") {
     return [
       release,
-      "# 1. Download this host's package and check it against bibcode-server-SHA256SUMS.",
+      "# 1. Download this host's package and check it against coddy-studio-server-SHA256SUMS.",
       "# 2. Use the command for your distribution:",
-      `sudo apt install ./bibcode-server_VERSION_${input.arch === "arm64" ? "arm64" : "amd64"}.deb`,
-      `sudo dnf install ./bibcode-server-VERSION-1.${archiveArch}.rpm`,
+      `sudo apt install ./coddy-studio-server_VERSION_${input.arch === "arm64" ? "arm64" : "amd64"}.deb`,
+      `sudo dnf install ./coddy-studio-server-VERSION-1.${archiveArch}.rpm`,
       "# 3. Restart the server or its service.",
       "",
       running,
@@ -128,7 +128,7 @@ export function remoteUpdateConfirmation(
   input: RemoteUpdateConfirmationInput,
 ): RemoteUpdateConfirmation {
   const lines = [
-    `Updating ${input.name} restarts BiBCode there.`,
+    `Updating ${input.name} restarts Coddy Studio there.`,
     input.counting ? "Counting running work…" : workLine(input.activeWork),
   ];
   if (
@@ -190,13 +190,13 @@ export function remoteUpdateFailureMessage(name: string, failure: RemoteUpdateFa
         ? `Couldn't update ${name}: ${sentence(failure.message)} Nothing was installed.`
         : `Couldn't update ${name}: ${sentence(failure.message)} Nothing was installed; it runs v${failure.runningVersion} again.`;
     case "not-back":
-      return `${name} hasn't come back after the update. Check BiBCode on ${name}; it may be on a different port.`;
+      return `${name} hasn't come back after the update. Check Coddy Studio on ${name}; it may be on a different port.`;
     case "wrong-version":
       return `${name} restarted on v${failure.runningVersion} instead of v${failure.targetVersion}.`;
     case "manual-required":
       return `Couldn't update ${name}: this server must be updated manually.`;
     case "install-timeout":
-      return `${name} is taking longer than 2 minutes to install ${failure.targetVersion === null ? "the update" : `v${failure.targetVersion}`}. Check BiBCode on ${name}.`;
+      return `${name} is taking longer than 2 minutes to install ${failure.targetVersion === null ? "the update" : `v${failure.targetVersion}`}. Check Coddy Studio on ${name}.`;
     case "blocked":
       return `Can't reconnect to ${name} after the update: ${sentence(failure.message)}`;
   }

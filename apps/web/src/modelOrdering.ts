@@ -1,4 +1,4 @@
-import type { ProviderInstanceId } from "@bibcode/contracts";
+import type { ProviderInstanceId } from "@coddy/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 

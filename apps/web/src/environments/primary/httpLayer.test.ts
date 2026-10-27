@@ -1,4 +1,4 @@
-import type { DesktopBridge } from "@bibcode/contracts";
+import type { DesktopBridge } from "@coddy/contracts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { HttpClient } from "effect/http";
@@ -39,7 +39,7 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: {
-        location: { origin: "bibcode://app" },
+        location: { origin: "coddy-studio://app" },
         desktopBridge: {
           getLocalEnvironmentBootstrap: () => ({
             label: "Local environment",

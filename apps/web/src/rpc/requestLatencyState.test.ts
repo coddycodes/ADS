@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@bibcode/contracts";
+import { WS_METHODS } from "@coddy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "./atomRegistry";

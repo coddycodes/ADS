@@ -2,14 +2,14 @@ import {
   EnvironmentId,
   type DesktopSshEnvironmentTarget,
   type ExecutionEnvironmentDescriptor,
-} from "@bibcode/contracts";
-import { RelayEnvironmentConnectScope } from "@bibcode/contracts/relay";
+} from "@coddy/contracts";
+import { RelayEnvironmentConnectScope } from "@coddy/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";

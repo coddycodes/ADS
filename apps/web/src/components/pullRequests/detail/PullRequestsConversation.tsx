@@ -8,7 +8,7 @@ import type {
   PullRequestsDetail,
   PullRequestsTimeline,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { LegendList } from "@legendapp/list/react";
 import { memo, useCallback, useMemo } from "react";
 import { formatRelativeTimeLabel } from "../../../timestampFormat";

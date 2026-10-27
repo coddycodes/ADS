@@ -1,9 +1,9 @@
 "use client";
 
 import { useAtomValue } from "@effect/atom-react";
-import { parseScopedThreadKey, scopedThreadKey } from "@bibcode/client-runtime/environment";
-import { runAtomCommand } from "@bibcode/client-runtime/state/runtime";
-import type { ScopedThreadRef } from "@bibcode/contracts";
+import { parseScopedThreadKey, scopedThreadKey } from "@coddy/client-runtime/environment";
+import { runAtomCommand } from "@coddy/client-runtime/state/runtime";
+import type { ScopedThreadRef } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 

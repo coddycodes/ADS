@@ -1,4 +1,4 @@
-use bibcode_server::server_settings;
+use coddy_studio_server::server_settings;
 
 use server_settings::{
     ProviderEnvironmentVariableInput, ProviderInstanceInput, ProviderOptionSelectionState,
@@ -23,12 +23,15 @@ async fn worktree_workspace_roundtrips_and_empty_is_the_default() {
     );
     let updated = store
         .update(ServerSettingsPatch {
-            worktree_base_directory: Some("  /tmp/bibcode-worktrees  ".to_owned()),
+            worktree_base_directory: Some("  /tmp/coddy-studio-worktrees  ".to_owned()),
             ..ServerSettingsPatch::default()
         })
         .await
         .expect("workspace update");
-    assert_eq!(updated.worktree_base_directory, "/tmp/bibcode-worktrees");
+    assert_eq!(
+        updated.worktree_base_directory,
+        "/tmp/coddy-studio-worktrees"
+    );
 
     let reopened = ProviderSettingsStore::new(temp.path());
     assert_eq!(
@@ -37,7 +40,7 @@ async fn worktree_workspace_roundtrips_and_empty_is_the_default() {
             .await
             .expect("reloaded settings")
             .worktree_base_directory,
-        "/tmp/bibcode-worktrees"
+        "/tmp/coddy-studio-worktrees"
     );
 }
 

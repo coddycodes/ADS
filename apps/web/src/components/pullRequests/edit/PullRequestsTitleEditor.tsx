@@ -1,5 +1,5 @@
-import type { PullRequestsProviderKind } from "@bibcode/contracts";
-import { formatChangeRequestNumber } from "@bibcode/shared/sourceControl";
+import type { PullRequestsProviderKind } from "@coddy/contracts";
+import { formatChangeRequestNumber } from "@coddy/shared/sourceControl";
 import { PullRequestsTextEditor, type PullRequestsEditorProps } from "./PullRequestsTextEditor";
 export function PullRequestsTitleEditor({
   provider,

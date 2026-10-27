@@ -1,7 +1,7 @@
 #[path = "support/hermetic_providers.rs"]
 mod hermetic_providers;
 
-use bibcode_server::{
+use coddy_studio_server::{
     ServerConfig, ServerRuntime,
     persistence::{
         BackupTrigger, PreparedStore, RecoveryError, StatePaths, StoreClassification,
@@ -26,8 +26,8 @@ use uuid::Uuid;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-const CRASH_STORE_CHILD_ROOT: &str = "BIBCODE_CRASH_STORE_CHILD_ROOT";
-const CRASH_STORE_CHILD_READY: &str = "BIBCODE_CRASH_STORE_CHILD_READY";
+const CRASH_STORE_CHILD_ROOT: &str = "CODDY_STUDIO_CRASH_STORE_CHILD_ROOT";
+const CRASH_STORE_CHILD_READY: &str = "CODDY_STUDIO_CRASH_STORE_CHILD_READY";
 
 struct StoreFixture {
     _root: TempDir,
@@ -103,7 +103,7 @@ async fn close_prepared_store_for_offline_fixture(prepared: PreparedStore) {
     drop(prepared);
 }
 
-fn server_endpoint(handle: &bibcode_server::ServerHandle, path: &str) -> String {
+fn server_endpoint(handle: &coddy_studio_server::ServerHandle, path: &str) -> String {
     format!("http://{}{path}", handle.local_addr())
 }
 
@@ -153,9 +153,15 @@ fn assert_descriptor_is_path_redacted(
     assert_value_has_no_path(descriptor, &requested, &effective);
 }
 
-async fn fetch_axum_descriptor(client: &Client, handle: &bibcode_server::ServerHandle) -> Value {
+async fn fetch_axum_descriptor(
+    client: &Client,
+    handle: &coddy_studio_server::ServerHandle,
+) -> Value {
     let response = client
-        .get(server_endpoint(handle, "/.well-known/bibcode/environment"))
+        .get(server_endpoint(
+            handle,
+            "/.well-known/coddy-studio/environment",
+        ))
         .send()
         .await
         .expect("environment descriptor response");
@@ -163,7 +169,10 @@ async fn fetch_axum_descriptor(client: &Client, handle: &bibcode_server::ServerH
     response.json().await.expect("environment descriptor JSON")
 }
 
-async fn fetch_connect_descriptor(client: &Client, handle: &bibcode_server::ServerHandle) -> Value {
+async fn fetch_connect_descriptor(
+    client: &Client,
+    handle: &coddy_studio_server::ServerHandle,
+) -> Value {
     let credential = handle
         .startup_access()
         .expect("web startup access")
@@ -179,7 +188,7 @@ async fn fetch_connect_descriptor(client: &Client, handle: &bibcode_server::Serv
             ("subject_token", credential.as_str()),
             (
                 "subject_token_type",
-                "urn:bibcode:params:oauth:token-type:environment-bootstrap",
+                "urn:coddy-studio:params:oauth:token-type:environment-bootstrap",
             ),
             (
                 "requested_token_type",
@@ -232,10 +241,10 @@ async fn fetch_connect_descriptor(client: &Client, handle: &bibcode_server::Serv
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let proof = cloud_codec
         .sign(
-            "bibcode-cloud-health+jwt",
+            "coddy-studio-cloud-health+jwt",
             json!({
                 "iss": "https://relay.example",
-                "aud": "bibcode-env:local",
+                "aud": "coddy-studio-env:local",
                 "sub": "project-data-safety-user",
                 "jti": Uuid::new_v4().to_string(),
                 "iat": now,
@@ -248,7 +257,7 @@ async fn fetch_connect_descriptor(client: &Client, handle: &bibcode_server::Serv
         .await
         .expect("signed Connect health proof");
     let response = client
-        .post(server_endpoint(handle, "/api/bibcode-connect/health"))
+        .post(server_endpoint(handle, "/api/coddy-connect/health"))
         .bearer_auth(access_token)
         .json(&json!({ "proof": proof }))
         .send()
@@ -473,7 +482,7 @@ async fn empty_unknown_and_mismatched_ledgers_are_preserved_without_marker_publi
 }
 
 #[tokio::test]
-async fn missing_core_table_is_not_accepted_as_a_bibcode_store() {
+async fn missing_core_table_is_not_accepted_as_a_coddy_studio_store() {
     let fixture = StoreFixture::with_project("Incomplete project").await;
     let connection = Connection::open(&fixture.paths.database).expect("recognized database");
     connection
@@ -765,7 +774,7 @@ async fn offline_fixture_teardown_waits_for_owned_work_and_closes_the_file_conne
                 entered_sender.send(()).expect("worker entered held work");
                 release_receiver
                     .recv()
-                    .map_err(|_| bibcode_server::persistence::PersistenceError::WorkerUnavailable)?;
+                    .map_err(|_| coddy_studio_server::persistence::PersistenceError::WorkerUnavailable)?;
                 Ok(())
             })
             .await
@@ -964,7 +973,9 @@ async fn recovery_restore_rejects_a_tampered_manifest_without_mutating_the_live_
 
     assert!(matches!(
         error,
-        RecoveryError::Backup(bibcode_server::persistence::BackupError::Verification(_))
+        RecoveryError::Backup(coddy_studio_server::persistence::BackupError::Verification(
+            _
+        ))
     ));
     assert_eq!(
         std::fs::read(&fixture.paths.database).expect("live database remains"),
@@ -1089,7 +1100,9 @@ async fn recovery_restore_rejects_a_checksum_valid_non_sqlite_backup_without_mut
 
     assert!(matches!(
         error,
-        RecoveryError::Backup(bibcode_server::persistence::BackupError::Verification(_))
+        RecoveryError::Backup(coddy_studio_server::persistence::BackupError::Verification(
+            _
+        ))
     ));
     assert_eq!(
         std::fs::read(&fixture.paths.database).expect("live database remains"),
@@ -1395,7 +1408,7 @@ async fn recovery_inspection_reports_verified_store_state_without_mutating_it() 
 #[tokio::test]
 async fn recovery_inspection_reports_an_absent_root_as_first_run_without_creating_it() {
     let parent = TempDir::new().expect("temporary parent");
-    let missing_root = parent.path().join("missing-bibcode-root");
+    let missing_root = parent.path().join("missing-coddy-studio-root");
     let config = ServerConfig::new(&missing_root);
     let root = resolve_data_root(config.data_root_request.clone()).expect("resolve missing root");
 

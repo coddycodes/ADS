@@ -5,7 +5,7 @@
       "method": "POST",
       "path": "/api/session",
       "body": {
-        "title": "BiBCode capture",
+        "title": "Coddy Studio capture",
         "location": {
           "directory": "/work/project"
         },
@@ -47,7 +47,7 @@
             "created": 1792090050658,
             "updated": 1792090050658
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -90,7 +90,7 @@
             "created": 1792090050658,
             "updated": 1792090050658
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -108,13 +108,13 @@
       "method": "POST",
       "path": "/api/session/ses_ebf1befa0ffeYWlEI8QVT5eWs2/prompt",
       "body": {
-        "id": "msg_bibcodecapture1792090050661",
+        "id": "msg_coddystudiocapture1792090050661",
         "text": "SAY_HELLO please"
       },
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090050661",
+          "id": "msg_coddystudiocapture1792090050661",
           "sessionID": "ses_ebf1befa0ffeYWlEI8QVT5eWs2",
           "time": {
             "created": 1792090050663
@@ -176,7 +176,7 @@
             }
           },
           {
-            "id": "msg_bibcodecapture1792090050661",
+            "id": "msg_coddystudiocapture1792090050661",
             "time": {
               "created": 1792090050670
             },
@@ -192,12 +192,12 @@
     },
     {
       "method": "GET",
-      "path": "/api/session/ses_ebf1befa0ffeYWlEI8QVT5eWs2/message/msg_bibcodecapture1792090050661",
+      "path": "/api/session/ses_ebf1befa0ffeYWlEI8QVT5eWs2/message/msg_coddystudiocapture1792090050661",
       "body": null,
       "status": 200,
       "response": {
         "data": {
-          "id": "msg_bibcodecapture1792090050661",
+          "id": "msg_coddystudiocapture1792090050661",
           "time": {
             "created": 1792090050670
           },
@@ -289,7 +289,7 @@
             }
           },
           {
-            "id": "msg_bibcodecapture1792090050661",
+            "id": "msg_coddystudiocapture1792090050661",
             "time": {
               "created": 1792090050670
             },
@@ -307,12 +307,12 @@
       "method": "POST",
       "path": "/api/session/ses_ebf1befa0ffeYWlEI8QVT5eWs2/revert/stage",
       "body": {
-        "messageID": "msg_bibcodecapture1792090050661"
+        "messageID": "msg_coddystudiocapture1792090050661"
       },
       "status": 200,
       "response": {
         "data": {
-          "messageID": "msg_bibcodecapture1792090050661",
+          "messageID": "msg_coddystudiocapture1792090050661",
           "files": []
         }
       }
@@ -348,7 +348,7 @@
             "updated": 1792090051779,
             "idle": 1792090050696
           },
-          "title": "BiBCode capture",
+          "title": "Coddy Studio capture",
           "permissions": [
             {
               "action": "*",
@@ -357,7 +357,7 @@
             }
           ],
           "revert": {
-            "messageID": "msg_bibcodecapture1792090050661",
+            "messageID": "msg_coddystudiocapture1792090050661",
             "files": []
           },
           "location": {

@@ -46,9 +46,9 @@ current behavior.
 
 ## Cloud and environment authentication
 
-- [BiBCode Connect](./cloud/bibcode-connect-clerk.md)
+- [Coddy Connect](./cloud/coddy-connect-clerk.md)
 - [Environment authentication](./cloud/environment-auth.md)
-- [Connect authentication flow](./cloud/bibcode-connect-auth-flow.md)
+- [Connect authentication flow](./cloud/coddy-connect-auth-flow.md)
 
 ## Operations and reference
 
@@ -62,7 +62,7 @@ current behavior.
 - [Workspace layout](./reference/workspace-layout.md)
 - [Repository scripts](./reference/scripts.md)
 - [Repository skills](./skills/): the source of the agent skills
-  (`bibcode-profiler`, `bibcode-release`, `issue-delivery`) that the
+  (`coddy-studio-profiler`, `coddy-studio-release`, `issue-delivery`) that the
   `.agents/skills/` and `.claude/skills/` stubs point to
 
 ## Historical material

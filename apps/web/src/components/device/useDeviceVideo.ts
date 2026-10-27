@@ -1,8 +1,8 @@
 /* oxlint-disable unicorn/require-post-message-target-origin -- Worker messages have no target origin. */
-import { isSessionTransportLoss } from "@bibcode/client-runtime/connection";
-import { type DeviceMediaTarget, deviceMediaTarget } from "@bibcode/client-runtime/device";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
-import type { EnvironmentId } from "@bibcode/contracts";
+import { isSessionTransportLoss } from "@coddy/client-runtime/connection";
+import { type DeviceMediaTarget, deviceMediaTarget } from "@coddy/client-runtime/device";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
+import type { EnvironmentId } from "@coddy/contracts";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 

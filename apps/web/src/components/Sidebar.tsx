@@ -70,24 +70,24 @@ import {
   type VcsAdoptedWorktreeStatus,
   type WorktreeRemovalResult,
   ThreadId,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   parseScopedThreadKey,
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@bibcode/client-runtime/environment";
-import { safeErrorLogAttributes } from "@bibcode/client-runtime/errors";
+} from "@coddy/client-runtime/environment";
+import { safeErrorLogAttributes } from "@coddy/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   selectWorktreeCatalogCapabilityPolicy,
   selectWorktreeWorkspaceActionsAvailable,
-} from "@bibcode/client-runtime/state/worktrees";
+} from "@coddy/client-runtime/state/worktrees";
 import { Link, useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -96,7 +96,7 @@ import {
   type SidebarRepositorySortOrder,
   type SidebarThreadPreviewCount,
   type SidebarThreadSortOrder,
-} from "@bibcode/contracts/settings";
+} from "@coddy/contracts/settings";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import {
   resolveEnvironmentCompatVerdict,
@@ -146,7 +146,7 @@ import {
   useRemoteUpdateRun,
   useRequestRemoteUpdateConfirmation,
 } from "../state/remoteUpdates";
-import { isRemoteUpdateRunActive } from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
+import { isRemoteUpdateRunActive } from "@coddy/client-runtime/state/remoteUpdateCoordinator";
 import { manualUpdateSteps, visibleRemoteUpdateRun } from "./settings/remoteUpdatePresentation";
 import {
   ManualUpdateStepsDialog,
@@ -3128,7 +3128,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (removalPolicy === "legacy-detach-only") {
           const confirmed = await api.dialogs.confirm(
             [
-              `Remove worktree "${thread.title}" from BiBCode?`,
+              `Remove worktree "${thread.title}" from Coddy Studio?`,
               "The Git worktree and its files will be left untouched.",
             ].join("\n"),
           );
@@ -3139,7 +3139,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Failed to remove worktree from BiBCode",
+                title: "Failed to remove worktree from Coddy Studio",
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );

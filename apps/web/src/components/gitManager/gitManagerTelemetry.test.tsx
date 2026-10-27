@@ -3,9 +3,9 @@
 import {
   AVAILABLE_CONNECTION_STATE,
   type SupervisorConnectionState,
-} from "@bibcode/client-runtime/connection";
-import type { GitManagerCommitEntry, ServerConfig } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/client-runtime/connection";
+import type { GitManagerCommitEntry, ServerConfig } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { setupServer } from "msw/node";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

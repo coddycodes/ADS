@@ -403,9 +403,9 @@ function captureWindowsProcessSnapshot(
   const script = [
     "$rows = @(Get-CimInstance Win32_Process)",
     "$targets = [System.Collections.Generic.HashSet[int]]::new()",
-    "$requested = @($env:BIBCODE_VCS_SNAPSHOT_PIDS -split ',' | Where-Object { $_ -match '^\\d+$' })",
+    "$requested = @($env:CODDY_STUDIO_VCS_SNAPSHOT_PIDS -split ',' | Where-Object { $_ -match '^\\d+$' })",
     "foreach ($pidValue in $requested) { [void]$targets.Add([int]$pidValue) }",
-    "$root = [int]$env:BIBCODE_VCS_SNAPSHOT_ROOT_PID",
+    "$root = [int]$env:CODDY_STUDIO_VCS_SNAPSHOT_ROOT_PID",
     "if ($root -gt 0) {",
     "[void]$targets.Add($root)",
     "do {",
@@ -439,8 +439,8 @@ function captureWindowsProcessSnapshot(
         encoding: "utf8",
         env: {
           ...process.env,
-          BIBCODE_VCS_SNAPSHOT_ROOT_PID: String(rootPid ?? 0),
-          BIBCODE_VCS_SNAPSHOT_PIDS: requestedPids.join(","),
+          CODDY_STUDIO_VCS_SNAPSHOT_ROOT_PID: String(rootPid ?? 0),
+          CODDY_STUDIO_VCS_SNAPSHOT_PIDS: requestedPids.join(","),
         },
         timeout: PROBE_TIMEOUT_MS,
       },
@@ -501,7 +501,7 @@ export function selectOwnedProcessTree(
 
 function terminateExactProcesses(identities: ReadonlyArray<WindowsProcessTreeIdentity>): void {
   const script = [
-    "$items = @($env:BIBCODE_VCS_TERMINATE_IDENTITIES | ConvertFrom-Json)",
+    "$items = @($env:CODDY_STUDIO_VCS_TERMINATE_IDENTITIES | ConvertFrom-Json)",
     "foreach ($item in $items) {",
     "try {",
     "$p = Get-Process -Id ([int]$item.pid) -ErrorAction SilentlyContinue",
@@ -522,7 +522,7 @@ function terminateExactProcesses(identities: ReadonlyArray<WindowsProcessTreeIde
     {
       env: {
         ...process.env,
-        BIBCODE_VCS_TERMINATE_IDENTITIES: JSON.stringify(identities),
+        CODDY_STUDIO_VCS_TERMINATE_IDENTITIES: JSON.stringify(identities),
       },
       stdio: "ignore",
       timeout: PROBE_TIMEOUT_MS,
@@ -674,8 +674,8 @@ function runQueueBenchmark(
       encoding: "utf8",
       env: {
         ...process.env,
-        BIBCODE_VCS_QUEUE_WARMUPS: String(warmups),
-        BIBCODE_VCS_QUEUE_SAMPLES: String(samples),
+        CODDY_STUDIO_VCS_QUEUE_WARMUPS: String(warmups),
+        CODDY_STUDIO_VCS_QUEUE_SAMPLES: String(samples),
       },
       maxBuffer: 16 * 1024 * 1024,
     },
@@ -690,14 +690,14 @@ function runQueueBenchmark(
 export async function measureVcsRuntime(
   input: MeasureVcsRuntimeInput,
 ): Promise<Record<string, unknown>> {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- Standalone controller selects its supported native host once.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- Standalone controller selects its supported native host once.
   if (process.platform !== "win32") {
     throw new VcsRuntimeMeasurementError("VCS runtime measurement is supported only on Windows.");
   }
   const repositoryRoot = NodePath.resolve(import.meta.dirname, "..");
   const outputDirectory = input.outputDirectory
     ? NodePath.resolve(input.outputDirectory)
-    : NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-vcs-runtime-"));
+    : NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-vcs-runtime-"));
   if (input.outputDirectory) NodeFS.mkdirSync(outputDirectory);
   const fixtureRepository = NodePath.join(outputDirectory, "repository");
   const fixtureRemote = NodePath.join(outputDirectory, "remote.git");
@@ -719,7 +719,7 @@ export async function measureVcsRuntime(
   const realGit = commandPath("git.exe");
   runGit(realGit, fixtureRemote, ["init", "--bare", "--initial-branch=main"]);
   runGit(realGit, fixtureRepository, ["init", "--initial-branch=main"]);
-  runGit(realGit, fixtureRepository, ["config", "user.name", "BiBCode VCS Measurement"]);
+  runGit(realGit, fixtureRepository, ["config", "user.name", "Coddy Studio VCS Measurement"]);
   runGit(realGit, fixtureRepository, ["config", "user.email", "vcs-measure@example.invalid"]);
   runGit(realGit, fixtureRepository, ["config", "commit.gpgSign", "false"]);
   runGit(realGit, fixtureRepository, ["commit", "--allow-empty", "-m", "baseline"]);
@@ -746,7 +746,7 @@ export async function measureVcsRuntime(
       "cargo",
       "build",
       "-p",
-      "bibcode-server",
+      "coddy-studio-server",
       "--example",
       "measure_vcs_runtime_server",
       "--example",
@@ -778,8 +778,8 @@ export async function measureVcsRuntime(
       env: {
         ...process.env,
         PATH: `${shimDirectory}${NodePath.delimiter}${process.env.PATH ?? ""}`,
-        BIBCODE_VCS_MEASURE_REAL_GIT: realGit,
-        BIBCODE_VCS_MEASURE_GIT_LOG: gitLogPath,
+        CODDY_STUDIO_VCS_MEASURE_REAL_GIT: realGit,
+        CODDY_STUDIO_VCS_MEASURE_GIT_LOG: gitLogPath,
       },
       stdio: ["ignore", stdout, stderr],
       windowsHide: true,

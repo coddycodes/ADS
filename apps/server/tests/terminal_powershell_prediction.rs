@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use bibcode_server::terminal::{
+use coddy_studio_server::terminal::{
     PortablePtyBackend, TerminalAttachInput, TerminalManager, TerminalManagerOptions,
     TerminalOpenInput,
 };

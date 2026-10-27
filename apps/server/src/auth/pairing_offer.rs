@@ -1,5 +1,5 @@
 //! Pairing-offer input rules shared by `POST /api/auth/pairing-offer` and the
-//! `bibcode pairing offer` CLI, so the two paths cannot drift.
+//! `coddy-studio pairing offer` CLI, so the two paths cannot drift.
 
 use thiserror::Error;
 
@@ -298,7 +298,7 @@ mod tests {
         )
         .await
         .expect("mint offer");
-        assert!(offer.link.starts_with("bibcode://pair?code="));
+        assert!(offer.link.starts_with("coddy-studio://pair?code="));
         let payload = crate::auth::pairing_code::decode_pairing_code(&offer.code).expect("decodes");
         assert_eq!(payload.endpoint, "http://10.0.0.5:3773");
         assert_eq!(payload.name, "ai-server");

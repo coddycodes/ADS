@@ -1,4 +1,4 @@
-import type { GitManagerConflictState } from "@bibcode/contracts";
+import type { GitManagerConflictState } from "@coddy/contracts";
 
 export function resolveConflictCount(markerCount: number): number {
   return Math.ceil(Math.max(0, markerCount) / 3);

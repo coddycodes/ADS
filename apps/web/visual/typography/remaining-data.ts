@@ -8,8 +8,8 @@ import {
   type ReviewDiffPreviewResult,
   type SourceControlDiscoveryResult,
   type VcsStatusResult,
-} from "@bibcode/contracts";
-import { createModelSelection } from "@bibcode/shared/model";
+} from "@coddy/contracts";
+import { createModelSelection } from "@coddy/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import type { Thread } from "../../src/types";

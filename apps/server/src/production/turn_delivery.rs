@@ -922,7 +922,7 @@ async fn recover_sending(
                 let label = &labels[&row.provider_instance_id];
                 ProviderReconciliationOutcome::Unavailable {
                     detail: format!(
-                        "BiBCode can't check whether {label} received this message after a restart."
+                        "Coddy Studio can't check whether {label} received this message after a restart."
                     ),
                 }
             }
@@ -2462,7 +2462,7 @@ mod tests {
         assert_eq!(row.state, TurnDeliveryState::Uncertain);
         assert_eq!(
             row.last_error.as_deref(),
-            Some("BiBCode can't check whether Claude received this message after a restart.")
+            Some("Coddy Studio can't check whether Claude received this message after a restart.")
         );
 
         let row = restart_a_claude_sending_row(Some(serde_json::json!({
@@ -2474,7 +2474,9 @@ mod tests {
         assert_eq!(row.state, TurnDeliveryState::Uncertain);
         assert_eq!(
             row.last_error.as_deref(),
-            Some("BiBCode can't check whether Work Claude received this message after a restart.")
+            Some(
+                "Coddy Studio can't check whether Work Claude received this message after a restart."
+            )
         );
 
         // The label is read without the instance's secrets, so a missing secret file still
@@ -2493,7 +2495,9 @@ mod tests {
         assert_eq!(row.state, TurnDeliveryState::Uncertain);
         assert_eq!(
             row.last_error.as_deref(),
-            Some("BiBCode can't check whether Work Claude received this message after a restart.")
+            Some(
+                "Coddy Studio can't check whether Work Claude received this message after a restart."
+            )
         );
     }
 
@@ -3709,7 +3713,7 @@ mod tests {
                     tokio::fs::create_dir_all(&self.reserved_path)
                         .await
                         .expect("reserve implicit worktree path");
-                    tokio::fs::write(self.reserved_path.join(".bibcode-owner"), "owned")
+                    tokio::fs::write(self.reserved_path.join(".coddy-studio-owner"), "owned")
                         .await
                         .expect("write ownership marker");
                     self.entered.notify_one();
@@ -4138,7 +4142,7 @@ mod tests {
                     }
                     Ok(BootstrapWorktree {
                         repository_root: input.project_cwd,
-                        branch: "bibcode/bootstrap".to_owned(),
+                        branch: "coddy-studio/bootstrap".to_owned(),
                         path: "C:/repo/.worktrees/bootstrap".to_owned(),
                         remove_branch: true,
                     })
@@ -4201,8 +4205,8 @@ mod tests {
         let payload = serde_json::json!({
             "type":"thread.turn.start", "commandId":"bootstrap-pending",
             "threadId":"bootstrap-thread",
-            "_bibcodeProviderRouteFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "_bibcodeProviderRouteCwdPending":true,
+            "_coddyStudioProviderRouteFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "_coddyStudioProviderRouteCwdPending":true,
             "message":{"messageId":"bootstrap-message","role":"user","text":"build","attachments":[]},
             "bootstrap":{
                 "createThread":{
@@ -4213,7 +4217,7 @@ mod tests {
                 },
                 "prepareWorktree":{
                     "projectCwd":"C:/repo", "baseBranch":"main",
-                    "branch":"bibcode/bootstrap"
+                    "branch":"coddy-studio/bootstrap"
                 },
                 "runSetupScript":true
             },
@@ -4326,13 +4330,13 @@ mod tests {
         assert_ne!(
             claimed
                 .payload
-                .get("_bibcodeProviderRouteCwdPending")
+                .get("_coddyStudioProviderRouteCwdPending")
                 .and_then(serde_json::Value::as_bool),
             Some(true),
             "a worktree cwd must be durably finalized before the row can become Sending"
         );
         assert_ne!(
-            claimed.payload["_bibcodeProviderRouteFingerprint"],
+            claimed.payload["_coddyStudioProviderRouteFingerprint"],
             serde_json::Value::String(
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()
             ),
@@ -4427,7 +4431,7 @@ mod tests {
             .await
             .expect("thread")
             .expect("persisted thread");
-        assert_eq!(thread.branch.as_deref(), Some("bibcode/bootstrap"));
+        assert_eq!(thread.branch.as_deref(), Some("coddy-studio/bootstrap"));
         assert_eq!(
             thread.worktree_path.as_deref(),
             Some("C:/repo/.worktrees/bootstrap")

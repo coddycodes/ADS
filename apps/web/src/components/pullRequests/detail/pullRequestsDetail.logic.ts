@@ -6,7 +6,7 @@ import type {
   PullRequestsMergeReadiness,
   PullRequestsProviderKind,
   PullRequestsTimelineItem,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 type Vocabulary = PullRequestsHostCapabilities["vocabulary"];
 export function headerSentence(
   detail: PullRequestsDetail,

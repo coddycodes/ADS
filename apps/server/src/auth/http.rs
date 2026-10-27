@@ -516,7 +516,7 @@ async fn cancel_pairing_offer(
 
 fn invalid_pairing_offer_response(detail: &str) -> Response {
     let trace_id = Uuid::new_v4().to_string();
-    tracing::debug!(target: "bibcode_server::auth", %trace_id, "invalid pairing offer: {detail}");
+    tracing::debug!(target: "coddy_studio_server::auth", %trace_id, "invalid pairing offer: {detail}");
     error_response(
         StatusCode::BAD_REQUEST,
         "EnvironmentRequestInvalidError",
@@ -1058,7 +1058,7 @@ mod tests {
         assert_eq!(trusted, ["http://localhost:5733"]);
         assert!(allowed(None, Some("http://localhost:5733")));
         // The desktop app never authenticates with the cookie, so its origins get no pass.
-        for origin in ["bibcode://app", "bibcode-dev://app"] {
+        for origin in ["coddy-studio://app", "coddy-studio-dev://app"] {
             assert!(!allowed(Some("127.0.0.1:3773"), Some(origin)), "{origin}");
         }
         assert!(allowed(

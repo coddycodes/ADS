@@ -5,7 +5,7 @@ import {
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
   WS_METHODS,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";

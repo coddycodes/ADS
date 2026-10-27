@@ -2,7 +2,7 @@ import type {
   GitManagerRefEntry,
   GitManagerRemoteTag,
   GitManagerRemoteTags,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 /** Section keys stored in the Git Manager view state as `collapsedTagSections`. */
 export const LOCAL_TAG_SECTION = "local";

@@ -1,4 +1,4 @@
-import { EnvironmentId, PreviewTabId, ThreadId } from "@bibcode/contracts";
+import { EnvironmentId, PreviewTabId, ThreadId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

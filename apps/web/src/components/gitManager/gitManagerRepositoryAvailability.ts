@@ -1,4 +1,4 @@
-import type { VcsRepositoryUnavailableReason, VcsStatusResult } from "@bibcode/contracts";
+import type { VcsRepositoryUnavailableReason, VcsStatusResult } from "@coddy/contracts";
 
 export type GitManagerRepositoryUnavailableReason = VcsRepositoryUnavailableReason | "unknown";
 

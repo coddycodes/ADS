@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -23,7 +23,7 @@ const testState = vi.hoisted(() => ({
   sourceControlProvider: "github" as string | undefined,
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => testState.interrupted,
 }));
 
@@ -78,7 +78,7 @@ function renderDialog(
     <PullRequestThreadDialog
       open
       environmentId={EnvironmentId.make("local-test")}
-      cwd="X:\\bibcode"
+      cwd="X:\\coddy-studio"
       initialReference="#42"
       onOpenChange={vi.fn()}
       onPrepared={vi.fn()}

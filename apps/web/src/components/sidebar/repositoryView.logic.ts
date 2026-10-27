@@ -1,4 +1,4 @@
-import type { EnvironmentId, SidebarRepositorySortOrder } from "@bibcode/contracts";
+import type { EnvironmentId, SidebarRepositorySortOrder } from "@coddy/contracts";
 
 import {
   compareSidebarDisplayText,

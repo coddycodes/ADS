@@ -27,7 +27,7 @@ export class ConnectionCredentialStore extends Context.Service<
       credential: ConnectionCredential,
     ) => Effect.Effect<boolean, ConnectionAttemptError>;
   }
->()("@bibcode/client-runtime/connection/credentialStore/ConnectionCredentialStore") {}
+>()("@coddy/client-runtime/connection/credentialStore/ConnectionCredentialStore") {}
 
 export const make = (service: ConnectionCredentialStore["Service"]) =>
   ConnectionCredentialStore.of(service);

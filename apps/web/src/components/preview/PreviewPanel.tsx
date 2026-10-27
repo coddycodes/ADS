@@ -1,6 +1,6 @@
 "use client";
 
-import type { ScopedThreadRef } from "@bibcode/contracts";
+import type { ScopedThreadRef } from "@coddy/contracts";
 
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
@@ -24,7 +24,7 @@ export function PreviewPanel({ mode, threadRef, tabId, configuredUrls, visible }
           <p className="max-w-sm text-sm text-muted-foreground">
             {isBrowserMode()
               ? HTTPS_PREVIEW_NOTICE
-              : "Preview is only available in the BiBCode desktop app."}
+              : "Preview is only available in the Coddy Studio desktop app."}
           </p>
         </div>
       </PreviewPanelShell>

@@ -7,7 +7,7 @@ import {
   type ProviderOptionDescriptor,
   type ProviderSessionDefault,
   type ServerProviderModel,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { createModelSelection } from "./model.ts";
 import {

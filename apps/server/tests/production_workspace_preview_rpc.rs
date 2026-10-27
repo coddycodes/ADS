@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use bibcode_server::{
+use coddy_studio_server::{
     ClientMessage, RequestId, RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     mcp,
     preview::PreviewManager,
@@ -12,7 +12,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use bibcode_server::production::workspace_preview::{
+use coddy_studio_server::production::workspace_preview::{
     WorkspacePreviewRpcServices, register_workspace_preview_rpc,
 };
 
@@ -337,7 +337,7 @@ async fn preview_event_stream_uses_contract_camel_case_keys() {
         .resize(
             "thread-1",
             &opened.tab_id,
-            bibcode_server::preview::PreviewViewportSetting::Preset {
+            coddy_studio_server::preview::PreviewViewportSetting::Preset {
                 preset_id: "iphone-se".to_owned(),
                 width: 375,
                 height: 667,

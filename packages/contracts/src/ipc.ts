@@ -885,7 +885,7 @@ export const DesktopPreviewBoundsSchema: Schema.Codec<DesktopPreviewBounds> = Sc
  * can attach.
  */
 export interface DesktopPreviewWebviewConfig {
-  /** `persist:bibcode-preview` (or whatever the desktop chose). */
+  /** `persist:coddy-studio-preview` (or whatever the desktop chose). */
   partition: string;
   /**
    * Canonical `<webview webpreferences="...">` string. Encodes the security
@@ -1284,7 +1284,7 @@ export interface DesktopBridge {
   ) => () => void;
   /** URLs the OS handed to the app before the webview subscribed. */
   getPendingDeepLinks?: () => Promise<ReadonlyArray<string>>;
-  /** Subscribe to bibcode:// URLs opened while the app is running. */
+  /** Subscribe to coddy-studio:// URLs opened while the app is running. */
   onDeepLink?: (listener: (urls: ReadonlyArray<string>) => void) => () => void;
   restoreProjectData?: (
     environmentId: string,

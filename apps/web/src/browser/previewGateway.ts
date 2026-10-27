@@ -1,8 +1,8 @@
 import {
   type AtomCommandResult,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
-import type { DesktopSshEnvironmentTarget, EnvironmentId, ThreadId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/state/runtime";
+import type { DesktopSshEnvironmentTarget, EnvironmentId, ThreadId } from "@coddy/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "~/connection/catalog";
@@ -45,7 +45,7 @@ export type PreviewNavigationResolution =
       readonly retryable?: true;
     };
 
-const BOOTSTRAP_PATH = "/__bibcode/bootstrap";
+const BOOTSTRAP_PATH = "/__coddy-studio/bootstrap";
 
 /** A tab whose host unmounted keeps its forwards this long, so switching back reuses them. */
 export const TAB_RELEASE_GRACE_MS = 60_000;
@@ -59,7 +59,7 @@ const SSH_NOT_ACTIVE = "SSH connection is not active.";
 const canonicalOrigins = new Map<string, string>();
 
 /**
- * Per tab: BiBCode Connect preview origin -> the canonical origin that tab loaded on it.
+ * Per tab: Coddy Connect preview origin -> the canonical origin that tab loaded on it.
  * A relay preview hostname is a reusable slot, so a later open can point it at another
  * port; a tab still showing the earlier page keeps its own mapping.
  */
@@ -239,7 +239,7 @@ export async function resolveForNavigation(input: {
   if (resolution.via === "ssh" && isBrowserMode()) {
     return { kind: "unreachable", message: UNREACHABLE_MESSAGES.ssh(label) };
   }
-  // Another site's BiBCode page never sends the preview's Lax cookie inside a frame;
+  // Another site's Coddy Studio page never sends the preview's Lax cookie inside a frame;
   // a new tab (no tab id) loads it fine.
   if (resolution.via === "relay" && isBrowserMode() && tabId !== undefined) {
     return { kind: "unreachable", message: relayFrameMessage(label) };
@@ -280,10 +280,10 @@ export async function resolveForNavigation(input: {
   const { gatewayPort, capability, origin } = result.value;
 
   let clientOrigin: string;
-  // The server names a BiBCode Connect preview hostname whenever this client reached it
+  // The server names a Coddy Connect preview hostname whenever this client reached it
   // through the tunnel: a relay connection, or a page served from the managed endpoint.
   if (origin !== undefined && resolution.via !== "ssh") {
-    // A BiBCode page on another site, or on plain HTTP, can't frame an HTTPS preview
+    // A Coddy Studio page on another site, or on plain HTTP, can't frame an HTTPS preview
     // hostname with its Lax cookie; a new tab (no tab id) loads it fine.
     if (isBrowserMode() && tabId !== undefined) {
       return fail({ message: relayFrameMessage(label) });
@@ -401,10 +401,10 @@ const retryMessage = (label: string) =>
   `Couldn't open a preview connection to ${label}. Try again, or reconnect ${label} if it keeps failing.`;
 
 const relayNotReadyMessage = (label: string) =>
-  `Previews over BiBCode Connect aren't set up for ${label} yet. Open BiBCode on ${label} to finish setting them up.`;
+  `Previews over Coddy Connect aren't set up for ${label} yet. Open Coddy Studio on ${label} to finish setting them up.`;
 
 const relayFrameMessage = (label: string) =>
-  `${label} is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.`;
+  `${label} is reached through Coddy Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.`;
 
 function gatewayFailure(
   result: Parameters<typeof squashAtomCommandFailure>[0],
@@ -427,7 +427,7 @@ function gatewayFailure(
         `HTTPS dev servers can't be previewed through the gateway yet; serve over HTTP or open it on ${label} directly.`,
       );
     case "not-admitted":
-      return refused(`BiBCode can only preview plain HTTP addresses on ${label}'s own localhost.`);
+      return refused(`Coddy Studio can only preview plain HTTP addresses on ${label}'s own localhost.`);
     case "no-upstream":
       // A stopped dev server is recoverable; say so instead of "unsupported".
       return refused(`Nothing is listening on port ${canonical.port || "80"} on ${label}.`);
@@ -435,7 +435,7 @@ function gatewayFailure(
       return { message: relayNotReadyMessage(label) };
     case "relay-busy":
       return {
-        message: `Too many previews of ${label} are open over BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up.`,
+        message: `Too many previews of ${label} are open over Coddy Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up.`,
         retryable: true,
       };
     case "not-reachable":
@@ -473,7 +473,7 @@ export function isGatewayClientUrl(url: string): boolean {
 
 /**
  * Map a client-side gateway URL back to its canonical http://localhost:<port> form; other
- * URLs pass through. `tabId` names the preview tab showing it, whose own BiBCode Connect
+ * URLs pass through. `tabId` names the preview tab showing it, whose own Coddy Connect
  * mappings win over a newer reuse of the same preview hostname.
  */
 export function canonicalizePreviewUrl(url: string, tabId?: string): string {

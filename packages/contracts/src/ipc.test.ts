@@ -82,8 +82,8 @@ describe("Desktop project-data recovery contract", () => {
         label: "WSL (Ubuntu)",
         runningDistro: "Ubuntu",
         status: "recovery-required",
-        requestedRoot: "/home/user/.bibcode",
-        effectiveRoot: "/home/user/.bibcode",
+        requestedRoot: "/home/user/.coddy/studio",
+        effectiveRoot: "/home/user/.coddy/studio",
         isFilesystemAlias: false,
         storageInstanceId: "b102f72a-c63b-4801-8f14-fba7a16856b8",
         issue: "The database is missing while its storage marker remains.",
@@ -111,7 +111,7 @@ describe("Desktop project-data recovery contract", () => {
         environmentId: "primary",
         action: "restore",
         committed: true,
-        preservedDirectory: "/Users/user/.bibcode/recovery/userdata/operation",
+        preservedDirectory: "/Users/user/.coddy/studio/recovery/userdata/operation",
         storageInstanceId: "b102f72a-c63b-4801-8f14-fba7a16856b8",
         restartError: "The backend could not restart.",
       }),
@@ -226,9 +226,9 @@ describe("Desktop update protection contract", () => {
     expect(
       decodeDesktopUpdateState({
         ...legacyUpdateState,
-        requestedBy: { label: "BiBCode Desktop", detail: "MacIntel (192.168.1.34)" },
+        requestedBy: { label: "Coddy Studio Desktop", detail: "MacIntel (192.168.1.34)" },
       }).requestedBy,
-    ).toEqual({ label: "BiBCode Desktop", detail: "MacIntel (192.168.1.34)" });
+    ).toEqual({ label: "Coddy Studio Desktop", detail: "MacIntel (192.168.1.34)" });
     expect(
       decodeDesktopUpdateState({
         ...legacyUpdateState,

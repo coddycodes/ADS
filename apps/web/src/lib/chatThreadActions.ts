@@ -1,5 +1,5 @@
-import { scopeProjectRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@bibcode/contracts";
+import { scopeProjectRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@coddy/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 interface ThreadContextLike {

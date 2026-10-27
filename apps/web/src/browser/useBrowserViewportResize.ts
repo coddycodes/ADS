@@ -1,6 +1,6 @@
 "use client";
 
-import type { PreviewViewportSetting, PreviewViewportSize } from "@bibcode/contracts";
+import type { PreviewViewportSetting, PreviewViewportSize } from "@coddy/contracts";
 import {
   useCallback,
   useEffect,

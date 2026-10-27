@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { ApprovalRequestId, EnvironmentId } from "@bibcode/contracts";
+import { ApprovalRequestId, EnvironmentId } from "@coddy/contracts";
 import { act, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -103,9 +103,9 @@ vi.mock("./ui/sidebar", () => {
   };
 });
 
-vi.mock("./clerk/BiBCodeConnectSidebarSignIn", () => ({
-  BiBCodeConnectSidebarAvatar: () => <span data-connect-avatar />,
-  BiBCodeConnectSidebarSignIn: () => <span data-connect-sign-in />,
+vi.mock("./clerk/CoddyConnectSidebarSignIn", () => ({
+  CoddyConnectSidebarAvatar: () => <span data-connect-avatar />,
+  CoddyConnectSidebarSignIn: () => <span data-connect-sign-in />,
 }));
 
 vi.mock("./ui/tooltip", () => ({

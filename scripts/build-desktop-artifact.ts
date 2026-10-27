@@ -2,9 +2,9 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessArchitecture, HostProcessPlatform } from "@bibcode/shared/hostProcess";
-import { readBiBCodeEnvironmentVariable } from "@bibcode/shared/environmentIdentity";
-import { resolveSpawnCommand } from "@bibcode/shared/shell";
+import { HostProcessArchitecture, HostProcessPlatform } from "@coddy/shared/hostProcess";
+import { readCoddyStudioEnvironmentVariable } from "@coddy/shared/environmentIdentity";
+import { resolveSpawnCommand } from "@coddy/shared/shell";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -289,7 +289,7 @@ export interface TauriArtifactPublicationOptions {
   readonly writeFileString?: FileSystem.FileSystem["writeFileString"] | undefined;
 }
 
-const TAURI_ARTIFACT_OWNER_FILE = ".bibcode-publication-owner";
+const TAURI_ARTIFACT_OWNER_FILE = ".coddy-studio-publication-owner";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
@@ -311,8 +311,8 @@ function envBoolean(
   env: Readonly<Record<string, string | undefined>>,
   key: string,
 ): boolean | undefined {
-  const suffix = key.startsWith("BIBCODE_") ? key.slice("BIBCODE_".length) : key;
-  const value = readBiBCodeEnvironmentVariable(env, suffix)?.trim().toLowerCase();
+  const suffix = key.startsWith("CODDY_STUDIO_") ? key.slice("CODDY_STUDIO_".length) : key;
+  const value = readCoddyStudioEnvironmentVariable(env, suffix)?.trim().toLowerCase();
   if (!value) return undefined;
   if (value === "1" || value === "true" || value === "yes") return true;
   if (value === "0" || value === "false" || value === "no") return false;
@@ -426,7 +426,7 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
   const platform =
     (yield* tryBuildConfiguration(() =>
       parseTauriBuildPlatform(
-        input.platform ?? readBiBCodeEnvironmentVariable(env, "TAURI_DESKTOP_PLATFORM"),
+        input.platform ?? readCoddyStudioEnvironmentVariable(env, "TAURI_DESKTOP_PLATFORM"),
       ),
     )) ?? detectHostTauriBuildPlatform(host.platform);
   if (!platform) {
@@ -439,29 +439,29 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
 
   const arch =
     (yield* tryBuildConfiguration(() =>
-      parseTauriBuildArch(input.arch ?? readBiBCodeEnvironmentVariable(env, "TAURI_DESKTOP_ARCH")),
+      parseTauriBuildArch(input.arch ?? readCoddyStudioEnvironmentVariable(env, "TAURI_DESKTOP_ARCH")),
     )) ?? (yield* resolveDefaultArch(platform, host, env));
   const target = yield* tryBuildConfiguration(() =>
     normalizeTauriBundleTarget(
       platform,
       input.target ??
-        readBiBCodeEnvironmentVariable(env, "TAURI_DESKTOP_TARGET") ??
+        readCoddyStudioEnvironmentVariable(env, "TAURI_DESKTOP_TARGET") ??
         TAURI_PLATFORM_CONFIG[platform].defaultTarget,
     ),
   );
   const allowCrossPlatform =
     input.allowCrossPlatform ??
     (yield* tryBuildConfiguration(() =>
-      envBoolean(env, "BIBCODE_TAURI_DESKTOP_ALLOW_CROSS_PLATFORM"),
+      envBoolean(env, "CODDY_STUDIO_TAURI_DESKTOP_ALLOW_CROSS_PLATFORM"),
     )) ??
     false;
   const updater =
     input.updater ??
-    (yield* tryBuildConfiguration(() => envBoolean(env, "BIBCODE_TAURI_DESKTOP_UPDATER"))) ??
+    (yield* tryBuildConfiguration(() => envBoolean(env, "CODDY_STUDIO_TAURI_DESKTOP_UPDATER"))) ??
     false;
   const skipBuild =
     input.skipBuild ??
-    (yield* tryBuildConfiguration(() => envBoolean(env, "BIBCODE_TAURI_DESKTOP_SKIP_BUILD"))) ??
+    (yield* tryBuildConfiguration(() => envBoolean(env, "CODDY_STUDIO_TAURI_DESKTOP_SKIP_BUILD"))) ??
     false;
   if (input.symbols === true && skipBuild) {
     return yield* Effect.fail(
@@ -478,7 +478,7 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
   const outputDir = path.resolve(
     repoRoot,
     input.outputDir ??
-      readBiBCodeEnvironmentVariable(env, "TAURI_DESKTOP_OUTPUT_DIR") ??
+      readCoddyStudioEnvironmentVariable(env, "TAURI_DESKTOP_OUTPUT_DIR") ??
       path.join("release", "desktop", `${platform}-${arch}`),
   );
   const bundleDirectoryName = target === "app" ? "macos" : target;
@@ -505,7 +505,7 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
     args: [
       "run",
       "--filter",
-      "@bibcode/desktop",
+      "@coddy/desktop",
       step,
       ...(step === "build" ? ["--no-bundle"] : []),
       ...(updater
@@ -537,7 +537,7 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
     skipBuild,
     verbose:
       input.verbose ??
-      (yield* tryBuildConfiguration(() => envBoolean(env, "BIBCODE_TAURI_DESKTOP_VERBOSE"))) ??
+      (yield* tryBuildConfiguration(() => envBoolean(env, "CODDY_STUDIO_TAURI_DESKTOP_VERBOSE"))) ??
       false,
     buildCommand: tauriCommand("build"),
     bundleCommand: tauriCommand("bundle"),
@@ -564,7 +564,7 @@ const planSymbols = Effect.fn("planTauriSymbols")(function* (
     .pipe(Effect.flatMap(decodeDesktopPackageVersion));
   const release = path.join(repoRoot, "target", rustTarget, "release");
   // Tauri ships the binary under Cargo's name (no mainBinaryName override).
-  const binary = path.join(release, platform === "win" ? "bibcode-desktop.exe" : "bibcode-desktop");
+  const binary = path.join(release, platform === "win" ? "coddy-studio-desktop.exe" : "coddy-studio-desktop");
   const archive = path.join(
     release,
     symbolArchiveName("desktop", version, requireReleaseTarget(platform, arch)),
@@ -573,7 +573,7 @@ const planSymbols = Effect.fn("planTauriSymbols")(function* (
     platform === "mac"
       ? ["--dsym", `${binary}.dSYM`]
       : platform === "win"
-        ? ["--pdb", path.join(release, "bibcode_desktop.pdb")]
+        ? ["--pdb", path.join(release, "coddy_studio_desktop.pdb")]
         : [];
   return {
     archive,
@@ -975,11 +975,11 @@ export const copyTauriBundleArtifacts = Effect.fn("copyTauriBundleArtifacts")(fu
   const ownershipToken = options.ownershipToken?.() ?? NodeCrypto.randomUUID();
   const outputParent = path.dirname(outputDir);
   const outputName = path.basename(outputDir);
-  const stagingDir = path.join(outputParent, `.${outputName}.bibcode-${transactionId}.stage`);
-  const backupDir = path.join(outputParent, `.${outputName}.bibcode-${transactionId}.backup`);
+  const stagingDir = path.join(outputParent, `.${outputName}.coddy-studio-${transactionId}.stage`);
+  const backupDir = path.join(outputParent, `.${outputName}.coddy-studio-${transactionId}.backup`);
   const quarantineDir = path.join(
     outputParent,
-    `.${outputName}.bibcode-${transactionId}.quarantine`,
+    `.${outputName}.coddy-studio-${transactionId}.quarantine`,
   );
   const ownerMarker = (directory: string) => path.join(directory, TAURI_ARTIFACT_OWNER_FILE);
   const rollbackFailures: Array<TauriDesktopBuildRollbackFailure> = [];
@@ -1061,7 +1061,7 @@ export const copyTauriBundleArtifacts = Effect.fn("copyTauriBundleArtifacts")(fu
     }
 
     const publishedArtifact = updaterBundleDir
-      ? `bibcode-update-${plan.updaterManifestTarget}.app.tar.gz`
+      ? `coddy-studio-update-${plan.updaterManifestTarget}.app.tar.gz`
       : stagedArtifacts.find(({ source }) => source === path.join(bundleDir, artifact))!.target;
     const publishedSignature = updaterBundleDir
       ? `${publishedArtifact}.sig`
@@ -1472,7 +1472,7 @@ const readAppImageCopy = Effect.fn("readAppImageTauriBinary")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const directory = yield* fs.makeTempDirectory({ prefix: "bibcode-appimage-" });
+  const directory = yield* fs.makeTempDirectory({ prefix: "coddy-studio-appimage-" });
   return yield* Effect.gen(function* () {
     const extraction = yield* captureStdout(image, ["--appimage-extract"], env, directory);
     if (extraction.exitCode !== 0) {

@@ -3,15 +3,15 @@ import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
-} from "@bibcode/client-runtime/environment";
-import { settlePromise } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/environment";
+import { settlePromise } from "@coddy/client-runtime/state/runtime";
 import {
   EnvironmentId,
   type ScopedProjectRef,
   type ScopedThreadRef,
   ThreadId,
   type WorktreeRemovalResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -77,7 +77,7 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession);
-  const removeWorktreeFromBibCode = useAtomCommand(worktreeEnvironment.removeFromBibCode, {
+  const removeWorktreeFromCoddyStudio = useAtomCommand(worktreeEnvironment.removeFromCoddyStudio, {
     reportFailure: false,
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
@@ -190,7 +190,7 @@ export function useThreadActions() {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: "Removed from BiBCode; Git cleanup remains",
+            title: "Removed from Coddy Studio; Git cleanup remains",
             description:
               result.detail ??
               "The workspace row was removed, but Git may still need manual cleanup.",
@@ -330,7 +330,7 @@ export function useThreadActions() {
           locked: false,
         };
         captureWorktreeRemovalCleanup(removalTarget);
-        const worktreeResult = await removeWorktreeFromBibCode({
+        const worktreeResult = await removeWorktreeFromCoddyStudio({
           environmentId: threadRef.environmentId,
           input: {
             commandId: newCommandId(),
@@ -472,7 +472,7 @@ export function useThreadActions() {
       completeWorktreeRemoval,
       deleteThreadMutation,
       getCurrentRouteThreadRef,
-      removeWorktreeFromBibCode,
+      removeWorktreeFromCoddyStudio,
       router,
       resolveThreadTarget,
       sidebarThreadSortOrder,

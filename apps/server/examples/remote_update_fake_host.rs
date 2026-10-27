@@ -1,9 +1,9 @@
 //! Development-only live-check host for remote server updates. Not shipped.
 //!
-//! Usage: cargo run -p bibcode-server --example remote_update_fake_host -- \
+//! Usage: cargo run -p coddy-studio-server --example remote_update_fake_host -- \
 //!   <base-dir> <port 4800-4899> <server-version> [label, default "Fake-host"]
 //! Always binds 127.0.0.1. Pair separately with:
-//!   bibcode pairing offer --base-dir <base-dir> --endpoint http://127.0.0.1:<port> \
+//!   coddy-studio pairing offer --base-dir <base-dir> --endpoint http://127.0.0.1:<port> \
 //!     --reach this-computer --json
 //! Prints {"event":"started","port":...,"serverVersion":...,"bootId":...} per start.
 //! Commands on stdin, one JSON object per line:
@@ -24,7 +24,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     ENVIRONMENT_DESCRIPTOR_PATH, HostUpdaterFuture, HostUpdaterStatus, RemoteUpdateDelegate,
     RemoteUpdateInstallKind, RemoteUpdateInstallMode, RemoteUpdateRequester, RemoteUpdateState,
     RemoteUpdateSupport, RemoteUpdateSupportReason, ServerConfig, ServerHandle, ServerRuntime,
@@ -529,7 +529,9 @@ async fn start_server(
     Ok(handle)
 }
 
-async fn shutdown(handle: &mut Option<ServerHandle>) -> Result<(), bibcode_server::ServerError> {
+async fn shutdown(
+    handle: &mut Option<ServerHandle>,
+) -> Result<(), coddy_studio_server::ServerError> {
     if let Some(handle) = handle.take() {
         handle.shutdown();
         handle.join().await?;

@@ -1,4 +1,4 @@
-use bibcode_server::process::{configure_background_command, isolate_appimage_environment};
+use coddy_studio_server::process::{configure_background_command, isolate_appimage_environment};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
@@ -221,7 +221,7 @@ pub async fn probe_tailscale_https_endpoint(base_url: &str) -> bool {
         Ok(url) => url,
         Err(_) => return false,
     };
-    url.set_path("/.well-known/bibcode/environment");
+    url.set_path("/.well-known/coddy-studio/environment");
     url.set_query(None);
     url.set_fragment(None);
 
@@ -381,7 +381,7 @@ mod tests {
             let mut request = vec![0_u8; 1024];
             let read = stream.read(&mut request).await.unwrap();
             let request = String::from_utf8_lossy(&request[..read]);
-            assert!(request.starts_with("GET /.well-known/bibcode/environment "));
+            assert!(request.starts_with("GET /.well-known/coddy-studio/environment "));
             stream
                 .write_all(
                     format!("HTTP/1.1 {response_status}\r\nContent-Length: 0\r\n\r\n").as_bytes(),
@@ -507,8 +507,8 @@ mod tests {
                         r#"[ "$1" = status ] && [ "$2" = --json ] || exit 80
 [ -z "${{APPIMAGE+x}}" ] && [ -z "${{PYTHONHOME+x}}" ] || exit 81
 [ "$LD_LIBRARY_PATH" = /usr/lib ] || exit 82
-[ "$BIBCODE_FUTURE_PATH" = /opt/host/future ] || exit 83
-[ "$SSH_AUTH_SOCK" = /run/user/1000/bibcode-test-agent.sock ] || exit 84
+[ "$CODDY_STUDIO_FUTURE_PATH" = /opt/host/future ] || exit 83
+[ "$SSH_AUTH_SOCK" = /run/user/1000/coddy-studio-test-agent.sock ] || exit 84
 printf '%s' '{TAILSCALE_STATUS_JSON}'"#
                     ),
                     "",

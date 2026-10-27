@@ -1,4 +1,4 @@
-import { createDeviceEnvironmentAtoms } from "@bibcode/client-runtime/state/device";
+import { createDeviceEnvironmentAtoms } from "@coddy/client-runtime/state/device";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

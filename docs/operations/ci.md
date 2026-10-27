@@ -18,7 +18,7 @@ workflow as idle.
   typechecking (`vpr typecheck`),
   `cargo fmt --all --check`, Clippy with warnings denied, and the complete
   desktop build pipeline on Ubuntu 24.04. A separate
-  `cargo check -p bibcode-server --lib --bins -j 2` also checks production
+  `cargo check -p coddy-studio-server --lib --bins -j 2` also checks production
   feature wiring without dev units: all-targets Clippy enables the hermetic
   test guard, while ordinary server builds do not.
   It also runs `node --test scripts/check-agent-delivery.node-test.mjs` to verify
@@ -41,10 +41,10 @@ workflow as idle.
   test binaries use the default parallel harness threads. Exact subprocess
   tests may still select `--test-threads=1` inside an isolated child process
   that intentionally owns process-global state.
-  The job then builds the guarded `bibcode` through
-  `cargo test -p bibcode-server --test cli_smoke --no-run -j 2`
+  The job then builds the guarded `coddy-studio` through
+  `cargo test -p coddy-studio-server --test cli_smoke --no-run -j 2`
   and runs the ignored desktop SSH integration test
-  (`cargo test -p bibcode-desktop --test ssh_environment -- --ignored`), which
+  (`cargo test -p coddy-studio-desktop --test ssh_environment -- --ignored`), which
   needs that fresh guarded binary and fakes only the SSH hop; see
   [Desktop-managed SSH environments](../testing/ssh-environments.md).
 - **Release Smoke** runs `scripts/release-smoke.ts` to exercise release-only
@@ -76,7 +76,7 @@ workflow as idle.
   configuration input is fixture-owned. Other platforms skip that native case;
   their string assertions remain compatibility evidence.
   The Windows rows then run
-  `node scripts/run-msvc.mjs cargo check -p bibcode-server --all-targets` so
+  `node scripts/run-msvc.mjs cargo check -p coddy-studio-server --all-targets` so
   Unix-only test helpers or imports that are unused on Windows fail there under
   `-D warnings` instead of surfacing only during native validation; Clippy's
   `--all-targets` pass otherwise runs on Linux alone.
@@ -88,18 +88,18 @@ workflow as idle.
 - **Crash smoke** runs on `ubuntu-24.04`, `windows-2025`, and
   `macos-26`. It builds with the release symbol profile from
   [Symbol assets](./release.md#symbol-assets) and runs
-  `cargo test -p bibcode-server --test crash_smoke --release` with
+  `cargo test -p coddy-studio-server --test crash_smoke --release` with
   `CRASH_SMOKE_OUT` set to `${{ runner.temp }}/crash-smoke`, so the minidump that
   the `crash-smoke` binary leaves under the crash monitor survives the test. The
   test treats that directory as a data root (the dump lands in
-  `userdata/profiler/crashes/`), and `bibcode profiler symbolicate <id> --json`
+  `userdata/profiler/crashes/`), and `coddy-studio profiler symbolicate <id> --json`
   must read the dump's crash reason and crashing-thread frames.
   `scripts/dump-symbols.ts` then dumps that binary (with its dSYM on macOS and
   its PDB on Windows), and `minidump-stackwalk --json` must name
   `crash_here_in_named_function`, with its caller unwound through CFI. The
   release build's own
-  `bibcode profiler symbolicate <id> --symbols <store> --json` must name it too,
-  from the same store, so BiBCode's symbolication is proven on every OS and not
+  `coddy-studio profiler symbolicate <id> --symbols <store> --json` must name it too,
+  from the same store, so Coddy Studio's symbolication is proven on every OS and not
   only the third-party walker. `dump_syms` 2.3.9 and `minidump-stackwalk`
   0.27.0 are installed with `cargo install --locked`, and Rust Cache keeps them
   in `~/.cargo/bin`. A failed run uploads the dump, its sidecar, the symbol
@@ -165,7 +165,7 @@ budgets above include a cold compile. Native desktop keeps its 120-minute and
   archives, four Linux packages, and native distribution evidence before release
   assembly can create a draft. Both matrices also publish Breakpad
   [symbol archives](./release.md#symbol-assets).
-- `.github/workflows/deploy-relay.yml` deploys the BiBCode Connect relay from
+- `.github/workflows/deploy-relay.yml` deploys the Coddy Connect relay from
   `main` only when the required Cloudflare repository configuration exists.
 - `.github/workflows/issue-labels.yml`, `pr-size.yml`, and `pr-vouch.yml` enforce
   repository-maintenance policy independently of the application quality

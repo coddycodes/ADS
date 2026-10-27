@@ -14,7 +14,7 @@ import {
   type VcsWorktreeCatalogSnapshot,
   type VcsWorktreeDescriptor,
   type WorktreeAdoptInput,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -604,8 +604,8 @@ describe("worktree catalog capability enforcement", () => {
           [WS_METHODS.worktreeCreatePanel]: unexpectedUnary(WS_METHODS.worktreeCreatePanel),
           [WS_METHODS.worktreeRetarget]: unexpectedUnary(WS_METHODS.worktreeRetarget),
           [WS_METHODS.worktreeGetRemovalPlan]: unexpectedUnary(WS_METHODS.worktreeGetRemovalPlan),
-          [WS_METHODS.worktreeRemoveFromBibCode]: unexpectedUnary(
-            WS_METHODS.worktreeRemoveFromBibCode,
+          [WS_METHODS.worktreeRemoveFromCoddyStudio]: unexpectedUnary(
+            WS_METHODS.worktreeRemoveFromCoddyStudio,
           ),
           [WS_METHODS.worktreeRemove]: unexpectedUnary(WS_METHODS.worktreeRemove),
           [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: unknown) =>
@@ -719,7 +719,7 @@ describe("worktree catalog capability enforcement", () => {
           ),
         ];
         const detach = yield* Effect.promise(() =>
-          harness.worktrees.removeFromBibCode.run(harness.atomRegistry, {
+          harness.worktrees.removeFromCoddyStudio.run(harness.atomRegistry, {
             environmentId: ENVIRONMENT_ONE,
             input: {
               commandId: CommandId.make("command-detach-legacy"),
@@ -1413,7 +1413,7 @@ describe("worktree removal commands", () => {
       const detachGate = yield* Deferred.make<void>();
       const events: string[] = [];
       const client = {
-        [WS_METHODS.worktreeRemoveFromBibCode]: () =>
+        [WS_METHODS.worktreeRemoveFromCoddyStudio]: () =>
           Effect.sync(() => events.push("detach:start")).pipe(
             Effect.tap(() => Deferred.succeed(detachEntered, undefined)),
             Effect.andThen(Deferred.await(detachGate)),
@@ -1433,7 +1433,7 @@ describe("worktree removal commands", () => {
           ),
       } as unknown as WsRpcProtocolClient;
       const harness = yield* makeCommandHarness(new Map([[ENVIRONMENT_ONE, client]]));
-      const detach = harness.worktrees.removeFromBibCode.run(harness.atomRegistry, {
+      const detach = harness.worktrees.removeFromCoddyStudio.run(harness.atomRegistry, {
         environmentId: ENVIRONMENT_ONE,
         input: {
           commandId: CommandId.make("command-detach"),
@@ -1468,7 +1468,7 @@ describe("worktree removal commands", () => {
   it.effect("detaches without requiring a catalog snapshot", () =>
     Effect.gen(function* () {
       const client = {
-        [WS_METHODS.worktreeRemoveFromBibCode]: () =>
+        [WS_METHODS.worktreeRemoveFromCoddyStudio]: () =>
           Effect.succeed({
             threadRemoved: true,
             gitOutcome: "not-requested" as const,
@@ -1478,7 +1478,7 @@ describe("worktree removal commands", () => {
       const harness = yield* makeCommandHarness(new Map([[ENVIRONMENT_ONE, client]]));
 
       const result = yield* Effect.promise(() =>
-        harness.worktrees.removeFromBibCode.run(harness.atomRegistry, {
+        harness.worktrees.removeFromCoddyStudio.run(harness.atomRegistry, {
           environmentId: ENVIRONMENT_ONE,
           input: {
             commandId: CommandId.make("command-detach-missing"),

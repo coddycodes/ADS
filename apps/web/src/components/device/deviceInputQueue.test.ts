@@ -1,4 +1,4 @@
-import type { DeviceInputEvent } from "@bibcode/contracts";
+import type { DeviceInputEvent } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DeviceInputQueue } from "./deviceInputQueue";

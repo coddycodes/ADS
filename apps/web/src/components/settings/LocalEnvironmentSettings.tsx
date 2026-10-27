@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { type ReactElement, useCallback, useMemo, useState } from "react";
-import type { DesktopWslState } from "@bibcode/contracts";
+import type { DesktopWslState } from "@coddy/contracts";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
@@ -176,7 +176,7 @@ export function LocalEnvironmentSettings(): ReactElement {
       return (
         <SettingsRow
           title="WSL backend unavailable"
-          description="Desktop integration is unavailable. Restart BiBCode to manage the local WSL backend."
+          description="Desktop integration is unavailable. Restart Coddy Studio to manage the local WSL backend."
           status={
             <span role="alert" className="block text-destructive">
               Desktop bridge unavailable
@@ -395,7 +395,7 @@ export function LocalEnvironmentSettings(): ReactElement {
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"
-            description="Stop the Windows backend and run only the WSL backend. Useful if you develop entirely inside WSL and don't want a second backend process. BiBCode restarts when you change this."
+            description="Stop the Windows backend and run only the WSL backend. Useful if you develop entirely inside WSL and don't want a second backend process. Coddy Studio restarts when you change this."
             className="bg-muted/20 pl-7 sm:pl-8"
             control={
               <Switch
@@ -439,15 +439,15 @@ export function LocalEnvironmentSettings(): ReactElement {
             <AlertDialogDescription>
               {pendingWslChange?.kind === "disable"
                 ? pendingWslChange.wasWslOnly
-                  ? "BiBCode will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
-                  : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in BiBCode until you re-enable WSL."
+                  ? "Coddy Studio will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
+                  : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in Coddy Studio until you re-enable WSL."
                 : pendingWslChange?.kind === "distro"
-                  ? "BiBCode will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
+                  ? "Coddy Studio will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
                   : pendingWslChange?.kind === "enable"
                     ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
                     : pendingWslChange?.nextValue
-                      ? "BiBCode will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
-                      : "BiBCode will restart and bring the Windows backend back up alongside WSL."}
+                      ? "Coddy Studio will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
+                      : "Coddy Studio will restart and bring the Windows backend back up alongside WSL."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

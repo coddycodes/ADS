@@ -6,14 +6,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   createModelSelection,
   normalizeModelSlug,
   resolveSelectableModel,
-} from "@bibcode/shared/model";
+} from "@coddy/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { UnifiedSettings } from "@bibcode/contracts/settings";
+import { UnifiedSettings } from "@coddy/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import {

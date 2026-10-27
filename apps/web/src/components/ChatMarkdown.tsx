@@ -11,12 +11,12 @@ import {
   Minimize2Icon,
   WrapTextIcon,
 } from "lucide-react";
-import type { ScopedThreadRef, ServerProviderSkill } from "@bibcode/contracts";
+import type { ScopedThreadRef, ServerProviderSkill } from "@coddy/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import React, {
@@ -1259,7 +1259,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           [
             { id: "open", label: "Open in editor" },
             ...(onOpenInBrowser
-              ? ([{ id: "open-in-browser", label: "Open in BiBCode browser" }] as const)
+              ? ([{ id: "open-in-browser", label: "Open in Coddy Studio browser" }] as const)
               : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
@@ -1527,7 +1527,7 @@ function ChatMarkdown({
                   try {
                     const clicked = await api.contextMenu.show(
                       [
-                        { id: "open-in-browser", label: "Open in BiBCode browser" },
+                        { id: "open-in-browser", label: "Open in Coddy Studio browser" },
                         { id: "open-external", label: "Open in system browser" },
                         { id: "copy-link", label: "Copy link" },
                       ] as const,

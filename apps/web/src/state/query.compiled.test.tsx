@@ -20,8 +20,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 /** The query runtime's Retry latch, keyed by the query atom. */
 const latches = vi.hoisted(() => new WeakSet<object>());
 
-vi.mock("@bibcode/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bibcode/client-runtime/state/runtime")>()),
+vi.mock("@coddy/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@coddy/client-runtime/state/runtime")>()),
   /**
    * The runtime's contract: Retry is awaited only while the rendered emission is a latched
    * failure. Called without an emission it reads the latch alone, as the hook did before

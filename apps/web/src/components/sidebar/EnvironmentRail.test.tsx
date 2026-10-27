@@ -1,6 +1,6 @@
 import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const h = vi.hoisted(() => ({

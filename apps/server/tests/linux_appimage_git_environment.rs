@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::git::{OutputPolicy, ProcessRequest, ProcessRunner};
+use coddy_studio_server::git::{OutputPolicy, ProcessRequest, ProcessRunner};
 use tokio_util::sync::CancellationToken;
 
 #[path = "support/reexec.rs"]
@@ -16,7 +16,7 @@ mod reexec;
 
 const TEST: &str = "git_subprocesses_ignore_appimage_libraries";
 const PHASE: &str = "git-loader";
-const HELPER_ARGS: [&str; 2] = ["origin", "https://127.0.0.1:1/bibcode-test.git"];
+const HELPER_ARGS: [&str; 2] = ["origin", "https://127.0.0.1:1/coddy-studio-test.git"];
 
 fn request(command: impl Into<PathBuf>, args: &[&str]) -> ProcessRequest {
     ProcessRequest {
@@ -78,7 +78,7 @@ fn git_subprocesses_ignore_appimage_libraries() {
         .find(|name| name.starts_with("libcurl") && name.contains(".so."))
         .expect("system HTTPS helper links libcurl");
     let source = fixture.path().join("incompatible.c");
-    fs::write(&source, "void bibcode_incompatible_library(void) {}\n")
+    fs::write(&source, "void coddy_studio_incompatible_library(void) {}\n")
         .expect("incompatible library source");
     let compiled = Command::new("cc")
         .args(["-shared", "-fPIC"])
@@ -113,12 +113,15 @@ fn git_subprocesses_ignore_appimage_libraries() {
 
     reexec::run(TEST, PHASE, None, |command| {
         command
-            .env("APPIMAGE", fixture.path().join("bibcode.AppImage"))
+            .env("APPIMAGE", fixture.path().join("coddy-studio.AppImage"))
             .env("APPDIR", &appdir)
             .env("LD_LIBRARY_PATH", &library_path)
-            .env("BIBCODE_TEST_GIT_HELPER", &helper)
-            .env("BIBCODE_TEST_BUNDLED_LIBRARY", bundled.join(curl_library))
-            .env("BIBCODE_TEST_CUSTOM_LIBRARY_PATH", &custom)
+            .env("CODDY_STUDIO_TEST_GIT_HELPER", &helper)
+            .env(
+                "CODDY_STUDIO_TEST_BUNDLED_LIBRARY",
+                bundled.join(curl_library),
+            )
+            .env("CODDY_STUDIO_TEST_CUSTOM_LIBRARY_PATH", &custom)
             .env("SSH_AUTH_SOCK", fixture.path().join("agent.sock"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -128,8 +131,9 @@ fn git_subprocesses_ignore_appimage_libraries() {
 async fn assert_git_children() {
     let original = std::env::var_os("LD_LIBRARY_PATH").expect("inherited loader path");
     let appdir = std::env::var_os("APPDIR").expect("AppImage root");
-    let helper = std::env::var_os("BIBCODE_TEST_GIT_HELPER").expect("HTTPS helper path");
-    let custom = std::env::var("BIBCODE_TEST_CUSTOM_LIBRARY_PATH").expect("custom library path");
+    let helper = std::env::var_os("CODDY_STUDIO_TEST_GIT_HELPER").expect("HTTPS helper path");
+    let custom =
+        std::env::var("CODDY_STUDIO_TEST_CUSTOM_LIBRARY_PATH").expect("custom library path");
     let cancellation = CancellationToken::new();
     let mut https_request = request(&helper, &HELPER_ARGS);
     // Valid arguments force curl initialization even in older Git versions.
@@ -220,7 +224,7 @@ async fn assert_git_children() {
     // load. The actual loader must ignore a planted cwd library when stripping
     // leaves no nonempty host entry.
     let library = PathBuf::from(
-        std::env::var_os("BIBCODE_TEST_BUNDLED_LIBRARY").expect("bundled fixture library"),
+        std::env::var_os("CODDY_STUDIO_TEST_BUNDLED_LIBRARY").expect("bundled fixture library"),
     );
     fs::copy(
         &library,

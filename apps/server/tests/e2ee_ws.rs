@@ -5,7 +5,7 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use bibcode_server::{ServerConfig, ServerHandle, ServerRuntime};
+use coddy_studio_server::{ServerConfig, ServerHandle, ServerRuntime};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Client, StatusCode};
 use rusqlite::Connection;
@@ -44,7 +44,7 @@ const E2EE_MAX_ESTABLISHED_CONNECTIONS_PER_PRINCIPAL: usize = 32;
 const E2EE_INBOUND_BUFFER_BUDGET_BYTES_PER_PRINCIPAL: usize = 64 * 1024 * 1024;
 const TOKEN_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
-const BOOTSTRAP_TOKEN_TYPE: &str = "urn:bibcode:params:oauth:token-type:environment-bootstrap";
+const BOOTSTRAP_TOKEN_TYPE: &str = "urn:coddy-studio:params:oauth:token-type:environment-bootstrap";
 
 static TEST_PERMIT: Semaphore = Semaphore::const_new(1);
 
@@ -465,7 +465,7 @@ async fn create_off_host_pairing(handle: &ServerHandle) -> (String, String) {
         .as_str()
         .expect("pairing offer code")
         .to_owned();
-    let payload = bibcode_server::auth_pairing_code::decode_pairing_code(&code)
+    let payload = coddy_studio_server::auth_pairing_code::decode_pairing_code(&code)
         .expect("pairing code decodes");
     (admin, payload.token)
 }
@@ -505,7 +505,7 @@ async fn pairing_bootstrap_inside_the_channel_serves_get_config() {
     let handle = start_server(&temp).await;
     let startup = handle.startup_access().expect("startup pairing");
     let descriptor = Client::new()
-        .get(http_url(&handle, "/.well-known/bibcode/environment"))
+        .get(http_url(&handle, "/.well-known/coddy-studio/environment"))
         .send()
         .await
         .expect("descriptor request")
@@ -706,7 +706,7 @@ async fn cli_minted_offer_pairs_and_the_session_survives_a_restart() {
     let temp = TempDir::new().expect("temporary base directory");
     let handle = start_server(&temp).await;
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_bibcode"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_coddy-studio"))
         .args(["pairing", "offer", "--base-dir"])
         .arg(temp.path())
         .args(["--endpoint", "http://192.168.1.20:3773", "--json"])
@@ -718,7 +718,7 @@ async fn cli_minted_offer_pairs_and_the_session_survives_a_restart() {
         String::from_utf8_lossy(&output.stderr)
     );
     let offer: Value = serde_json::from_slice(&output.stdout).expect("offer JSON");
-    let payload = bibcode_server::auth_pairing_code::decode_pairing_code(
+    let payload = coddy_studio_server::auth_pairing_code::decode_pairing_code(
         offer["code"].as_str().expect("code"),
     )
     .expect("pairing code decodes");
@@ -1338,11 +1338,12 @@ async fn minted_pairing_offer_pins_the_host_key_and_opens_the_e2ee_channel() {
     assert_eq!(response.status(), StatusCode::OK);
     let offer = response.json::<Value>().await.expect("pairing offer JSON");
     let code = offer["code"].as_str().expect("pairing code");
-    let payload = bibcode_server::auth_pairing_code::decode_pairing_code(code).expect("decodes");
+    let payload =
+        coddy_studio_server::auth_pairing_code::decode_pairing_code(code).expect("decodes");
     assert_eq!(payload.name, "Test Host");
     assert_eq!(
         payload.reach,
-        bibcode_server::auth_pairing_code::RemotePairingReach::Custom
+        coddy_studio_server::auth_pairing_code::RemotePairingReach::Custom
     );
     let host_key = URL_SAFE_NO_PAD
         .decode(&payload.host_key)

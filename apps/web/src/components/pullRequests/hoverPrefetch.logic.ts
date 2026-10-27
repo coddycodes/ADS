@@ -1,5 +1,5 @@
-import { environmentRpcKey } from "@bibcode/client-runtime/state/runtime";
-import type { EnvironmentId } from "@bibcode/contracts";
+import { environmentRpcKey } from "@coddy/client-runtime/state/runtime";
+import type { EnvironmentId } from "@coddy/contracts";
 import { FRESH_MS } from "./visibleRefresh.logic";
 
 export const HOVER_PREFETCH_MS = 150;

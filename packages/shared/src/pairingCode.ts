@@ -1,4 +1,4 @@
-import { REMOTE_PAIRING_CODE_VERSION, RemotePairingCodePayload } from "@bibcode/contracts";
+import { REMOTE_PAIRING_CODE_VERSION, RemotePairingCodePayload } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 
 export class PairingCodeParseError extends Schema.TaggedError<PairingCodeParseError>()(
@@ -15,7 +15,7 @@ export class PairingCodeUnsupportedVersionError extends Schema.TaggedError<Pairi
   { version: Schema.Finite },
 ) {
   override get message(): string {
-    return "This pairing code was created by a newer BiBCode. Update this app, then try again.";
+    return "This pairing code was created by a newer Coddy Studio. Update this app, then try again.";
   }
 }
 
@@ -55,7 +55,7 @@ export function resolvePairingDeepLinkCode(rawUrl: string): string | null {
   } catch {
     return null;
   }
-  if (url.protocol !== "bibcode:") return null;
+  if (url.protocol !== "coddy-studio:") return null;
   const isAuthorityForm = url.hostname === "pair" && (url.pathname === "" || url.pathname === "/");
   const isPathForm = url.hostname === "" && url.pathname === "/pair";
   if (!isAuthorityForm && !isPathForm) return null;
@@ -65,7 +65,7 @@ export function resolvePairingDeepLinkCode(rawUrl: string): string | null {
 
 function extractCode(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.toLowerCase().startsWith("bibcode:")) {
+  if (trimmed.toLowerCase().startsWith("coddy-studio:")) {
     const code = resolvePairingDeepLinkCode(trimmed);
     if (code === null) {
       throw new PairingCodeParseError({
@@ -120,7 +120,7 @@ export function parsePairingCode(raw: string): RemotePairingCodePayload {
 
 export function buildPairingDeepLink(code: string): string {
   const query = new URLSearchParams({ code });
-  return `bibcode://pair?${query.toString()}`;
+  return `coddy-studio://pair?${query.toString()}`;
 }
 
 export function buildBrowserPairUrl(endpoint: string, code: string): string {

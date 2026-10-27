@@ -10,7 +10,7 @@
 //!   (`CSI ? 2031 h`) or querying with `CSI ? 996 n` is answered with
 //!   `CSI ? 997 ; 1 n` only when the configured background is dark. Light
 //!   schemes are left unanswered: reporting `997;2` forces Claude Code into a
-//!   light fullscreen Ink path that fails under BiBCode's xterm host. Codex
+//!   light fullscreen Ink path that fails under Coddy Studio's xterm host. Codex
 //!   and similar agents detect light terminals via OSC 10/11 instead.
 //!   OpenCode still receives dark-scheme reports when the terminal is dark.
 //!
@@ -20,7 +20,7 @@
 //! answered at all. Replying synchronously here, the moment the query is read
 //! from the PTY, closes both gaps without depending on the client.
 
-/// The three OSC "special colors" BiBCode answers queries for.
+/// The three OSC "special colors" Coddy Studio answers queries for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SpecialColor {
     Foreground,
@@ -87,9 +87,9 @@ impl OscColors {
 /// Reserved launch env keys carrying the app's resolved theme colors. They are
 /// consumed by the PTY layer to answer OSC queries and stripped before spawning
 /// the child, so they never leak into the provider's environment.
-pub const OSC_BACKGROUND_ENV: &str = "BIBCODE_OSC_BACKGROUND";
-pub const OSC_FOREGROUND_ENV: &str = "BIBCODE_OSC_FOREGROUND";
-pub const OSC_CURSOR_ENV: &str = "BIBCODE_OSC_CURSOR";
+pub const OSC_BACKGROUND_ENV: &str = "CODDY_STUDIO_OSC_BACKGROUND";
+pub const OSC_FOREGROUND_ENV: &str = "CODDY_STUDIO_OSC_FOREGROUND";
+pub const OSC_CURSOR_ENV: &str = "CODDY_STUDIO_OSC_CURSOR";
 
 /// Whether `key` is one of the exact reserved OSC color env keys.
 pub fn is_reserved_osc_env_key(key: &str) -> bool {
@@ -277,7 +277,7 @@ impl OscColorResponder {
                 ThemeQuery::ColorScheme => {
                     // Only report dark schemes. A light `CSI ? 997 ; 2 n` reply
                     // pushes Claude Code into its light fullscreen Ink path,
-                    // which repeatedly fails inside BiBCode's xterm host and
+                    // which repeatedly fails inside Coddy Studio's xterm host and
                     // leaves a garbled fallback UI. Codex (and similar) detect
                     // light/dark via OSC 10/11 instead, so leaving light
                     // unanswered keeps both agents working.
@@ -484,6 +484,8 @@ mod tests {
             assert!(is_reserved_osc_env_key(key));
             assert!(!is_reserved_osc_env_key(&key.to_ascii_lowercase()));
         }
-        assert!(!is_reserved_osc_env_key("BIBCODE_WINDOWS_CONSOLE_THEME"));
+        assert!(!is_reserved_osc_env_key(
+            "CODDY_STUDIO_WINDOWS_CONSOLE_THEME"
+        ));
     }
 }

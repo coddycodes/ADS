@@ -1,4 +1,4 @@
-import type { ServerProviderUsageWindow } from "@bibcode/contracts";
+import type { ServerProviderUsageWindow } from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 
 const NUMBER_FORMAT = new Intl.NumberFormat(undefined, {

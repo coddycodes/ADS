@@ -3,7 +3,7 @@ import type {
   RelayEnvironmentLinkProofPayload,
   RelayEnvironmentLinkRequest,
   RelayManagedEndpoint,
-} from "@bibcode/contracts/relay";
+} from "@coddy/contracts/relay";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -129,7 +129,7 @@ export class EnvironmentLinks extends Context.Service<
       readonly environmentId: string;
     }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
   }
->()("bibcode-relay/environments/EnvironmentLinks") {}
+>()("coddy-studio-relay/environments/EnvironmentLinks") {}
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;

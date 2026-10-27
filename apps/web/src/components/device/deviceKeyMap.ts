@@ -1,4 +1,4 @@
-import type { DeviceInputEvent, DeviceKey } from "@bibcode/contracts";
+import type { DeviceInputEvent, DeviceKey } from "@coddy/contracts";
 
 /** The longest text one input event carries, in UTF-16 units. */
 export const MAX_DEVICE_TEXT_LENGTH = 1_000;

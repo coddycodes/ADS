@@ -19,14 +19,14 @@ fn appimage_test_child(test_name: &str) -> Option<reexec::ChildPhase> {
     }
 
     let directory = tempfile::tempdir().expect("AppImage fixture directory");
-    let appdir = directory.path().join(".mount_BiBCode");
+    let appdir = directory.path().join(".mount_CoddyStudio");
     let host_bin = directory.path().join("host-bin");
     std::fs::create_dir_all(&host_bin).expect("host executable fixture directory");
     reexec::run(test_name, PHASE, None, |command| {
         command
-            .env("APPIMAGE", directory.path().join("BiBCode.AppImage"))
+            .env("APPIMAGE", directory.path().join("Coddy Studio.AppImage"))
             .env("APPDIR", &appdir)
-            .env("ARGV0", "BiBCode.AppImage")
+            .env("ARGV0", "Coddy Studio.AppImage")
             .env("OWD", directory.path())
             .env(
                 "PATH",
@@ -42,10 +42,13 @@ fn appimage_test_child(test_name: &str) -> Option<reexec::ChildPhase> {
             )
             .env("PYTHONHOME", appdir.join("usr"))
             .env(
-                "BIBCODE_FUTURE_PATH",
+                "CODDY_STUDIO_FUTURE_PATH",
                 format!("{}:/opt/host/future", appdir.join("future").display()),
             )
-            .env("SSH_AUTH_SOCK", "/run/user/1000/bibcode-test-agent.sock")
+            .env(
+                "SSH_AUTH_SOCK",
+                "/run/user/1000/coddy-studio-test-agent.sock",
+            )
             .env("GTK_THEME", "Adwaita")
             .env("GDK_BACKEND", "x11")
             .env("PYTHONDONTWRITEBYTECODE", "1");

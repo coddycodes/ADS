@@ -1,4 +1,4 @@
-import { MessageId } from "@bibcode/contracts";
+import { MessageId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildBootstrapInput } from "./historyBootstrap";

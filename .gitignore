@@ -25,7 +25,7 @@ build/
 .logs/
 release/
 release-mock/
-.bibcode
+.coddy/studio
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
@@ -52,7 +52,7 @@ node_modules/
 .superpowers/file-manager/c-progress.md
 .superpowers/file-manager/d-progress.md
 .superpowers/file-manager/research-orca-file-manager.md
-.superpowers/file-manager/research-bibcode-file-manager.md
+.superpowers/file-manager/research-coddy-studio-file-manager.md
 .superpowers/multipanel/00-mp-plan.md
 .superpowers/multipanel/fix-progress.md
 .superpowers/multipanel/mpa-progress.md
@@ -65,7 +65,7 @@ node_modules/
 .superpowers/orca-port/research-orca-create-worktree.md
 .superpowers/orca-port/research-orca-left-panel.md
 .superpowers/orca-port/research-orca-project-model.md
-.superpowers/orca-port/research-bibcode-target.md
+.superpowers/orca-port/research-coddy-studio-target.md
 .superpowers/orca-port/s1-findings.md
 *coverage-summary.json
 output/

@@ -670,7 +670,7 @@
     },
     {
       "method": "PUT",
-      "path": "/api/experimental/mcp/bibcode?location%5Bdirectory%5D=%2Fwork%2Fproject",
+      "path": "/api/experimental/mcp/coddy-studio?location%5Bdirectory%5D=%2Fwork%2Fproject",
       "body": {
         "config": {
           "type": "remote",
@@ -695,7 +695,7 @@
         },
         "data": [
           {
-            "name": "bibcode",
+            "name": "coddy-studio",
             "status": {
               "status": "failed",
               "error": "Unable to connect. Is the computer able to access the url? (ConnectionRefused)"

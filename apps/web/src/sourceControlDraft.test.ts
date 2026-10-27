@@ -8,7 +8,7 @@ import { createJSONStorage } from "zustand/middleware";
 import { sourceControlDraftKey, useSourceControlDraft } from "./sourceControlDraft";
 import { useSourceControlPanelStore } from "./sourceControlPanelStore";
 
-const STORAGE_KEY = "bibcode:source-control-panel-state:v1";
+const STORAGE_KEY = "coddy-studio:source-control-panel-state:v1";
 const persisted = new Map<string, string>();
 const storage = {
   getItem: (name: string) => persisted.get(name) ?? null,

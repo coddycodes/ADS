@@ -33,7 +33,7 @@ const PERSIST_INTERVAL: Duration = Duration::seconds(60);
 /// The crash dumps a finding's `evidence.crashIds` keeps, newest first. A repeat's evidence
 /// names only its own dump, so the earlier ones are carried over, up to this many.
 const MAX_CRASH_IDS: usize = 64;
-/// The BiBCode build that records findings in this process.
+/// The Coddy Studio build that records findings in this process.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -87,7 +87,7 @@ pub struct Finding {
     pub title: String,
     pub summary: String,
     pub state: FindingState,
-    /// The BiBCode versions that recorded the first and the latest occurrence (#98). Not part of
+    /// The Coddy Studio versions that recorded the first and the latest occurrence (#98). Not part of
     /// the fingerprint, so one finding spans upgrades. `None` on lines from builds through
     /// v0.9.2.
     #[serde(default, skip_serializing_if = "Option::is_none")]

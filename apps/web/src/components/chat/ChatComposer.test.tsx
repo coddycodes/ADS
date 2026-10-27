@@ -22,11 +22,11 @@ import {
   type ResolvedKeybindingsConfig,
   type ServerProvider,
   ThreadId,
-} from "@bibcode/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@bibcode/contracts/settings";
-import { scopedThreadKey, scopeThreadRef } from "@bibcode/client-runtime/environment";
-import type { EnvironmentConnectionPresentation } from "@bibcode/client-runtime/connection";
-import { serializeComposerReference } from "@bibcode/shared/composerReferences";
+} from "@coddy/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@coddy/contracts/settings";
+import { scopedThreadKey, scopeThreadRef } from "@coddy/client-runtime/environment";
+import type { EnvironmentConnectionPresentation } from "@coddy/client-runtime/connection";
+import { serializeComposerReference } from "@coddy/shared/composerReferences";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -72,9 +72,9 @@ const h = vi.hoisted(() => {
       error: null as string | null,
       isPending: false,
     },
-    capabilityCatalogs: [] as import("@bibcode/contracts").ServerProvider[],
+    capabilityCatalogs: [] as import("@coddy/contracts").ServerProvider[],
     capabilityOverride: undefined as
-      | import("@bibcode/contracts").ServerProviderCapabilities
+      | import("@coddy/contracts").ServerProviderCapabilities
       | null
       | undefined,
     capabilityPending: false,
@@ -1016,7 +1016,7 @@ describe("ChatComposer rendering", () => {
 
     expect(markup).toContain('data-chat-composer-form="true"');
     expect(markup).toContain(
-      'data-placeholder="Ask anything, @ files, : BiBCode actions, or a provider-native command"',
+      'data-placeholder="Ask anything, @ files, : Coddy Studio actions, or a provider-native command"',
     );
     expect(markup).toContain('data-disabled="false"');
     expect(markup).toContain('data-instance="codex"');
@@ -1813,15 +1813,15 @@ describe("ChatComposer command menu", () => {
     expect(setStateValues(STATE.highlightedSearchKey)).toContain("provider-reference:src");
   });
 
-  it("lists only BiBCode actions for colon", () => {
+  it("lists only Coddy Studio actions for colon", () => {
     seedPrompt(":");
     renderComposer();
 
     const menu = findCapture("ComposerCommandMenu");
     const items = menu["items"] as Array<Record<string, unknown>>;
     expect(items.map((item) => item["label"])).toEqual([":model", ":plan", ":default"]);
-    expect(items.every((item) => item["type"] === "bibcode-action")).toBe(true);
-    expect(menu["emptyStateText"]).toBe("No matching BiBCode action.");
+    expect(items.every((item) => item["type"] === "coddy-studio-action")).toBe(true);
+    expect(menu["emptyStateText"]).toBe("No matching Coddy Studio action.");
   });
 
   it("keeps provider commands and slash skills under slash", () => {
@@ -2060,7 +2060,7 @@ describe("ChatComposer menu selection", () => {
   it("opens the model picker from :model and clears the prompt", () => {
     const { onSelect, items } = renderCommandMenu(":mod");
 
-    onSelect(items.find((item) => item["id"] === "bibcode-action:model")!);
+    onSelect(items.find((item) => item["id"] === "coddy-studio-action:model")!);
 
     // Clearing the prompt empties the draft entirely, so the store drops it.
     expect(draftOf(threadRef)?.prompt ?? "").toBe("");
@@ -2069,13 +2069,13 @@ describe("ChatComposer menu selection", () => {
 
   it("executes :plan and :default locally", () => {
     const first = renderCommandMenu(":plan");
-    first.onSelect(first.items.find((item) => item["id"] === "bibcode-action:plan")!);
+    first.onSelect(first.items.find((item) => item["id"] === "coddy-studio-action:plan")!);
     expect(first.spies.handleInteractionModeChange).toHaveBeenCalledWith("plan");
     expect(first.spies.onSend).not.toHaveBeenCalled();
     expect(draftOf(threadRef)?.prompt ?? "").toBe("");
 
     const second = renderCommandMenu(":default");
-    second.onSelect(second.items.find((item) => item["id"] === "bibcode-action:default")!);
+    second.onSelect(second.items.find((item) => item["id"] === "coddy-studio-action:default")!);
     expect(second.spies.handleInteractionModeChange).toHaveBeenCalledWith("default");
     expect(second.spies.onSend).not.toHaveBeenCalled();
   });

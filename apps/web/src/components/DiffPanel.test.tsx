@@ -11,7 +11,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ReactElement, ReactNode } from "react";
-import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@bibcode/contracts";
+import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@coddy/contracts";
 import type { Thread } from "../types";
 
 const h = vi.hoisted(() => {
@@ -186,12 +186,12 @@ vi.mock("../diffFileActions", () => ({
   },
 }));
 
-vi.mock("@bibcode/client-runtime/state/runtime", () => ({
+vi.mock("@coddy/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: (result: { _interrupted?: boolean }) => result?._interrupted === true,
   squashAtomCommandFailure: (result: unknown) => result,
 }));
 
-vi.mock("@bibcode/client-runtime/errors", () => ({
+vi.mock("@coddy/client-runtime/errors", () => ({
   safeErrorLogAttributes: () => ({ error: "redacted" }),
 }));
 
@@ -785,12 +785,12 @@ describe("DiffPanel: mode prop", () => {
     const markup = renderToStaticMarkup(
       <DiffPanel
         composerDraftTarget={routeRef as never}
-        workspaceUnavailable="Workspace unavailable. Retry detection or remove it from BiBCode."
+        workspaceUnavailable="Workspace unavailable. Retry detection or remove it from Coddy Studio."
       />,
     );
     runEffects();
 
-    expect(markup).toContain("Workspace unavailable. Retry detection or remove it from BiBCode.");
+    expect(markup).toContain("Workspace unavailable. Retry detection or remove it from Coddy Studio.");
     expect(h.diffPreviewRefresh).not.toHaveBeenCalled();
   });
 });

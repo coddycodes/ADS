@@ -15,23 +15,23 @@ Record results in a report created from the
 ## Automated harness (Linux and macOS)
 
 `apps/desktop/src-tauri/tests/ssh_environment.rs` drives the production
-`SshEnvironmentManager`, launch, stop, and pairing scripts, a real `bibcode`,
+`SshEnvironmentManager`, launch, stop, and pairing scripts, a real `coddy-studio`,
 and the production `/oauth/token` exchange. Only the SSH hop is faked: the
 stand-in client `tests/fixtures/ssh/fake_ssh.py` (Python 3) runs remote
 commands locally with OpenSSH semantics (argv joined with spaces, run by
 `/bin/sh -c`) under a private temporary "remote" home. It never contacts a
 host and never reads `~/.ssh`.
 
-The tests are `#[ignore]`d because they need a fresh `bibcode`, which
-`cargo test -p bibcode-desktop` neither builds nor checks. From the repository
+The tests are `#[ignore]`d because they need a fresh `coddy-studio`, which
+`cargo test -p coddy-studio-desktop` neither builds nor checks. From the repository
 root:
 
 ```sh
-cargo test -p bibcode-server --test cli_smoke --no-run -j 2
-cargo test -p bibcode-desktop --test ssh_environment -- --ignored
+cargo test -p coddy-studio-server --test cli_smoke --no-run -j 2
+cargo test -p coddy-studio-desktop --test ssh_environment -- --ignored
 ```
 
-The first command builds `bibcode` with the hermetic test guard through a dev
+The first command builds `coddy-studio` with the hermetic test guard through a dev
 unit. An ordinary `cargo build` would replace it with a feature-off binary, so
 do not substitute that command for this harness. CI's **Test** job runs the
 same two commands. Each fake remote seeds the shared hermetic provider settings
@@ -41,25 +41,25 @@ and network update checks disabled. The harness checks the launch-state
 stream semantics on macOS and Linux; the finite feeder ends at EOF or when its
 reader closes, while the fake still execs into the remote shell.
 Prerequisites: `python3`, `curl`
-or `wget`, `ps`, and `/bin/sh`. `BIBCODE_SSH_FIXTURE_BIBCODE` selects another
-binary; `BIBCODE_SSH_FIXTURE_PORT_START` moves the fake remote's port scan
-(default 47310, away from a local BiBCode on 3773). Each scenario stops the
+or `wget`, `ps`, and `/bin/sh`. `CODDY_STUDIO_SSH_FIXTURE_CODDY_STUDIO` selects another
+binary; `CODDY_STUDIO_SSH_FIXTURE_PORT_START` moves the fake remote's port scan
+(default 47310, away from a local Coddy Studio on 3773). Each scenario stops the
 remote servers and tunnels it started; after a run, no `fake_ssh.py`,
-`bibcode serve --base-dir …/remote-home/.bibcode`, or `sleep 600` process
+`coddy-studio serve --base-dir …/remote-home/.coddy/studio`, or `sleep 600` process
 should remain (a stopped server can take a moment to exit).
 
 The fake classifies each remote script by its first line,
-`# bibcode-ssh:<launch|pairing|stop>`. By default it execs into the remote
+`# coddy-studio-ssh:<launch|pairing|stop>`. By default it execs into the remote
 shell, so killing the client also kills the remote command. The pairing-timeout
 scenarios instead use its sshd-like mode (`SSH_FIXTURE_SSHD_SESSIONS=1`, set by
 `Harness::with_sshd_sessions`): each remote command runs in its own session and
 the fake only relays stdio, so, as with `sshd` without a PTY, killing the client
-signals nothing. With a hung `bibcode pairing issue` (alias `hang-pairing…`),
+signals nothing. With a hung `coddy-studio pairing issue` (alias `hang-pairing…`),
 the remote command must end within the pairing watchdog's bound, the pairing
 deadline plus 5 s, plus 3 s, after the desktop has given up; three timed-out
 attempts in a row must leave no remote command behind.
 
-`cargo test -p bibcode-desktop` also runs the remote scripts themselves,
+`cargo test -p coddy-studio-desktop` also runs the remote scripts themselves,
 without SSH, under `/bin/sh` and each of `dash`, `bash --posix` and
 `busybox sh` that is installed, once per shell binary: on Ubuntu CI `/bin/sh`
 is dash, so dash and bash run; on Fedora `/bin/sh` is bash, so only bash runs;
@@ -100,9 +100,9 @@ test.
 
 ### Prerequisites
 
-- A remote Linux or macOS host with a native `bibcode` matching the desktop's
+- A remote Linux or macOS host with a native `coddy-studio` matching the desktop's
   version on non-interactive `sh`'s `PATH`, plus `curl` or `wget`. Check with
-  `ssh <host> 'command -v bibcode && bibcode --version'`.
+  `ssh <host> 'command -v coddy-studio && coddy-studio --version'`.
 - Two ways in: key authentication, and password authentication (a second
   account or alias that offers only `password`/`keyboard-interactive`). Run the
   scenarios once per method.
@@ -126,12 +126,12 @@ the environment row's state, and any exact error text.
 | 6   | Dead link (optional)         | Cut the network path to the host for over 45 s, then restore it.                                                             | The tunnel ends after keepalive; the row reconnects after the link returns.                                            |
 | 7   | Revocation (optional)        | Revoke the desktop's device on the host's Share tab, then wait for the desktop to reconnect.                                 | The desktop pairs again over SSH and connects; the old device is gone and one new device appears.                      |
 | 8   | Hung pairing (optional)      | With the wrapper from [Hung pairing command](#hung-pairing-command) on the host, add the environment; let it retry 3 times.  | Each attempt fails with the pairing-timeout copy; about 37 s after each, its `sleep 6143` is gone. Nothing builds up.  |
-| 9   | Compression (optional)       | In a build with the WebView inspector, open a thread with long history and inspect the environment's RPC WebSocket.          | It selected `bibcode.rpc.chunked-deflate.v1`; large replies arrive as binary frames whose first byte has `0x10` set.   |
+| 9   | Compression (optional)       | In a build with the WebView inspector, open a thread with long history and inspect the environment's RPC WebSocket.          | It selected `coddy-studio.rpc.chunked-deflate.v1`; large replies arrive as binary frames whose first byte has `0x10` set.   |
 
 ### Stopping the remote server
 
 Each environment has its own launch directory,
-`~/.bibcode-ssh-launch/<state-key>`, and a host can hold several. The state key
+`~/.coddy/studio/ssh-launch/<state-key>`, and a host can hold several. The state key
 is the first 16 hex digits of the SHA-256 of the environment's alias, hostname,
 user name, and port, joined by NUL bytes, with an empty field for an unset user
 or port. Use the values the desktop saved for the environment (an alias
@@ -145,18 +145,18 @@ printf '%s\0%s\0%s\0%s' '<alias>' '<hostname>' '<user>' '<port>' | shasum -a 256
 ```
 
 Then, on the remote host, confirm that the recorded pid is that environment's
-`bibcode serve` before stopping only that pid (`ps -p <pid> -o command=` works
+`coddy-studio serve` before stopping only that pid (`ps -p <pid> -o command=` works
 on Linux and macOS):
 
 ```sh
 ssh <host>
-dir=~/.bibcode-ssh-launch/<state-key>
+dir=~/.coddy/studio/ssh-launch/<state-key>
 pid=$(cat "$dir/pid")
-ps -p "$pid" -o command=   # must show: …bibcode serve --host 127.0.0.1 --port … --base-dir …/.bibcode
+ps -p "$pid" -o command=   # must show: …coddy-studio serve --host 127.0.0.1 --port … --base-dir …/.coddy/studio
 kill "$pid"
 ```
 
-If `ps` shows anything other than `bibcode serve`, stop: the pid file is stale
+If `ps` shows anything other than `coddy-studio serve`, stop: the pid file is stale
 and the pid may belong to another process. Record that and skip scenario 2.
 The launch and stop scripts make the same check before they reuse or stop a
 recorded pid, and leave any other process alone.
@@ -165,9 +165,9 @@ recorded pid, and leave any other process alone.
 
 Scenario 8 checks the remote pairing watchdog: `sshd` does not signal a command
 without a PTY when the client goes away, so the pairing script itself ends a
-`bibcode pairing issue` that outlives the desktop's 30 s limit, with TERM at
+`coddy-studio pairing issue` that outlives the desktop's 30 s limit, with TERM at
 35 s and KILL 2 s later. Remove the environment and its device first, so that
-adding it mints a credential. On the host, create a wrapper named `bibcode` in a
+adding it mints a credential. On the host, create a wrapper named `coddy-studio` in a
 directory that precedes the real one on non-interactive `sh`'s `PATH`, without
 changing any configuration (skip the scenario if no such directory exists):
 
@@ -175,22 +175,22 @@ changing any configuration (skip the scenario if no such directory exists):
 #!/bin/sh
 # Hangs on `pairing issue`; runs the real CLI otherwise.
 if [ "$1" = pairing ]; then exec sleep 6143; fi
-exec /path/to/the/real/bibcode "$@"
+exec /path/to/the/real/coddy-studio "$@"
 ```
 
-`ssh <host> 'command -v bibcode'` must print the wrapper. Add the environment,
+`ssh <host> 'command -v coddy-studio'` must print the wrapper. Add the environment,
 note when each pairing timeout appears, and about 40 s after each run
 `ssh <host> 'pgrep -fl "sleep 6143"'`: it must print nothing. After three
 attempts, remove the environment and delete the wrapper.
 
 After scenario 5 (or 7), the host must list exactly **one** device for this
-desktop, labelled **BiBCode Tauri Desktop**, with standard access (not
+desktop, labelled **Coddy Studio Tauri Desktop**, with standard access (not
 administrative). Record the device count and access before and after.
 
 A stuck scenario is a failure: record the environment row's message. A pairing
 step that exceeds its limit reads "The remote host did not issue a pairing
-credential within 30 seconds. Check the connection; BiBCode keeps trying." and
-the row stays **Connecting…** while BiBCode retries.
+credential within 30 seconds. Check the connection; Coddy Studio keeps trying." and
+the row stays **Connecting…** while Coddy Studio retries.
 
 ### Preview gateway over SSH
 
@@ -201,7 +201,7 @@ to end; the user-facing behavior is in
 [Previewing the server's dev servers](../user/workspace-ui.md#previewing-the-servers-dev-servers).
 Record each as its own row (evidence class, result, exact message) in the
 report's SSH environment evidence section. On a Linux desktop whose environment
-server offers preview tunnels, the BiBCode browser rows below do not apply; run
+server offers preview tunnels, the Coddy Studio browser rows below do not apply; run
 [Preview tunnels over SSH](#preview-tunnels-over-ssh-linux-desktop) for them.
 The system browser rows apply everywhere.
 
@@ -209,10 +209,10 @@ The system browser rows apply everywhere.
 `printf '<script>document.write(location.origin)</script>' > origin.html` and
 then `python3 -m http.server 8123 --bind 127.0.0.1`. Make sure nothing on the
 desktop machine listens on port 8123. With **Open links in** set to
-**BiBCode browser**, click `http://localhost:8123/` in the chat:
+**Coddy Studio browser**, click `http://localhost:8123/` in the chat:
 
-- The BiBCode browser shows the directory listing, and its address bar shows
-  `http://localhost:8123/`, never the `/__bibcode/bootstrap` hop. Open
+- The Coddy Studio browser shows the directory listing, and its address bar shows
+  `http://localhost:8123/`, never the `/__coddy-studio/bootstrap` hop. Open
   `http://localhost:8123/origin.html`: the page shows `http://localhost:8123`,
   the same origin as on the server.
 - On the desktop machine, an
@@ -224,9 +224,9 @@ desktop machine listens on port 8123. With **Open links in** set to
   gateway's listener is still open, so the tab shows the gateway's own `502`
   page, titled "Nothing is listening", with "Nothing is listening on port 8123
   on <environment>." The address bar still shows `http://localhost:8123/`.
-  This is a page inside the tab, not BiBCode's "Can't show this page here"
+  This is a page inside the tab, not Coddy Studio's "Can't show this page here"
   overlay, which appears only when the listener has already closed and
-  BiBCode opens the address again. Start the server again and press
+  Coddy Studio opens the address again. Start the server again and press
   **Reload**: the page returns.
 - `https://localhost:8123/` shows "HTTPS dev servers can't be previewed through
   the gateway yet; serve over HTTP or open it on <environment> directly."
@@ -262,13 +262,13 @@ desktop machine listens on port 8123. With **Open links in** set to
   per-environment storage, so it never takes the previewed app's origin. The
   listing loads, and a preview tab opened on the same address afterwards still
   shows `http://localhost:8123/`.
-  That forward is held by a 5-minute lease: with no BiBCode browser tab on the
+  That forward is held by a 5-minute lease: with no Coddy Studio browser tab on the
   same address, its `ssh` child exits about 5 minutes after the click, and the
   system-browser page stops loading.
 
 **Brainstorming companion.** This needs Node.js on the remote host and the
 superpowers plugin's brainstorming scripts copied there. Set **Open links in**
-back to **BiBCode browser** first: the request opens like a clicked link. In
+back to **Coddy Studio browser** first: the request opens like a clicked link. In
 the thread's
 terminal, run its `scripts/start-server.sh --open` with the default bind host
 (the companion opens a browser only for a `127.0.0.1` or `localhost` bind, and
@@ -277,7 +277,7 @@ prints, then write an HTML file into that directory:
 
 - The companion runs `$BRAINSTORM_OPEN_CMD` with its keyed
   `http://localhost:<port>/?key=<hex>` address. The desktop opens it as a
-  BiBCode browser tab in the same thread, and the companion's first screen
+  Coddy Studio browser tab in the same thread, and the companion's first screen
   loads instead of a 403 page.
 - Write a second HTML file, or change the first: the page reloads on its own.
   That proves the companion's WebSocket, which requires `Origin` to match
@@ -299,8 +299,8 @@ On a Linux desktop, an SSH environment whose server advertises the
 [preview tunnels](../architecture/remote.md#preview-tunnels) instead of the
 gateway. Run these with the same dev server as above (`python3 -m http.server
 8123 --bind 127.0.0.1`, with `origin.html`), from a thread on the environment,
-with **Open links in** set to **BiBCode browser**, in a session whose first
-preview of this environment is this one (restart BiBCode first if a preview of
+with **Open links in** set to **Coddy Studio browser**, in a session whose first
+preview of this environment is this one (restart Coddy Studio first if a preview of
 it was already open):
 
 - Click `http://localhost:8123/`: the listing loads and the address bar shows
@@ -330,7 +330,7 @@ it was already open):
    tunnel and the managed remote server.
 2. Revoke the test device on the host's Share tab.
 3. Check that the host has no leftover managed server or pairing command:
-   `ssh <host> 'ls ~/.bibcode-ssh-launch/*/pid 2>/dev/null; pgrep -fl "bibcode serve"; pgrep -fl "bibcode pairing"'`.
+   `ssh <host> 'ls ~/.coddy/studio/ssh-launch/*/pid 2>/dev/null; pgrep -fl "coddy-studio serve"; pgrep -fl "coddy-studio pairing"'`.
    Stop only a process this test started. A server that ignored the stop's
    TERM for 10 s keeps running and keeps its `pid` file; record that, and stop
    it as in [Stopping the remote server](#stopping-the-remote-server).

@@ -1,4 +1,4 @@
-import type { ServerConfigStreamEvent } from "@bibcode/contracts";
+import type { ServerConfigStreamEvent } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

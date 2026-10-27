@@ -1,5 +1,5 @@
-import type { ServerConfig } from "@bibcode/contracts";
-import { EnvironmentId } from "@bibcode/contracts";
+import type { ServerConfig } from "@coddy/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";

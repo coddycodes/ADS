@@ -3,7 +3,7 @@ import {
   PREVIEW_VIEWPORT_MAX_DIMENSION,
   PREVIEW_VIEWPORT_MIN_DIMENSION,
   PreviewAutomationResizeInput,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { describe, expect, expectTypeOf, it } from "vite-plus/test";

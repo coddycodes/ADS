@@ -9,7 +9,7 @@ import {
   type SourceControlPublishRepositoryResult,
   type VcsPullResult,
   type VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -2365,7 +2365,7 @@ if (browserRuntime) {
     );
 
     it("renders one disabled Git control with the shared workspace reason", async () => {
-      const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+      const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
       testState.gitStatus = status();
       const container = document.createElement("div");
       document.body.append(container);

@@ -55,7 +55,7 @@ describe("connection database health", () => {
     incompatible.fire("error");
     expect(getConnectionDatabaseHealth()).toEqual({
       status: "incompatible",
-      message: "This browser cannot open connection data written by a newer BiBCode version.",
+      message: "This browser cannot open connection data written by a newer Coddy Studio version.",
     });
 
     const unavailable = new FakeRequest();
@@ -76,7 +76,7 @@ describe("connection database health", () => {
     expect(getConnectionDatabaseHealth()).toEqual({
       status: "incompatible",
       message:
-        "This BiBCode build uses an older browser engine than the one that last wrote its connection data, so the connection database cannot be opened.",
+        "This Coddy Studio build uses an older browser engine than the one that last wrote its connection data, so the connection database cannot be opened.",
     });
   });
 

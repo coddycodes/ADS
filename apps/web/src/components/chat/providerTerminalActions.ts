@@ -2,14 +2,14 @@ import {
   ProviderDriverKind,
   type ServerSettings,
   type TerminalLaunchCommand,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   PROVIDER_SESSION_EFFORT_OPTION_IDS,
   resolveProviderSessionDefault,
   type ProviderSessionDefaultFallback,
   type ResolvedProviderSessionDefault,
-} from "@bibcode/shared/providerSessionDefaults";
-import { resolvePromptInjectedEffort } from "@bibcode/shared/model";
+} from "@coddy/shared/providerSessionDefaults";
+import { resolvePromptInjectedEffort } from "@coddy/shared/model";
 
 import { getProviderModelCapabilities } from "~/providerModels";
 

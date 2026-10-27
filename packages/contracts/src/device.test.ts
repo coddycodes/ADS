@@ -192,7 +192,7 @@ describe("device preview contracts", () => {
         _tag: "DeviceBusyError",
         imageId: "A1B2",
         message:
-          "This simulator is already running outside BiBCode. Shut it down in Simulator, then open it here.",
+          "This simulator is already running outside Coddy Studio. Shut it down in Simulator, then open it here.",
       },
       { _tag: "DeviceSdkUnavailableError", kind: "xcodeMissing", message: "Install Xcode." },
       { _tag: "DeviceNotFoundError", message: "This device is no longer running." },

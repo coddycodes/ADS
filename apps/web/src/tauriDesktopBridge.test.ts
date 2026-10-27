@@ -4,11 +4,11 @@ import {
   decideStorageIdentity,
   type PreparedConnection,
   verifyPreparedStorageIdentity,
-} from "@bibcode/client-runtime/connection";
-import { AcceptedStorageIdentityStore } from "@bibcode/client-runtime/platform";
-import { makeEnvironmentHttpApiClient, remoteHttpClientLayer } from "@bibcode/client-runtime/rpc";
-import { DEFAULT_CLIENT_SETTINGS, type DesktopBridge, EnvironmentId } from "@bibcode/contracts";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/client-runtime/connection";
+import { AcceptedStorageIdentityStore } from "@coddy/client-runtime/platform";
+import { makeEnvironmentHttpApiClient, remoteHttpClientLayer } from "@coddy/client-runtime/rpc";
+import { DEFAULT_CLIENT_SETTINGS, type DesktopBridge, EnvironmentId } from "@coddy/contracts";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -331,7 +331,7 @@ function sensitivePrepared(storageInstanceId: string | null): PreparedConnection
 
 function readIndexedDbConnectionCatalog(factory: IDBFactory): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    const open = factory.open("bibcode:connection-runtime", 2);
+    const open = factory.open("coddy-studio:connection-runtime", 2);
     open.addEventListener("error", () => reject(open.error));
     open.addEventListener("success", () => {
       const database = open.result;
@@ -631,10 +631,10 @@ describe("tauriDesktopBridge", () => {
       },
     });
     const branding = bridge.getAppBranding();
-    expect(branding?.baseName).toBe("BiBCode");
+    expect(branding?.baseName).toBe("Coddy Studio");
     expect(["Latest", "Dev", "Nightly"]).toContain(branding?.stageLabel);
     expect(branding?.displayName).toBe(
-      branding?.stageLabel === "Latest" ? "BiBCode" : `BiBCode (${branding?.stageLabel})`,
+      branding?.stageLabel === "Latest" ? "Coddy Studio" : `Coddy Studio (${branding?.stageLabel})`,
     );
 
     await expect(
@@ -710,7 +710,7 @@ describe("tauriDesktopBridge", () => {
 
   it("collapses a protected legacy catalog into native storage before publishing the bridge", async () => {
     const storage = new Map<string, string>([
-      ["bibcode.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
+      ["coddy-studio.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
     ]);
     const localStorage = {
       getItem: vi.fn((key: string) => storage.get(key) ?? null),
@@ -735,7 +735,7 @@ describe("tauriDesktopBridge", () => {
     const bridge = await installBridge();
 
     expect(nativeCatalog).toBe(SENSITIVE_CONNECTION_CATALOG);
-    expect(storage.has("bibcode.connectionCatalog")).toBe(false);
+    expect(storage.has("coddy-studio.connectionCatalog")).toBe(false);
     await expect(bridge.getConnectionCatalog!()).resolves.toBe(SENSITIVE_CONNECTION_CATALOG);
     await expect(bridge.compareConnectionCatalog!(SENSITIVE_CONNECTION_CATALOG)).resolves.toBe(
       true,
@@ -754,7 +754,7 @@ describe("tauriDesktopBridge", () => {
       Effect.gen(function* () {
         vi.stubGlobal("indexedDB", new IDBFactory());
         const storage = new Map<string, string>([
-          ["bibcode.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
+          ["coddy-studio.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
         ]);
         const localStorage = {
           getItem: vi.fn((key: string) => storage.get(key) ?? null),
@@ -807,13 +807,13 @@ describe("tauriDesktopBridge", () => {
           },
         });
         expect(compareAndSetConnectionCatalog).toHaveBeenCalledTimes(1);
-        expect(storage.has("bibcode.connectionCatalog")).toBe(false);
+        expect(storage.has("coddy-studio.connectionCatalog")).toBe(false);
       }),
   );
 
   it("preserves a concurrent native winner while collapsing a protected legacy catalog", async () => {
     const storage = new Map<string, string>([
-      ["bibcode.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
+      ["coddy-studio.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
     ]);
     const localStorage = {
       getItem: vi.fn((key: string) => storage.get(key) ?? null),
@@ -838,12 +838,12 @@ describe("tauriDesktopBridge", () => {
     expect(nativeCatalog).toBe(nativeWinner);
     await expect(bridge.getConnectionCatalog!()).resolves.toBe(nativeWinner);
     expect(compareAndSetConnectionCatalog).toHaveBeenCalledOnce();
-    expect(storage.has("bibcode.connectionCatalog")).toBe(false);
+    expect(storage.has("coddy-studio.connectionCatalog")).toBe(false);
   });
 
   it("keeps an existing native catalog authoritative over a stale renderer copy", async () => {
     const storage = new Map<string, string>([
-      ["bibcode.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
+      ["coddy-studio.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
     ]);
     const localStorage = {
       getItem: vi.fn((key: string) => storage.get(key) ?? null),
@@ -862,7 +862,7 @@ describe("tauriDesktopBridge", () => {
 
     await expect(bridge.getConnectionCatalog!()).resolves.toBe("native-existing-winner");
     expect(compareAndSetConnectionCatalog).not.toHaveBeenCalled();
-    expect(storage.has("bibcode.connectionCatalog")).toBe(false);
+    expect(storage.has("coddy-studio.connectionCatalog")).toBe(false);
     const nativeRead = harness.invoke.mock.invocationCallOrder.find(
       (_, index) =>
         harness.invoke.mock.calls[index]?.[0] === "desktop_bridge_get_connection_catalog",
@@ -875,7 +875,7 @@ describe("tauriDesktopBridge", () => {
       const indexedDb = new IDBFactory();
       vi.stubGlobal("indexedDB", indexedDb);
       const storage = new Map<string, string>([
-        ["bibcode.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
+        ["coddy-studio.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
       ]);
       const localStorage = {
         getItem: vi.fn((key: string) => storage.get(key) ?? null),
@@ -917,7 +917,7 @@ describe("tauriDesktopBridge", () => {
         expect(String(persistenceResult.failure)).not.toContain("C:\\Users\\alice");
       }
       expect(nativeCatalog).toBeNull();
-      expect(storage.get("bibcode.connectionCatalog")).toBe(SENSITIVE_CONNECTION_CATALOG);
+      expect(storage.get("coddy-studio.connectionCatalog")).toBe(SENSITIVE_CONNECTION_CATALOG);
       expect(localStorage.removeItem).not.toHaveBeenCalled();
       expect(yield* Effect.promise(() => readIndexedDbConnectionCatalog(indexedDb))).toBeNull();
     }),
@@ -956,7 +956,7 @@ describe("tauriDesktopBridge", () => {
     { name: "blank", legacy: "   " },
   ])("publishes native-only catalog operations for a $name renderer value", async ({ legacy }) => {
     const storage = new Map<string, string>();
-    if (legacy !== null) storage.set("bibcode.connectionCatalog", legacy);
+    if (legacy !== null) storage.set("coddy-studio.connectionCatalog", legacy);
     const localStorage = {
       getItem: vi.fn((key: string) => storage.get(key) ?? null),
       setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
@@ -976,7 +976,7 @@ describe("tauriDesktopBridge", () => {
     await expect(bridge.getConnectionCatalog!()).resolves.toBeNull();
     await expect(bridge.compareConnectionCatalog!(null)).resolves.toBe(true);
     expect(compareAndSetConnectionCatalog).not.toHaveBeenCalled();
-    expect(storage.has("bibcode.connectionCatalog")).toBe(false);
+    expect(storage.has("coddy-studio.connectionCatalog")).toBe(false);
   });
 
   it("omits native catalog mutation methods when protected CAS is unavailable", async () => {
@@ -1018,7 +1018,7 @@ describe("tauriDesktopBridge", () => {
       vi.stubGlobal("indexedDB", indexedDb);
       let nativeCatalog: string | null = SENSITIVE_CONNECTION_CATALOG;
       const browserStorage = new Map<string, string>([
-        ["bibcode.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
+        ["coddy-studio.connectionCatalog", SENSITIVE_CONNECTION_CATALOG],
       ]);
       const localStorage = {
         getItem: vi.fn((key: string) => browserStorage.get(key) ?? null),
@@ -1054,7 +1054,7 @@ describe("tauriDesktopBridge", () => {
         .toBeNull();
       expect.soft(nativeCatalog).toBe(SENSITIVE_CONNECTION_CATALOG);
       expect
-        .soft(browserStorage.get("bibcode.connectionCatalog"))
+        .soft(browserStorage.get("coddy-studio.connectionCatalog"))
         .toBe(SENSITIVE_CONNECTION_CATALOG);
       expect
         .soft(harness.invoke)
@@ -1283,7 +1283,7 @@ describe("tauriDesktopBridge", () => {
     });
   });
 
-  it("restarts BiBCode through the guarded desktop command", async () => {
+  it("restarts Coddy Studio through the guarded desktop command", async () => {
     const harness = installTauriHarness();
     const bridge = await installBridge();
 
@@ -1678,7 +1678,7 @@ describe("tauriDesktopBridge", () => {
   });
 
   it("uses browser fallbacks when optional native capabilities reject", async () => {
-    const storage = new Map<string, string>([["bibcode.connectionCatalog", "browser-catalog"]]);
+    const storage = new Map<string, string>([["coddy-studio.connectionCatalog", "browser-catalog"]]);
     const localStorage = {
       getItem: vi.fn((key: string) => storage.get(key) ?? null),
       setItem: vi.fn((key: string, value: string) => storage.set(key, value)),

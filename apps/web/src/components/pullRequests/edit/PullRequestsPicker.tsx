@@ -1,4 +1,4 @@
-import type { PullRequestsPermission } from "@bibcode/contracts";
+import type { PullRequestsPermission } from "@coddy/contracts";
 import type { PullRequestsScope } from "../usePullRequestsAction";
 import { PencilIcon } from "lucide-react";
 import { useContext, useId, useRef, useState } from "react";

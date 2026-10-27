@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { AtomCommand } from "@bibcode/client-runtime/state/runtime";
-import { DEFAULT_SERVER_SETTINGS } from "@bibcode/contracts";
+import type { AtomCommand } from "@coddy/client-runtime/state/runtime";
+import { DEFAULT_SERVER_SETTINGS } from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";

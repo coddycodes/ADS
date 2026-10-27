@@ -466,13 +466,13 @@ impl PortablePtyBackend {
 
         let output_sender = output.clone();
         if let Err(error) = thread::Builder::new()
-            .name(format!("bibcode-pty-output-{pid}"))
+            .name(format!("coddy-studio-pty-output-{pid}"))
             .spawn(move || read_output(&mut reader, &output_sender, osc_responder))
         {
             return Err(error.to_string());
         }
         if let Err(error) = thread::Builder::new()
-            .name(format!("bibcode-pty-resize-{pid}"))
+            .name(format!("coddy-studio-pty-resize-{pid}"))
             .spawn(move || {
                 while let Ok(size) = resize_requests.recv() {
                     let size = coalesce_pending_resizes(size, &resize_requests);
@@ -510,7 +510,7 @@ impl PortablePtyBackend {
         let exit_status = Arc::new(OnceLock::new());
         let waiter_exit_status = Arc::clone(&exit_status);
         spawn_waiter(
-            format!("bibcode-pty-wait-{pid}"),
+            format!("coddy-studio-pty-wait-{pid}"),
             Box::new(move || {
                 let mut child = wait_child;
                 // portable-pty names a signal but not its number, so the exit record is read
@@ -711,7 +711,7 @@ fn build_pty_command_from_launch(
     command
 }
 
-/// Ensures PTY children can emit colours even when the BiBCode host was
+/// Ensures PTY children can emit colours even when the Coddy Studio host was
 /// launched from a NO_COLOR / FORCE_COLOR=0 environment.
 fn ensure_pty_color_environment(
     command: &mut CommandBuilder,
@@ -1749,9 +1749,9 @@ mod tests {
         let mut command = CommandBuilder::new("/bin/sh");
         command.args([
             "-c",
-            "trap '' HUP; echo ready > \"$BIBCODE_ROOT_READY\"; exec sleep 30",
+            "trap '' HUP; echo ready > \"$CODDY_STUDIO_ROOT_READY\"; exec sleep 30",
         ]);
-        command.env("BIBCODE_ROOT_READY", ready_file.as_os_str());
+        command.env("CODDY_STUDIO_ROOT_READY", ready_file.as_os_str());
         let child = pair.slave.spawn_command(command).unwrap();
         let root_pid = child.process_id().unwrap();
         let root_pid_i32 = i32::try_from(root_pid).unwrap();
@@ -1837,9 +1837,9 @@ mod tests {
         let mut command = CommandBuilder::new("/bin/sh");
         command.args([
             "-c",
-            "trap '' HUP; /bin/sh -c 'trap \"\" HUP; echo $$ > \"$BIBCODE_CHILD_PID\"; exec sleep 30' & wait",
+            "trap '' HUP; /bin/sh -c 'trap \"\" HUP; echo $$ > \"$CODDY_STUDIO_CHILD_PID\"; exec sleep 30' & wait",
         ]);
-        command.env("BIBCODE_CHILD_PID", child_pid_file.as_os_str());
+        command.env("CODDY_STUDIO_CHILD_PID", child_pid_file.as_os_str());
         let child = pair.slave.spawn_command(command).unwrap();
         let process_group = pair
             .master
@@ -1902,7 +1902,7 @@ mod tests {
             resolve_pty_executable_on(
                 Platform::current(),
                 executable
-                    .with_file_name("definitely-missing-bibcode-shell")
+                    .with_file_name("definitely-missing-coddy-studio-shell")
                     .to_str()
                     .expect("missing executable path"),
                 directory,
@@ -1928,12 +1928,17 @@ mod tests {
             executable
                 .parent()
                 .expect("test executable directory")
-                .join("definitely-missing-bibcode-bin")
+                .join("definitely-missing-coddy-studio-bin")
                 .to_string_lossy()
                 .into_owned(),
         );
         assert_eq!(
-            resolve_pty_executable_on(Platform::current(), "bibcode-shell", directory, &isolated,),
+            resolve_pty_executable_on(
+                Platform::current(),
+                "coddy-studio-shell",
+                directory,
+                &isolated,
+            ),
             None
         );
     }
@@ -2011,11 +2016,11 @@ mod tests {
                 env: BTreeMap::from([
                     ("ComSpec".to_owned(), "user-command-processor".to_owned()),
                     (
-                        "BIBCODE_INTERNAL_BATCH_SCRIPT".to_owned(),
+                        "CODDY_STUDIO_INTERNAL_BATCH_SCRIPT".to_owned(),
                         "user-controlled-value".to_owned(),
                     ),
                     (
-                        "BIBCODE_INTERNAL_BATCH_ARG_2".to_owned(),
+                        "CODDY_STUDIO_INTERNAL_BATCH_ARG_2".to_owned(),
                         "user-controlled-value".to_owned(),
                     ),
                 ]),
@@ -2032,11 +2037,11 @@ mod tests {
             ];
             assert_eq!(command.get_argv(), &expected);
             assert_eq!(
-                command.get_env("BIBCODE_INTERNAL_BATCH_SCRIPT"),
+                command.get_env("CODDY_STUDIO_INTERNAL_BATCH_SCRIPT"),
                 Some(std::ffi::OsStr::new("user-controlled-value"))
             );
             assert_eq!(
-                command.get_env("BIBCODE_INTERNAL_BATCH_ARG_2"),
+                command.get_env("CODDY_STUDIO_INTERNAL_BATCH_ARG_2"),
                 Some(std::ffi::OsStr::new("user-controlled-value"))
             );
             assert_eq!(
@@ -2304,7 +2309,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_prepared_command_strips_mixed_case_bibcode_environment() {
+    fn windows_prepared_command_strips_mixed_case_coddy_studio_environment() {
         let directory = tempfile::tempdir().unwrap();
         let executable = directory.path().join("provider.exe");
         std::fs::write(&executable, b"fixture").unwrap();
@@ -2315,11 +2320,17 @@ mod tests {
             cols: 80,
             rows: 24,
             env: BTreeMap::from([
-                ("bibcode_osc_foreground".to_owned(), "reserved".to_owned()),
-                ("BiBCode_Osc_Background".to_owned(), "reserved".to_owned()),
-                ("bibcode_osc_cursor".to_owned(), "reserved".to_owned()),
                 (
-                    "BiBCode_Windows_Console_Theme".to_owned(),
+                    "coddy_studio_osc_foreground".to_owned(),
+                    "reserved".to_owned(),
+                ),
+                (
+                    "CoddyStudio_Osc_Background".to_owned(),
+                    "reserved".to_owned(),
+                ),
+                ("coddy_studio_osc_cursor".to_owned(), "reserved".to_owned()),
+                (
+                    "CoddyStudio_Windows_Console_Theme".to_owned(),
                     "light".to_owned(),
                 ),
                 ("ORDINARY".to_owned(), "value".to_owned()),
@@ -2327,10 +2338,10 @@ mod tests {
         };
 
         let command = build_pty_command_on(Platform::Windows, &input).unwrap();
-        assert_eq!(command.get_env("bibcode_osc_foreground"), None);
-        assert_eq!(command.get_env("BiBCode_Osc_Background"), None);
-        assert_eq!(command.get_env("bibcode_osc_cursor"), None);
-        assert_eq!(command.get_env("BiBCode_Windows_Console_Theme"), None);
+        assert_eq!(command.get_env("coddy_studio_osc_foreground"), None);
+        assert_eq!(command.get_env("CoddyStudio_Osc_Background"), None);
+        assert_eq!(command.get_env("coddy_studio_osc_cursor"), None);
+        assert_eq!(command.get_env("CoddyStudio_Windows_Console_Theme"), None);
         assert_eq!(command.get_env("ORDINARY"), Some(OsStr::new("value")));
     }
 
@@ -2439,7 +2450,7 @@ mod tests {
         let executable = cwd.path().join("provider-fixture");
         crate::test_support::executable_fixture::write_executable(
             &executable,
-            "#!/bibcode-missing-interpreter\n",
+            "#!/coddy-studio-missing-interpreter\n",
         );
         let result = PortablePtyBackend.spawn(&PtySpawnInput {
             executable: executable.to_string_lossy().into_owned(),
@@ -2712,19 +2723,19 @@ mod tests {
                 executable: "/bin/sh".to_owned(),
                 args: vec![
                     "-c".to_owned(),
-                    "trap 'exit 0' USR1; BIBCODE_ROOT_PID=$$; export BIBCODE_ROOT_PID; /bin/sh -c 'trap \"\" HUP; printf \"\\nBIBCODE_DESCENDANT_PID=%s\\n\" \"$$\"; IFS= read -r _ < \"$BIBCODE_RELEASE_FIFO\"; kill -USR1 \"$BIBCODE_ROOT_PID\"; exec sleep 30' & wait"
+                    "trap 'exit 0' USR1; CODDY_STUDIO_ROOT_PID=$$; export CODDY_STUDIO_ROOT_PID; /bin/sh -c 'trap \"\" HUP; printf \"\\nCODDY_STUDIO_DESCENDANT_PID=%s\\n\" \"$$\"; IFS= read -r _ < \"$CODDY_STUDIO_RELEASE_FIFO\"; kill -USR1 \"$CODDY_STUDIO_ROOT_PID\"; exec sleep 30' & wait"
                         .to_owned(),
                 ],
                 cwd: directory.path().to_path_buf(),
                 cols: 80,
                 rows: 24,
                 env: BTreeMap::from([(
-                    "BIBCODE_RELEASE_FIFO".to_owned(),
+                    "CODDY_STUDIO_RELEASE_FIFO".to_owned(),
                     descendant_release.to_string_lossy().into_owned(),
                 )]),
             })
             .expect("spawn natural-exit PTY root");
-        let descendant_identity_marker = "BIBCODE_DESCENDANT_PID=";
+        let descendant_identity_marker = "CODDY_STUDIO_DESCENDANT_PID=";
         let mut output = process.subscribe_output();
         let mut exit = process.subscribe_exit();
         let descendant_pid = tokio::time::timeout(Duration::from_secs(3), async {
@@ -2779,7 +2790,7 @@ mod tests {
     fn portable_backend_rejects_a_missing_executable_before_opening_a_pty() {
         let error = PortablePtyBackend
             .spawn(&PtySpawnInput {
-                executable: "/definitely/missing/bibcode-shell".to_owned(),
+                executable: "/definitely/missing/coddy-studio-shell".to_owned(),
                 args: Vec::new(),
                 cwd: std::env::temp_dir(),
                 cols: 80,

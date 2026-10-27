@@ -1,4 +1,4 @@
-import { scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { scopedThreadKey } from "@coddy/client-runtime/environment";
 import type {
   GitManagerOperationEvent,
   GitManagerOperationRequest,
@@ -8,11 +8,11 @@ import type {
   ScopedThreadRef,
   VcsStagingArea,
   VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import {

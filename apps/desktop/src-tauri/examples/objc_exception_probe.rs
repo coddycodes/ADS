@@ -5,7 +5,7 @@ fn main() {
     use objc2_foundation::{NSException, NSString};
     use std::panic::AssertUnwindSafe;
 
-    let name = NSString::from_str("BiBCodeCancelledSchemeTaskProbe");
+    let name = NSString::from_str("CoddyStudioCancelledSchemeTaskProbe");
     let reason = NSString::from_str("cancelled URL-scheme task probe");
     // No user-info dictionary is supplied, so the Objective-C generic contract
     // is satisfied. Exception can wrap any Objective-C exception object.

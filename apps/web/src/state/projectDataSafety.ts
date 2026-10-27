@@ -2,7 +2,7 @@ import type {
   DesktopBridge,
   DesktopProjectDataEnvironmentStatus,
   DesktopProjectDataRecoveryResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useSyncExternalStore } from "react";
 
 type ProjectDataBridge = Pick<
@@ -51,7 +51,7 @@ function requireMethod<K extends keyof ProjectDataBridge>(
 ): NonNullable<ProjectDataBridge[K]> {
   const operation = bridge?.[method];
   if (typeof operation !== "function") {
-    throw new Error("Project data recovery requires the current BiBCode desktop application.");
+    throw new Error("Project data recovery requires the current Coddy Studio desktop application.");
   }
   return operation as NonNullable<ProjectDataBridge[K]>;
 }

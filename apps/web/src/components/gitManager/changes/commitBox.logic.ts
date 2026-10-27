@@ -1,4 +1,4 @@
-import type { GitManagerCoAuthor } from "@bibcode/contracts";
+import type { GitManagerCoAuthor } from "@coddy/contracts";
 
 const IDEAL_SUMMARY_LENGTH = 50;
 

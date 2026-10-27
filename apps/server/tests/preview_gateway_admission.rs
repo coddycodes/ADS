@@ -9,7 +9,7 @@ mod websocket_frames;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{Router, routing::get};
-use bibcode_server::{
+use coddy_studio_server::{
     ServerConfig, ServerHandle, ServerRuntime,
     preview::{
         PreviewManager,
@@ -39,7 +39,7 @@ const SESSION: &str = "session-1";
 const DESKTOP_BOOTSTRAP: &str = "preview-gateway-admission-bootstrap";
 const TOKEN_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
-const BOOTSTRAP_TOKEN_TYPE: &str = "urn:bibcode:params:oauth:token-type:environment-bootstrap";
+const BOOTSTRAP_TOKEN_TYPE: &str = "urn:coddy-studio:params:oauth:token-type:environment-bootstrap";
 
 /// Every principal is active for another hour.
 struct LivePrincipal;
@@ -61,7 +61,7 @@ fn gateway(preview: &PreviewManager) -> PreviewGateway {
         gateway_context(
             Arc::new(LivePrincipal),
             vec![9; 32],
-            "bibcode_session".into(),
+            "coddy_studio_session".into(),
         ),
         preview.clone(),
         RelayHosts::default(),
@@ -92,7 +92,7 @@ fn http() -> Client {
 async fn bootstrap(gateway_port: u16, capability: &str) -> Result<String, StatusCode> {
     let response = http()
         .get(format!(
-            "http://127.0.0.1:{gateway_port}/__bibcode/bootstrap?cap={capability}&to=%2F"
+            "http://127.0.0.1:{gateway_port}/__coddy-studio/bootstrap?cap={capability}&to=%2F"
         ))
         .send()
         .await
@@ -443,7 +443,7 @@ async fn a_lagged_follower_still_closes_targets_whose_last_tab_closed() {
             .resize(
                 "thread-2",
                 &busy.tab_id,
-                bibcode_server::preview::PreviewViewportSetting::Fill,
+                coddy_studio_server::preview::PreviewViewportSetting::Fill,
             )
             .await
             .unwrap();
@@ -698,8 +698,8 @@ async fn gateway_open_refuses_a_proxied_caller() {
     // A reverse proxy on this machine names the public host in `X-Forwarded-Host`; Tailscale
     // Serve and proxies that pass `Host` through send it directly.
     for header in [
-        ("x-forwarded-host", "bibcode.example.test"),
-        ("host", "bibcode.example.test"),
+        ("x-forwarded-host", "coddy-studio.example.test"),
+        ("host", "coddy-studio.example.test"),
     ] {
         let mut socket = server
             .socket_at(&server.admin_token, &authority, &[header])

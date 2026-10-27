@@ -1,4 +1,4 @@
-import { OrchestrationThread, type OrchestrationThreadPatch } from "@bibcode/contracts";
+import { OrchestrationThread, type OrchestrationThreadPatch } from "@coddy/contracts";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 

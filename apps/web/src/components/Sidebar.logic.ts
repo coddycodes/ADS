@@ -1,8 +1,8 @@
 import * as React from "react";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@bibcode/contracts/settings";
-import type { EnvironmentShellAvailability } from "@bibcode/client-runtime/state/shell";
-import type { ConnectionCatalogHealth } from "@bibcode/client-runtime/platform";
-import type { EnvironmentId, VcsStatusResult, VcsStatusSummary } from "@bibcode/contracts";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@coddy/contracts/settings";
+import type { EnvironmentShellAvailability } from "@coddy/client-runtime/state/shell";
+import type { ConnectionCatalogHealth } from "@coddy/client-runtime/platform";
+import type { EnvironmentId, VcsStatusResult, VcsStatusSummary } from "@coddy/contracts";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -10,7 +10,7 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
-import { scopeThreadRef, scopedThreadKey } from "@bibcode/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@coddy/client-runtime/environment";
 import { cn } from "../lib/utils";
 import { KEYBOARD_CONTEXT_MENU_ECHO_MS } from "../contextMenuKeyboard";
 import { isLatestTurnSettled } from "../session-logic";

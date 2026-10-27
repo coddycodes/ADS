@@ -2,15 +2,15 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   EMPTY_ENVIRONMENT_ACTIVITY_STATE,
   type EnvironmentActivityState,
-} from "@bibcode/client-runtime/state/activity";
-import { scopedProjectKey, scopeProjectRef } from "@bibcode/client-runtime/environment";
+} from "@coddy/client-runtime/state/activity";
+import { scopedProjectKey, scopeProjectRef } from "@coddy/client-runtime/environment";
 import type {
   ActivityScopeRef,
   ActivitySection,
   ProjectId,
   ProviderTerminalActivityLaunch,
   ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useCallback, useMemo } from "react";
 
 import { selectActivityDockExpanded, useActivityDockStore } from "~/activityDockStore";

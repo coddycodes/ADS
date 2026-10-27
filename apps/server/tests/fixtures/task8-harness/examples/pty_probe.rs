@@ -16,7 +16,7 @@ fn main() {
         })
         .expect("openpty");
     let mut command = CommandBuilder::new("cmd.exe");
-    command.args(["/d", "/c", "echo BIBCODE_PTY_READY"]);
+    command.args(["/d", "/c", "echo CODDY_STUDIO_PTY_READY"]);
     let mut child = pair.slave.spawn_command(command).expect("spawn");
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().expect("reader");

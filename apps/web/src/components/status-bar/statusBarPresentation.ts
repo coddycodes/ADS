@@ -1,10 +1,10 @@
-import type { EnvironmentConnectionPresentation } from "@bibcode/client-runtime/connection";
+import type { EnvironmentConnectionPresentation } from "@coddy/client-runtime/connection";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceTotals,
   ServerProcessUiCoverage,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Option from "effect/Option";
 
 import { formatCpuPercent, formatMemoryBytes } from "./statusBarFormat";
@@ -162,8 +162,8 @@ function coverageWarning(coverage: ServerProcessUiCoverage): string | null {
   return (
     Option.getOrNull(coverage.message) ??
     (coverage.status === "partial"
-      ? "BiBCode UI resource coverage is partial; Core and Combined totals may be incomplete."
-      : "BiBCode UI resource coverage is unavailable; unobserved UI usage is not included.")
+      ? "Coddy Studio UI resource coverage is partial; Core and Combined totals may be incomplete."
+      : "Coddy Studio UI resource coverage is unavailable; unobserved UI usage is not included.")
   );
 }
 

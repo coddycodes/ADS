@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { MessageId, type ChatAttachmentId } from "@bibcode/contracts";
+import { MessageId, type ChatAttachmentId } from "@coddy/contracts";
 import { queuedMessageCache } from "./queuedMessageCache";
 
 describe("queuedMessageCache", () => {

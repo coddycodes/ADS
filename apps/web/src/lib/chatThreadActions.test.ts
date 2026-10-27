@@ -1,5 +1,5 @@
-import { scopeProjectRef } from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ProjectId } from "@bibcode/contracts";
+import { scopeProjectRef } from "@coddy/client-runtime/environment";
+import { EnvironmentId, ProjectId } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   resolveThreadActionProjectRef,

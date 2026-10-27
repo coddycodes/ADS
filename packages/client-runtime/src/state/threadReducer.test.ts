@@ -11,8 +11,8 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
-} from "@bibcode/contracts";
-import type { OrchestrationThread } from "@bibcode/contracts";
+} from "@coddy/contracts";
+import type { OrchestrationThread } from "@coddy/contracts";
 
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 
@@ -350,7 +350,7 @@ describe("applyThreadDetailEvent", () => {
         type: "project.created",
         payload: {
           projectId: ProjectId.make("project-1"),
-          title: "BiBCode",
+          title: "Coddy Studio",
           workspaceRoot: "/repo",
           repositoryIdentity: null,
           defaultModelSelection: null,

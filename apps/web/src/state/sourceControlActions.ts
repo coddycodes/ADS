@@ -3,11 +3,11 @@ import type {
   AtomCommandFailure,
   AtomCommandResult,
   AtomCommandSuccess,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import {
   VcsActionUnavailableError,
   type VcsActionOperation,
-} from "@bibcode/client-runtime/state/vcs";
+} from "@coddy/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   GitActionProgressEvent,
@@ -16,7 +16,7 @@ import type {
   GitStackedAction,
   SourceControlCloneProtocol,
   SourceControlRepositoryVisibility,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";

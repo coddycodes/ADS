@@ -3,7 +3,7 @@ import {
   REMOTE_UPDATE_MANUAL_REQUIRED,
   RemoteUpdateInstallError,
   type RemoteUpdateSnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -315,7 +315,7 @@ describe("runRemoteUpdate", () => {
       const host = yield* makeFakeHost();
       yield* Ref.update(host.connection, (view) => ({ ...view, phase: "backoff" as const }));
       yield* TestClock.adjust("1 second");
-      const message = "This server's BiBCode version is not supported by this app.";
+      const message = "This server's Coddy Studio version is not supported by this app.";
       yield* Ref.update(host.connection, (view) => ({
         ...view,
         phase: "blocked" as const,

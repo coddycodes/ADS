@@ -19,10 +19,10 @@ import {
   type RelayPublicClientId,
   RelayProtectedError,
   type RelayProtectedError as RelayProtectedErrorType,
-} from "@bibcode/contracts/relay";
-import { encodeOAuthScope, oauthScopeSetEquals } from "@bibcode/shared/oauthScope";
-import { decodeRelayJwt } from "@bibcode/shared/relayJwt";
-import { normalizeSecureRelayUrl } from "@bibcode/shared/relayUrl";
+} from "@coddy/contracts/relay";
+import { encodeOAuthScope, oauthScopeSetEquals } from "@coddy/shared/oauthScope";
+import { decodeRelayJwt } from "@coddy/shared/relayJwt";
+import { normalizeSecureRelayUrl } from "@coddy/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -193,7 +193,7 @@ export class ManagedRelayDpopSigner extends Context.Service<
       input: ManagedRelayDpopProofInput,
     ) => Effect.Effect<string, ManagedRelayDpopProofCreationError>;
   }
->()("@bibcode/client-runtime/relay/managedRelay/ManagedRelayDpopSigner") {}
+>()("@coddy/client-runtime/relay/managedRelay/ManagedRelayDpopSigner") {}
 
 export const MANAGED_RELAY_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -256,7 +256,7 @@ export class ManagedRelayClient extends Context.Service<
     }) => Effect.Effect<RelayEnvironmentConnectResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
   }
->()("@bibcode/client-runtime/relay/managedRelay/ManagedRelayClient") {}
+>()("@coddy/client-runtime/relay/managedRelay/ManagedRelayClient") {}
 
 const isRelayProtectedError = Schema.is(RelayProtectedError);
 

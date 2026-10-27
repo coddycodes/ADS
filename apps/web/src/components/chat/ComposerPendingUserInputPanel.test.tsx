@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { ApprovalRequestId, type UserInputQuestion } from "@bibcode/contracts";
+import { ApprovalRequestId, type UserInputQuestion } from "@coddy/contracts";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

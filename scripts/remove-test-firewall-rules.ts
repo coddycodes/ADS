@@ -7,7 +7,7 @@
 // packaged E2E validation). Cancelling or accepting the "Windows Security
 // Alert" prompt leaves program-scoped inbound rules behind; this helper selects
 // rules by that exact program path only, never touches the app-managed
-// `BiBCode Remote Access` rule or any installed BiBCode copy, and verifies
+// `Coddy Studio Remote Access` rule or any installed Coddy Studio copy, and verifies
 // that zero matching rules remain.
 //
 // Usage (elevated PowerShell, from the repository root):
@@ -15,7 +15,7 @@
 import * as NodeChildProcess from "node:child_process";
 
 /** The app-managed rule created by Share this host. Never removed by this helper. */
-export const PROTECTED_FIREWALL_RULE_NAMES: ReadonlyArray<string> = ["BiBCode Remote Access"];
+export const PROTECTED_FIREWALL_RULE_NAMES: ReadonlyArray<string> = ["Coddy Studio Remote Access"];
 
 export interface WindowsFirewallRuleRecord {
   readonly name: string;
@@ -58,7 +58,7 @@ const INSTALLED_LOCATION_PATTERNS: ReadonlyArray<RegExp> = [
 
 /**
  * Rejects targets that are not a repository-built test executable. Installed
- * BiBCode copies live under Program Files or the per-user Programs directory and
+ * Coddy Studio copies live under Program Files or the per-user Programs directory and
  * must never lose rules through this helper.
  */
 export function assertCleanupTarget(executablePath: string): string {
@@ -117,10 +117,10 @@ export function selectTestGeneratedFirewallRules(
   return { remove, protectedSkipped };
 }
 
-/** PowerShell that lists every rule program-scoped to `$env:BIBCODE_FIREWALL_TARGET` as JSON. */
+/** PowerShell that lists every rule program-scoped to `$env:CODDY_STUDIO_FIREWALL_TARGET` as JSON. */
 export const FIREWALL_RULE_QUERY_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
-  "$target = $env:BIBCODE_FIREWALL_TARGET",
+  "$target = $env:CODDY_STUDIO_FIREWALL_TARGET",
   "$filters = @(Get-NetFirewallApplicationFilter | Where-Object { $_.Program -and ($_.Program -ieq $target) })",
   "$rules = @($filters | Get-NetFirewallRule)",
   "$records = @($rules | ForEach-Object {",
@@ -138,10 +138,10 @@ export const FIREWALL_RULE_QUERY_SCRIPT = [
   "ConvertTo-Json -InputObject $records -Compress -Depth 3",
 ].join("\n");
 
-/** PowerShell that removes the rules whose unique names arrive in `$env:BIBCODE_FIREWALL_RULE_NAMES`. */
+/** PowerShell that removes the rules whose unique names arrive in `$env:CODDY_STUDIO_FIREWALL_RULE_NAMES`. */
 export const FIREWALL_RULE_REMOVE_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
-  "$names = $env:BIBCODE_FIREWALL_RULE_NAMES -split '\\|'",
+  "$names = $env:CODDY_STUDIO_FIREWALL_RULE_NAMES -split '\\|'",
   "foreach ($name in $names) { if ($name) { Remove-NetFirewallRule -Name $name } }",
 ].join("\n");
 
@@ -212,7 +212,7 @@ export function runFirewallCleanup(
   } = {},
 ): number {
   const write = options.write ?? ((text: string) => process.stdout.write(text));
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- The standalone cleanup CLI samples the host platform once and still accepts an injected platform in tests.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- The standalone cleanup CLI samples the host platform once and still accepts an injected platform in tests.
   const platform = options.platform ?? process.platform;
   if (platform !== "win32") {
     write(
@@ -223,7 +223,7 @@ export function runFirewallCleanup(
   const executable = assertCleanupTarget(input.executable ?? "");
   const powerShell = options.powerShell ?? runPowerShell;
   const query = () => {
-    const result = powerShell(FIREWALL_RULE_QUERY_SCRIPT, { BIBCODE_FIREWALL_TARGET: executable });
+    const result = powerShell(FIREWALL_RULE_QUERY_SCRIPT, { CODDY_STUDIO_FIREWALL_TARGET: executable });
     if (result.status !== 0) {
       throw new Error(`Firewall rule query exited with code ${String(result.status)}.`);
     }
@@ -246,7 +246,7 @@ export function runFirewallCleanup(
   if (input.dryRun) return 0;
 
   const removal = powerShell(FIREWALL_RULE_REMOVE_SCRIPT, {
-    BIBCODE_FIREWALL_RULE_NAMES: before.remove.map((rule) => rule.name).join("|"),
+    CODDY_STUDIO_FIREWALL_RULE_NAMES: before.remove.map((rule) => rule.name).join("|"),
   });
   if (removal.status !== 0) {
     write(

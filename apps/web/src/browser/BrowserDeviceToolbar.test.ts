@@ -1,4 +1,4 @@
-import type { PreviewViewportSetting } from "@bibcode/contracts";
+import type { PreviewViewportSetting } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {

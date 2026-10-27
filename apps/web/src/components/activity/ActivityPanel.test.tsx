@@ -6,7 +6,7 @@ import {
   type ActivityEntry,
   type ActivitySnapshot,
   type ActivityWorkItemSummary,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { act, type ReactElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

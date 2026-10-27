@@ -1,5 +1,5 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId } from "@bibcode/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@bibcode/shared/keybindings";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId } from "@coddy/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@coddy/shared/keybindings";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -79,7 +79,7 @@ vi.mock("../connection/catalog", () => ({
 
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 
-vi.mock("@bibcode/client-runtime/state/server", () => ({
+vi.mock("@coddy/client-runtime/state/server", () => ({
   createServerEnvironmentAtoms: () => ({
     configProjection: ({ environmentId }: { environmentId: string }) => ({
       key: `config-projection:${environmentId}`,
@@ -91,23 +91,23 @@ vi.mock("@bibcode/client-runtime/state/server", () => ({
   }),
 }));
 
-vi.mock("@bibcode/client-runtime/state/shell", () => ({
+vi.mock("@coddy/client-runtime/state/shell", () => ({
   createEnvironmentServerConfigsAtom: () => ({ key: "environment-server-configs" }),
 }));
 
-vi.mock("@bibcode/client-runtime/state/presentation", () => ({
+vi.mock("@coddy/client-runtime/state/presentation", () => ({
   createEnvironmentPresentationAtoms: () => ({
     presentationAtom: (environmentId: string) => ({ key: `presentation:${environmentId}` }),
     presentationsAtom: { key: "presentations" },
   }),
 }));
 
-vi.mock("@bibcode/client-runtime/connection", () => ({
+vi.mock("@coddy/client-runtime/connection", () => ({
   connectionCatalogDisplayUrl: (entry: { target: { httpBaseUrl?: string } }) =>
     entry.target.httpBaseUrl ?? null,
 }));
 
-vi.mock("@bibcode/client-runtime/state/assets", () => ({
+vi.mock("@coddy/client-runtime/state/assets", () => ({
   resolveAssetUrl: (base: string, relative: string) => new URL(relative, base).toString(),
 }));
 

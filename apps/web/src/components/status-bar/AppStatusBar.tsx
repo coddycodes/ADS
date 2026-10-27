@@ -1,10 +1,10 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ServerProviderUsageResult } from "@bibcode/contracts";
+import type { EnvironmentId, ServerProviderUsageResult } from "@coddy/contracts";
 import type {
   ClientSettings,
   StatusBarUsageMode,
   UsagePercentageDisplay,
-} from "@bibcode/contracts/settings";
+} from "@coddy/contracts/settings";
 import { useNavigate } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";

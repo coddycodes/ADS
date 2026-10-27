@@ -82,7 +82,7 @@ describe("hostedPairing", () => {
     );
 
     expect(url.origin).toBe("https://app.example.test");
-    expect(url.pathname).toBe("/__bibcode/channel");
+    expect(url.pathname).toBe("/__coddy-studio/channel");
     expect(url.searchParams.get("channel")).toBe("nightly");
     expect(url.searchParams.has("next")).toBe(false);
   });
@@ -118,14 +118,14 @@ describe("hostedPairing", () => {
       vi.stubGlobal("window", { location: { origin: "http://box.lan:3773" } });
       vi.stubGlobal("document", {
         querySelector: (selector: string) =>
-          selector === 'meta[name="bibcode-served-host"]' && marker !== null
+          selector === 'meta[name="coddy-studio-served-host"]' && marker !== null
             ? { getAttribute: (name: string) => (name === "content" ? marker : null) }
             : null,
       });
     };
     const url = new URL("http://box.lan:3773/pair");
 
-    // `bibcode serve --mode web` marks the page it serves; that page pairs with its server.
+    // `coddy-studio serve --mode web` marks the page it serves; that page pairs with its server.
     it("is not the hosted app when the marker names this host", () => {
       servedPage("box.lan:3773");
       expect(isServedByThisBackend(url)).toBe(true);

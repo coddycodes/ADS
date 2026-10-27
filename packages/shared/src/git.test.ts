@@ -2,7 +2,7 @@ import type {
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -68,23 +68,23 @@ describe("branch names", () => {
 
 describe("normalizeGitRemoteUrl", () => {
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
-    expect(normalizeGitRemoteUrl("git@github.com:BiBCode/BiBCode.git")).toBe(
-      "github.com/bibcode/bibcode",
+    expect(normalizeGitRemoteUrl("git@github.com:CoddyStudio/CoddyStudio.git")).toBe(
+      "github.com/coddy-studio/coddy-studio",
     );
-    expect(normalizeGitRemoteUrl("https://github.com/BiBCode/BiBCode.git")).toBe(
-      "github.com/bibcode/bibcode",
+    expect(normalizeGitRemoteUrl("https://github.com/CoddyStudio/CoddyStudio.git")).toBe(
+      "github.com/coddy-studio/coddy-studio",
     );
-    expect(normalizeGitRemoteUrl("ssh://git@github.com/BiBCode/BiBCode")).toBe(
-      "github.com/bibcode/bibcode",
+    expect(normalizeGitRemoteUrl("ssh://git@github.com/CoddyStudio/CoddyStudio")).toBe(
+      "github.com/coddy-studio/coddy-studio",
     );
   });
 
   it("preserves nested group paths for providers like GitLab", () => {
-    expect(normalizeGitRemoteUrl("git@gitlab.com:BiBCode/platform/BiBCode.git")).toBe(
-      "gitlab.com/bibcode/platform/bibcode",
+    expect(normalizeGitRemoteUrl("git@gitlab.com:CoddyStudio/platform/CoddyStudio.git")).toBe(
+      "gitlab.com/coddy-studio/platform/coddy-studio",
     );
-    expect(normalizeGitRemoteUrl("https://gitlab.com/BiBCode/platform/BiBCode.git")).toBe(
-      "gitlab.com/bibcode/platform/bibcode",
+    expect(normalizeGitRemoteUrl("https://gitlab.com/CoddyStudio/platform/CoddyStudio.git")).toBe(
+      "gitlab.com/coddy-studio/platform/coddy-studio",
     );
   });
 
@@ -107,14 +107,14 @@ describe("normalizeGitRemoteUrl", () => {
 describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
   it("extracts the owner and repository from common GitHub remote shapes", () => {
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:BiBCode/BiBCode.git"),
-    ).toBe("BiBCode/BiBCode");
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:CoddyStudio/CoddyStudio.git"),
+    ).toBe("CoddyStudio/CoddyStudio");
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/BiBCode/BiBCode.git"),
-    ).toBe("BiBCode/BiBCode");
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/CoddyStudio/CoddyStudio.git"),
+    ).toBe("CoddyStudio/CoddyStudio");
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://git@github.com/BiBCode/BiBCode"),
-    ).toBe("BiBCode/BiBCode");
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://git@github.com/CoddyStudio/CoddyStudio"),
+    ).toBe("CoddyStudio/CoddyStudio");
     expect(parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git://github.com/a/b/ ")).toBe("a/b");
   });
 
@@ -131,7 +131,7 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
 describe("source control provider delegation", () => {
   it("detects providers through the git-facing API", () => {
     expect(
-      detectSourceControlProviderFromGitRemoteUrl("https://github.com/bibcode/bibcode.git")?.kind,
+      detectSourceControlProviderFromGitRemoteUrl("https://github.com/coddy-studio/coddy-studio.git")?.kind,
     ).toBe("github");
     expect(detectSourceControlProviderFromGitRemoteUrl("invalid")).toBeNull();
   });

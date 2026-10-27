@@ -10,10 +10,10 @@ it("packages only the executable, web client, guide, and license", () => {
     "utf8",
   );
 
-  expect(source).toContain("name: bibcode-server");
-  expect(source).toContain("dst: /usr/bin/bibcode");
-  expect(source).toContain("dst: /usr/share/bibcode/web");
-  expect(source).toContain("dst: /usr/share/doc/bibcode-server/README.md");
-  expect(source).toContain("dst: /usr/share/doc/bibcode-server/LICENSE");
+  expect(source).toContain("name: coddy-studio-server");
+  expect(source).toContain("dst: /usr/bin/coddy-studio");
+  expect(source).toContain("dst: /usr/share/coddy-studio/web");
+  expect(source).toContain("dst: /usr/share/doc/coddy-studio-server/README.md");
+  expect(source).toContain("dst: /usr/share/doc/coddy-studio-server/LICENSE");
   expect(source).not.toMatch(/scripts:|systemd|firewall|useradd|groupadd/);
 });

@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use bibcode_server::diagnostics::profiler::crash;
+use coddy_studio_server::diagnostics::profiler::crash;
 
 fn main() -> ExitCode {
     // The crash monitor is this binary re-executed: before the runtime, and before anything
@@ -9,7 +9,7 @@ fn main() -> ExitCode {
         return ExitCode::from(u8::try_from(code).unwrap_or(u8::MAX));
     }
     crash::attach();
-    bibcode_server::allocator::start_heap_trimmer();
+    coddy_studio_server::allocator::start_heap_trimmer();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -18,17 +18,17 @@ fn main() -> ExitCode {
 }
 
 async fn async_main() -> ExitCode {
-    // The open-url shim, or the Windows `bibcode-open-url.exe` alias: before clap, whose
+    // The open-url shim, or the Windows `coddy-studio-open-url.exe` alias: before clap, whose
     // environment-backed options a session may carry, and before any data-root work.
-    if let Some(url) = bibcode_server::open_url::current_open_url_invocation() {
-        std::process::exit(bibcode_server::open_url::run_open_url(&url).await);
+    if let Some(url) = coddy_studio_server::open_url::current_open_url_invocation() {
+        std::process::exit(coddy_studio_server::open_url::run_open_url(&url).await);
     }
-    match bibcode_server::run_cli().await {
+    match coddy_studio_server::run_cli().await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(bibcode_server::RunError::Cli(error)) => {
+        Err(coddy_studio_server::RunError::Cli(error)) => {
             let success = error.exit_code() == 0;
             if let Err(print_error) = error.print() {
-                eprintln!("bibcode: failed to print command-line help: {print_error}");
+                eprintln!("coddy-studio: failed to print command-line help: {print_error}");
                 return ExitCode::FAILURE;
             }
             if success {
@@ -38,7 +38,7 @@ async fn async_main() -> ExitCode {
             }
         }
         Err(error) => {
-            eprintln!("bibcode: {error}");
+            eprintln!("coddy-studio: {error}");
             ExitCode::FAILURE
         }
     }

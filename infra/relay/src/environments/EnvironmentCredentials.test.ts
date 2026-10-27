@@ -199,7 +199,7 @@ describe("EnvironmentCredentials", () => {
 
   it.effect("does not retain credential tokens when lookup persistence fails", () => {
     const cause = new Error("database unavailable");
-    const token = "bibcodeenv_sensitive-credential-token";
+    const token = "coddystudioenv_sensitive-credential-token";
     const fakeDb = {
       select: () => ({
         from: (table: unknown) => {
@@ -278,7 +278,7 @@ describe("EnvironmentCredentials", () => {
       method: "digest",
       description: "digest unavailable",
     });
-    const token = "bibcodeenv_sensitive-token";
+    const token = "coddystudioenv_sensitive-token";
 
     return Effect.gen(function* () {
       const nodeCrypto = yield* Crypto.Crypto;
@@ -433,7 +433,7 @@ describe("EnvironmentCredentials", () => {
         environmentPublicKey: "environment-public-key",
       });
 
-      expect(token).toMatch(/^bibcodeenv_/u);
+      expect(token).toMatch(/^coddystudioenv_/u);
       expect(events).toEqual(["lock", "revoke", "insert"]);
       expect(hasActiveCredential).toBe(true);
     }).pipe(
@@ -625,7 +625,7 @@ describe("EnvironmentCredentials", () => {
         work(transactionDb),
     } as unknown as RelayDb.RelayDb["Service"];
     const rotation: EnvironmentCredentials.EnvironmentCredentialRotation = {
-      token: "bibcodeenv_undisclosed_replacement",
+      token: "coddystudioenv_undisclosed_replacement",
       credentialId: "replacement",
       previousCredentialId: "prior",
       environmentId: "env-1",
@@ -691,7 +691,7 @@ describe("EnvironmentCredentials", () => {
           work(transactionDb),
       } as unknown as RelayDb.RelayDb["Service"];
       const rotation = {
-        token: "bibcodeenv_undisclosed_replacement",
+        token: "coddystudioenv_undisclosed_replacement",
         credentialId: "replacement",
         previousCredentialId: null,
         environmentId: "env-1",
@@ -722,7 +722,7 @@ describe("EnvironmentCredentials", () => {
       transaction: () => Effect.fail(cause),
     } as unknown as RelayDb.RelayDb["Service"];
     const rotation: EnvironmentCredentials.EnvironmentCredentialRotation = {
-      token: "bibcodeenv_undisclosed_replacement",
+      token: "coddystudioenv_undisclosed_replacement",
       credentialId: "replacement",
       previousCredentialId: "prior",
       environmentId: "env-1",
@@ -769,7 +769,7 @@ describe("EnvironmentCredentials", () => {
         work(transactionDb),
     } as unknown as RelayDb.RelayDb["Service"];
     const rotation: EnvironmentCredentials.EnvironmentCredentialRotation = {
-      token: "bibcodeenv_undisclosed_replacement",
+      token: "coddystudioenv_undisclosed_replacement",
       credentialId: "replacement",
       previousCredentialId: "missing-prior",
       environmentId: "env-1",
@@ -917,7 +917,7 @@ describe("EnvironmentCredentials", () => {
         const token = rotation.token;
         const [, credentialId, secret] = token.split("_");
 
-        expect(token).toMatch(/^bibcodeenv_[0-9a-f]{64}_[0-9a-f]{96}$/);
+        expect(token).toMatch(/^coddystudioenv_[0-9a-f]{64}_[0-9a-f]{96}$/);
         expect(credentialId).toHaveLength(64);
         expect(secret).toHaveLength(96);
         expect(insertedValues).toHaveLength(1);

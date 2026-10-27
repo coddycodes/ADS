@@ -1,4 +1,4 @@
-import { encodePairingCode } from "@bibcode/shared/pairingCode";
+import { encodePairingCode } from "@coddy/shared/pairingCode";
 import { describe, expect, it } from "vite-plus/test";
 
 import { extractEmbeddedPairingToken } from "./pairingCodeCredential";

@@ -10,9 +10,9 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { useCallback, useState, type ReactNode } from "react";
-import type { EnvironmentId, ServerProcessSignal } from "@bibcode/contracts";
+import type { EnvironmentId, ServerProcessSignal } from "@coddy/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -438,7 +438,7 @@ export function DiagnosticsSettingsPanel({
               type: "info",
               title: "Process already exited",
               description:
-                "The process is not a child of the BiBCode Server. It might already have exited.",
+                "The process is not a child of the Coddy Studio Server. It might already have exited.",
             });
             return;
           }

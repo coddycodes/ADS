@@ -30,7 +30,7 @@ jobs:
 
       - name: Build the production Git runner regression test
         run: |
-          cargo test --locked -p bibcode-server \
+          cargo test --locked -p coddy-studio-server \
             --test linux_appimage_git_environment --no-run -j 2 \
             --message-format=json > git-compatibility-build.json
 

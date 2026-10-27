@@ -192,7 +192,7 @@ data from another surface.
 
 Structured chat activity comes from the provider runtime's typed protocol.
 Provider-terminal observation is a separate opt-in path attached only to a
-provider terminal launched by BiBCode. It requires explicit enablement before
+provider terminal launched by Coddy Studio. It requires explicit enablement before
 that terminal is launched (or reopened), and it does not scrape arbitrary PTY
 text.
 

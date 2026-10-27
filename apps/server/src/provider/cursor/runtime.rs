@@ -131,7 +131,7 @@ pub enum CursorRuntimeError {
     #[error("Unknown pending request id {request_id}")]
     PendingRequestNotFound { request_id: String },
     /// The session refuses a turn's options, checked against what it advertises: an option or
-    /// value it does not advertise, a configuration BiBCode can't work with, or a switch to the
+    /// value it does not advertise, a configuration Coddy Studio can't work with, or a switch to the
     /// default model when the session advertises none. The same request is refused again on
     /// every retry.
     #[error("Cursor option update is unsupported: {0}")]
@@ -244,7 +244,7 @@ impl CursorSessionRuntime {
                 json!({
                     "protocolVersion": 1,
                     "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false },
-                    "clientInfo": { "name": "bibcode-rust", "version": "0.1.1" },
+                    "clientInfo": { "name": "coddy-studio-rust", "version": "0.1.1" },
                 }),
             )
             .await?;

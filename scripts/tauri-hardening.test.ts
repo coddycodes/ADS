@@ -129,7 +129,7 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
       assert.equal(
         rgbChannelSha256(source),
         "8b6e2020b1bf741409862203340d693ad2926bba7e26020f7bf8c239de1eb42b",
-        "macOS icon RGB values must preserve the pre-mask BiBCode artwork",
+        "macOS icon RGB values must preserve the pre-mask Coddy Studio artwork",
       );
       assert.equal(source.pixels[(512 * source.width + 512) * 4 + 3], 255);
       assert.ok(
@@ -148,7 +148,7 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
       );
 
       const chunks = readIcnsChunks(
-        yield* fs.readFile(path.join(repoRoot, "assets/prod/bibcode-black-macos.icns")),
+        yield* fs.readFile(path.join(repoRoot, "assets/prod/coddy-studio-black-macos.icns")),
       );
       for (const type of ["ic11", "ic12", "ic13", "ic07", "ic08", "ic14", "ic09", "ic10"]) {
         assert.equal(chunks.has(type), true, `ICNS must contain ${type}`);
@@ -160,7 +160,7 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
       assert.equal(
         rgbChannelSha256(largest),
         "8b6e2020b1bf741409862203340d693ad2926bba7e26020f7bf8c239de1eb42b",
-        "ICNS must preserve the pre-mask BiBCode RGB artwork",
+        "ICNS must preserve the pre-mask Coddy Studio RGB artwork",
       );
     }),
   );
@@ -204,7 +204,7 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
       assert.equal(installerHook.includes("Abort"), false);
       assert.equal(
         tauri.build.beforeBuildCommand,
-        "node ../../scripts/prepare-tauri-appimage-tools.ts && vp run --filter @bibcode/web build && node ../../scripts/apply-web-brand-assets.ts production apps/web/dist",
+        "node ../../scripts/prepare-tauri-appimage-tools.ts && vp run --filter @coddy/web build && node ../../scripts/apply-web-brand-assets.ts production apps/web/dist",
       );
       assert.equal(
         yield* fs.exists(path.join(repoRoot, "scripts/prepare-tauri-appimage-tools.ts")),
@@ -236,7 +236,7 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
         /minisign public key/,
       );
       assert.deepEqual(release.plugins.updater.endpoints, [
-        "https://github.com/mubeda/BibCode/releases/latest/download/latest.json",
+        "https://github.com/mubeda/CoddyStudio/releases/latest/download/latest.json",
       ]);
       assert.equal(release.plugins.updater.windows?.installMode, "passive");
     }),
@@ -252,16 +252,16 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
       );
       const expectedIcons = [
         "../../../assets/prod/black-universal-1024.png",
-        "../../../assets/prod/bibcode-black-windows.ico",
-        "../../../assets/prod/bibcode-black-macos.icns",
+        "../../../assets/prod/coddy-studio-black-windows.ico",
+        "../../../assets/prod/coddy-studio-black-macos.icns",
       ];
 
       assert.deepEqual(tauri.bundle.icon, expectedIcons);
       assert.equal(tauri.bundle.macOS.minimumSystemVersion, "11.0");
       for (const iconPath of [
         "assets/prod/black-universal-1024.png",
-        "assets/prod/bibcode-black-windows.ico",
-        "assets/prod/bibcode-black-macos.icns",
+        "assets/prod/coddy-studio-black-windows.ico",
+        "assets/prod/coddy-studio-black-macos.icns",
       ]) {
         assert.equal(yield* fs.exists(path.join(repoRoot, iconPath)), true, iconPath);
       }
@@ -300,7 +300,7 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
         /apply-web-brand-assets\.ts production apps\/web\/dist/,
       );
       assert.equal(
-        yield* fs.exists(path.join(repoRoot, "assets/prod/bibcode-black-web-apple-touch-180.png")),
+        yield* fs.exists(path.join(repoRoot, "assets/prod/coddy-studio-black-web-apple-touch-180.png")),
         true,
       );
     }),
@@ -322,22 +322,22 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
 
       const publicCopies = [
         [
-          "assets/prod/bibcode-black-web-favicon.ico",
+          "assets/prod/coddy-studio-black-web-favicon.ico",
           "apps/web/public/favicon.ico",
           "apps/marketing/public/favicon.ico",
         ],
         [
-          "assets/prod/bibcode-black-web-favicon-16x16.png",
+          "assets/prod/coddy-studio-black-web-favicon-16x16.png",
           "apps/web/public/favicon-16x16.png",
           "apps/marketing/public/favicon-16x16.png",
         ],
         [
-          "assets/prod/bibcode-black-web-favicon-32x32.png",
+          "assets/prod/coddy-studio-black-web-favicon-32x32.png",
           "apps/web/public/favicon-32x32.png",
           "apps/marketing/public/favicon-32x32.png",
         ],
         [
-          "assets/prod/bibcode-black-web-apple-touch-180.png",
+          "assets/prod/coddy-studio-black-web-apple-touch-180.png",
           "apps/web/public/apple-touch-icon.png",
           "apps/marketing/public/apple-touch-icon.png",
         ],

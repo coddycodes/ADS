@@ -38,9 +38,9 @@ const RACED_PREPARATION_WORKER_ABORT_TIMEOUT: Duration = Duration::from_millis(5
 #[cfg(unix)]
 const MANAGED_GENERATION_SLOT_COUNT: usize = 64;
 #[cfg(unix)]
-const OWNERSHIP_MARKER_NAME: &str = ".bibcode-provider-terminal-owner";
+const OWNERSHIP_MARKER_NAME: &str = ".coddy-studio-provider-terminal-owner";
 #[cfg(unix)]
-const OWNERSHIP_MARKER_CONTENT: &[u8] = b"bibcode-provider-terminal-v1\n";
+const OWNERSHIP_MARKER_CONTENT: &[u8] = b"coddy-studio-provider-terminal-v1\n";
 
 #[cfg(unix)]
 static MANAGED_GENERATION_SLOT_OPERATION_LOCK: Mutex<()> = Mutex::new(());

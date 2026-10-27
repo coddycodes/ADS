@@ -36,7 +36,7 @@ describe("isFinalDesktopUiSpec", () => {
   it("defers shutdown while later configured specs still need the shared application", () => {
     expect(
       isFinalDesktopUiSpec(
-        ["file:///X:/BibCode/apps/desktop/e2e/specs/main-window.e2e.ts"],
+        ["file:///X:/CoddyStudio/apps/desktop/e2e/specs/main-window.e2e.ts"],
         configuredSpecs,
       ),
     ).toBe(false);
@@ -45,7 +45,7 @@ describe("isFinalDesktopUiSpec", () => {
   it("selects the final configured spec across WebdriverIO path formats", () => {
     expect(
       isFinalDesktopUiSpec(
-        [String.raw`X:\BibCode\apps\desktop\e2e\specs\chat-activity-panel.e2e.ts`],
+        [String.raw`X:\CoddyStudio\apps\desktop\e2e\specs\chat-activity-panel.e2e.ts`],
         configuredSpecs,
       ),
     ).toBe(true);

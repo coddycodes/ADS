@@ -2,7 +2,7 @@ import { act, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Window } from "happy-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { DesktopWslState } from "@bibcode/contracts";
+import type { DesktopWslState } from "@coddy/contracts";
 
 type AnyProps = Record<string, unknown>;
 
@@ -254,7 +254,7 @@ describe("LocalEnvironmentSettings", () => {
     expect(alert!.textContent).toContain("Desktop bridge unavailable");
     expect(container.textContent).toContain("WSL backend unavailable");
     expect(container.textContent).toContain(
-      "Desktop integration is unavailable. Restart BiBCode to manage the local WSL backend.",
+      "Desktop integration is unavailable. Restart Coddy Studio to manage the local WSL backend.",
     );
     expect(container.textContent).not.toContain("Add environment");
   });
@@ -310,7 +310,7 @@ describe("LocalEnvironmentSettings", () => {
       "Network access",
       "Tailscale HTTPS",
       "Authorized clients",
-      "BiBCode Connect",
+      "Coddy Connect",
       "Remote environments",
       "Add environment",
       "SSH",
@@ -341,7 +341,7 @@ describe("LocalEnvironmentSettings", () => {
       "Network access",
       "Tailscale HTTPS",
       "Authorized clients",
-      "BiBCode Connect",
+      "Coddy Connect",
       "Remote environments",
       "Add environment",
       "SSH",

@@ -106,7 +106,7 @@ pub const ACTIVE_RPC_METHODS: &[RpcMethodSpec] = &[
     mutation_unary("preview.refresh"),
     mutation_unary("preview.reportStatus"),
     mutation_unary("preview.resize"),
-    // Tunnel traffic changes nothing BiBCode keeps, and a tunnel lives as long as its page:
+    // Tunnel traffic changes nothing Coddy Studio keeps, and a tunnel lives as long as its page:
     // like `previewAutomation.connect`, it must neither hold nor wait for a mutation permit.
     read_unary("preview.tunnelClose"),
     read_stream("preview.tunnelOpen"),
@@ -214,7 +214,7 @@ pub const ACTIVE_RPC_METHODS: &[RpcMethodSpec] = &[
     mutation_unary("worktree.createPanel"),
     read_unary("worktree.getRemovalPlan"),
     mutation_unary("worktree.remove"),
-    mutation_unary("worktree.removeFromBibCode"),
+    mutation_unary("worktree.removeFromCoddyStudio"),
     mutation_unary("worktree.retarget"),
     mutation_unary("worktree.updateDiscoveryPolicy"),
 ];

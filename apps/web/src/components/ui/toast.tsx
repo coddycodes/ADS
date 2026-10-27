@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useParams } from "@tanstack/react-router";
-import { type ScopedThreadRef, type ThreadId } from "@bibcode/contracts";
+import { type ScopedThreadRef, type ThreadId } from "@coddy/contracts";
 import {
   CheckIcon,
   CircleAlertIcon,

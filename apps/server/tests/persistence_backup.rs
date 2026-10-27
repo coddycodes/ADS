@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     ServerConfig,
     persistence::{
         BackupTrigger, MIGRATIONS, StatePaths, StorageInstanceId, StoreClassification,
@@ -20,8 +20,8 @@ use tempfile::TempDir;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
-const LOCK_CHILD_ROOT: &str = "BIBCODE_BACKUP_LOCK_CHILD_ROOT";
-const LOCK_CHILD_ACQUIRED: &str = "BIBCODE_BACKUP_LOCK_CHILD_ACQUIRED";
+const LOCK_CHILD_ROOT: &str = "CODDY_STUDIO_BACKUP_LOCK_CHILD_ROOT";
+const LOCK_CHILD_ACQUIRED: &str = "CODDY_STUDIO_BACKUP_LOCK_CHILD_ACQUIRED";
 
 struct PersistedStoreFixture {
     _root: TempDir,
@@ -106,8 +106,8 @@ impl PersistedStoreFixture {
     async fn prepare(
         &self,
     ) -> Result<
-        bibcode_server::persistence::PreparedStore,
-        bibcode_server::persistence::StoreStartupError,
+        coddy_studio_server::persistence::PreparedStore,
+        coddy_studio_server::persistence::StoreStartupError,
     > {
         prepare_store(&self.config).await
     }
@@ -133,7 +133,7 @@ impl PersistedStoreFixture {
 
     async fn create_backup_at(
         &self,
-        prepared: &bibcode_server::persistence::PreparedStore,
+        prepared: &coddy_studio_server::persistence::PreparedStore,
         sequence: u8,
         app_version: &str,
     ) -> VerifiedBackup {
@@ -292,7 +292,7 @@ async fn refuses_migration_when_backup_publication_cannot_begin() {
 
     assert!(matches!(
         error,
-        bibcode_server::persistence::StoreStartupError::Backup(_)
+        coddy_studio_server::persistence::StoreStartupError::Backup(_)
     ));
     assert_eq!(fixture.database_bytes(), before);
     assert_eq!(fixture.schema_version(), schema_before);
@@ -834,7 +834,7 @@ async fn operation_lock_timeout_and_waiter_abort_leave_no_later_owner() {
     .expect_err("second owner must time out");
     assert!(matches!(
         timeout,
-        bibcode_server::persistence::BackupError::LockTimeout { .. }
+        coddy_studio_server::persistence::BackupError::LockTimeout { .. }
     ));
 
     let aborted_root = root.path().to_path_buf();
@@ -894,7 +894,7 @@ async fn abort_after_operation_lock_acquisition_releases_immediately() {
 #[test]
 fn backup_manifest_never_serializes_the_effective_or_requested_root() {
     let fixture = PersistedStoreFixture::first_run();
-    let manifest = bibcode_server::persistence::BackupManifest {
+    let manifest = coddy_studio_server::persistence::BackupManifest {
         backup_id: Uuid::new_v4(),
         storage_instance_id: fixture.storage_instance_id,
         created_at: "2026-08-09T00:00:00Z".to_owned(),

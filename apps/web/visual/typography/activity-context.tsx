@@ -6,7 +6,7 @@ import {
   type ActivityActorSummary,
   type ActivityActorControl,
   type ActivitySnapshot,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import {
   ActivityRoster,
   type ActivityRosterProps,

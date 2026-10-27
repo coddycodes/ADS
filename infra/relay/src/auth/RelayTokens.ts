@@ -6,14 +6,14 @@ import {
   RelayWebClientId,
   type RelayPublicClientId,
   type RelayEnvironmentLinkChallengeRequest,
-} from "@bibcode/contracts/relay";
-import { encodeOAuthScope, parseAllowedOAuthScope } from "@bibcode/shared/oauthScope";
+} from "@coddy/contracts/relay";
+import { encodeOAuthScope, parseAllowedOAuthScope } from "@coddy/shared/oauthScope";
 import {
   normalizeRelayIssuer,
   RelayJwtError,
   signRelayJwt,
   verifyRelayJwt,
-} from "@bibcode/shared/relayJwt";
+} from "@coddy/shared/relayJwt";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,8 +22,8 @@ import * as Schema from "effect/Schema";
 
 import * as RelayConfiguration from "../Config.ts";
 
-const LINK_CHALLENGE_TYP = "bibcode-link-challenge+jwt";
-const ACCESS_TOKEN_TYP = "bibcode-relay-dpop-access+jwt";
+const LINK_CHALLENGE_TYP = "coddy-studio-link-challenge+jwt";
+const ACCESS_TOKEN_TYP = "coddy-studio-relay-dpop-access+jwt";
 const LINK_CHALLENGE_KIND = "environment_link_challenge";
 export const RELAY_DPOP_ACCESS_TOKEN_TTL = "30 minutes";
 
@@ -105,7 +105,7 @@ export class RelayTokens extends Context.Service<
       readonly nowEpochSeconds: number;
     }) => Effect.Effect<RelayDpopAccessTokenClaims | null>;
   }
->()("bibcode-relay/auth/RelayTokens") {}
+>()("coddy-studio-relay/auth/RelayTokens") {}
 
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;

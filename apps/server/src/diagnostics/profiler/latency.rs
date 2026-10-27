@@ -30,7 +30,7 @@ pub const BUCKET_GROWTH: f64 = 1.12;
 pub const BUCKETS: usize = 100;
 /// Carries a per-request correlation ID set by the client. A trace ID cannot be the join key:
 /// one trace spans several RPCs (for example repeated `uploads.append` calls).
-pub const CORRELATION_HEADER: &str = "x-bibcode-profiler-rid";
+pub const CORRELATION_HEADER: &str = "x-coddy-studio-profiler-rid";
 /// The outcome a stream records, timed to its first item. Event streams may wait any time for
 /// their first item, so streams are log-only: no `rpc.slow` finding and no hang check.
 pub const FIRST_ITEM: &str = "first-item";
@@ -939,7 +939,7 @@ mod tests {
     #[test]
     fn correlation_id_comes_only_from_its_bounded_header() {
         assert_eq!(
-            correlation_id(&headers(&[("X-Bibcode-Profiler-Rid", "c1:7")])).as_deref(),
+            correlation_id(&headers(&[("X-Coddy-Studio-Profiler-Rid", "c1:7")])).as_deref(),
             Some("c1:7")
         );
         assert_eq!(correlation_id(&headers(&[("traceparent", "00-abc")])), None);

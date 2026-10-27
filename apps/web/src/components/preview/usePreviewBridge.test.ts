@@ -4,7 +4,7 @@ import type {
   DesktopPreviewNavStatus,
   DesktopPreviewTabState,
   ScopedThreadRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -85,7 +85,7 @@ vi.mock("~/previewStateStore", () => ({
 vi.mock("~/browser/previewGateway", () => ({
   canonicalizePreviewUrl: (url: string) =>
     url.replace(
-      "http://10.0.0.2:41000/__bibcode/bootstrap?cap=C&to=%2Fa",
+      "http://10.0.0.2:41000/__coddy-studio/bootstrap?cap=C&to=%2Fa",
       "http://localhost:5173/a",
     ),
   isGatewayClientUrl: (url: string) => url.startsWith("http://10.0.0.2:41000/"),
@@ -279,7 +279,7 @@ describe("usePreviewBridge", () => {
 
     emit("tab-1", {
       kind: "Loading",
-      url: "http://10.0.0.2:41000/__bibcode/bootstrap?cap=C&to=%2Fa",
+      url: "http://10.0.0.2:41000/__coddy-studio/bootstrap?cap=C&to=%2Fa",
       title: "",
     });
     emit("tab-1", { kind: "Loading", url: "http://localhost:5173/a", title: "" });
@@ -335,7 +335,7 @@ describe("usePreviewBridge", () => {
     testState.localFailureCalls = [];
     emit("tab-1", {
       kind: "LoadFailed",
-      url: "http://10.0.0.2:41000/__bibcode/bootstrap?cap=C&to=%2Fa",
+      url: "http://10.0.0.2:41000/__coddy-studio/bootstrap?cap=C&to=%2Fa",
       title: "",
       code: -102,
       description: "ERR_CONNECTION_REFUSED",

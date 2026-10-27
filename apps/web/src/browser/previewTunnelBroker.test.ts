@@ -1,4 +1,4 @@
-import type { DesktopPreviewTunnelBridge } from "@bibcode/contracts";
+import type { DesktopPreviewTunnelBridge } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));

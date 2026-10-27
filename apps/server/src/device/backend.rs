@@ -27,7 +27,7 @@ pub(crate) enum LaunchFailure {
     Spawn(String),
     Unresponsive(String),
     Cancelled,
-    /// The image exists but is in use outside BiBCode. `check_available` reports it before
+    /// The image exists but is in use outside Coddy Studio. `check_available` reports it before
     /// a slot exists (`DeviceBusyError`); a launch that finds it late fails its slot. No
     /// Android backend reports it.
     #[allow(dead_code)]

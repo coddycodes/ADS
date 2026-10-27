@@ -13,7 +13,7 @@ export function tauriBuildEnvironment(platform, env) {
 }
 
 export function runTauriBuild(options = {}) {
-  // oxlint-disable-next-line bibcode/no-global-process-runtime -- Standalone CLI samples the host platform once and still accepts an injected platform in tests.
+  // oxlint-disable-next-line coddy/no-global-process-runtime -- Standalone CLI samples the host platform once and still accepts an injected platform in tests.
   const platform = options.platform ?? NodeOS.platform();
   const env = options.env ?? NodeProcess.env;
   const args = options.args ?? NodeProcess.argv.slice(2);

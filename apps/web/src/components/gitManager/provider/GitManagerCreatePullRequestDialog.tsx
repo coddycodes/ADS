@@ -6,8 +6,8 @@ import type {
   GitRunStackedActionResult,
   SourceControlProviderKind,
   VcsStatusResult,
-} from "@bibcode/contracts";
-import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/contracts";
+import { squashAtomCommandFailure } from "@coddy/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { AsyncResult } from "effect/reactivity";
 import { GitPullRequestIcon, TriangleAlertIcon } from "lucide-react";
@@ -48,7 +48,7 @@ import { Textarea } from "~/components/ui/textarea";
 import {
   formatChangeRequestNumber,
   resolveChangeRequestPresentation,
-} from "@bibcode/shared/sourceControl";
+} from "@coddy/shared/sourceControl";
 import { capitalize } from "effect/String";
 import { randomUUID } from "~/lib/utils";
 import { gitManagerEnvironment } from "~/state/gitManager";
@@ -146,7 +146,7 @@ function CreatePullRequestReviewDialog({
       ? "Checking server support…"
       : serverConfig.environment.capabilities.gitPullRequestBranchSelection === true
         ? null
-        : "Update this environment's BiBCode server to select source and target branches.";
+        : "Update this environment's Coddy Studio server to select source and target branches.";
   const [baseBranch, setBaseBranch] = useState<string | null>(null);
   const [headBranch, setHeadBranch] = useState<string | null | undefined>(undefined);
   const [headSearch, setHeadSearch] = useState<string | undefined>(undefined);

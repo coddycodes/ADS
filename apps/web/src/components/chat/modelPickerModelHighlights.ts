@@ -1,4 +1,4 @@
-import type { ProviderDriverKind } from "@bibcode/contracts";
+import type { ProviderDriverKind } from "@coddy/contracts";
 
 /**
  * Model slugs that show a gold "NEW" chip in the model picker list.

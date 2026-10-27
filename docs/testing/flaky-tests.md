@@ -128,10 +128,10 @@ Build once and obtain the executable from Cargo artifact JSON. Confirm actual
 selected names and ignored flags with its `--list`, then run:
 
 ```sh
-cargo test -p bibcode-server --test turn_delivery_recovery --no-run --message-format=json -j 2
-cargo test -p bibcode-server --test turn_delivery_recovery child_deadline_ -j 2 -- --nocapture
-cargo test -p bibcode-server --test turn_delivery_recovery child_watchdog_ -j 2 -- --nocapture
-cargo test -p bibcode-server --test turn_delivery_recovery -j 2
+cargo test -p coddy-studio-server --test turn_delivery_recovery --no-run --message-format=json -j 2
+cargo test -p coddy-studio-server --test turn_delivery_recovery child_deadline_ -j 2 -- --nocapture
+cargo test -p coddy-studio-server --test turn_delivery_recovery child_watchdog_ -j 2 -- --nocapture
+cargo test -p coddy-studio-server --test turn_delivery_recovery -j 2
 ```
 
 Run natively on both Linux and macOS. The `watchdog_tests` parent SIGKILL and

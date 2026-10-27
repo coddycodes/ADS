@@ -1,4 +1,4 @@
-import type { PullRequestsPermission, ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsPermission, ScopedProjectRef } from "@coddy/contracts";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { usePullRequestsStore } from "../../../pullRequestsStore";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../../ui/tabs";

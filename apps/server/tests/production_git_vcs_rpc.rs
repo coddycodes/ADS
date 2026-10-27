@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{
+use coddy_studio_server::{
     CauseItem, RequestId, RpcExit, RpcRegistry, ServerConfig, ServerMessage, ServerRuntime,
     worktree_catalog::{
         AdoptedWorktreeAvailability, WorkspaceAvailabilityRegistry, WorkspaceLossTransition,
@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
-use bibcode_server::production::git_vcs::{
+use coddy_studio_server::production::git_vcs::{
     GIT_VCS_STREAM_METHODS, GIT_VCS_UNARY_METHODS, GitVcsRpcServices, register_git_vcs_rpc,
 };
 
@@ -37,16 +37,17 @@ mod websocket_frames;
 use websocket_frames::next_frame_past_heartbeat;
 
 fn git_vcs_services(temp: &TempDir) -> GitVcsRpcServices {
-    let hosts = Arc::new(bibcode_server::source_control::ProviderHosts::default());
-    let repository =
-        Arc::new(bibcode_server::git::GitRepository::default().with_provider_hosts(hosts.clone()));
+    let hosts = Arc::new(coddy_studio_server::source_control::ProviderHosts::default());
+    let repository = Arc::new(
+        coddy_studio_server::git::GitRepository::default().with_provider_hosts(hosts.clone()),
+    );
     GitVcsRpcServices::with_repository(repository, hosts)
         .with_hosting_executable_dir_for_integration_test(
             hermetic_providers::missing_hosting_executable_dir(temp.path()),
         )
 }
 
-const ISOLATED_GIT_TEST: &str = "BIBCODE_PRODUCTION_GIT_VCS_RPC_ISOLATED";
+const ISOLATED_GIT_TEST: &str = "CODDY_STUDIO_PRODUCTION_GIT_VCS_RPC_ISOLATED";
 static ISOLATED_GIT_TEST_LOCK: Mutex<()> = Mutex::new(());
 const GIT_STATUS_INTEGRATION_DEADLINE: Duration = Duration::from_secs(15);
 const STACKED_ACTION_COMPLETION_INTEGRATION_DEADLINE: Duration = Duration::from_secs(30);
@@ -62,7 +63,7 @@ type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 struct GitServerHarness {
     _parallelism_permit: OwnedSemaphorePermit,
-    handle: Option<bibcode_server::ServerHandle>,
+    handle: Option<coddy_studio_server::ServerHandle>,
     socket: Option<TestSocket>,
 }
 
@@ -823,8 +824,8 @@ async fn stacked_commit_stream_finishes_with_a_decodable_success_event() {
     let repository = TempDir::new().expect("temporary repository");
     for args in [
         vec!["init", "--quiet"],
-        vec!["config", "user.name", "BiBCode Test"],
-        vec!["config", "user.email", "bibcode@example.invalid"],
+        vec!["config", "user.name", "Coddy Studio Test"],
+        vec!["config", "user.email", "coddy-studio@example.invalid"],
         vec!["config", "core.autocrlf", "false"],
     ] {
         assert!(
@@ -911,8 +912,8 @@ async fn stacked_commit_generates_a_message_when_the_ui_leaves_it_empty() {
     let repository = TempDir::new().expect("temporary repository");
     for args in [
         vec!["init", "--quiet"],
-        vec!["config", "user.name", "BiBCode Test"],
-        vec!["config", "user.email", "bibcode@example.invalid"],
+        vec!["config", "user.name", "Coddy Studio Test"],
+        vec!["config", "user.email", "coddy-studio@example.invalid"],
         vec!["config", "core.autocrlf", "false"],
         vec!["config", "diff.mnemonicPrefix", "true"],
         vec!["config", "diff.noprefix", "false"],
@@ -1004,8 +1005,8 @@ async fn stacked_feature_branch_commit_creates_and_switches_the_branch_first() {
     let repository = TempDir::new().expect("temporary repository");
     for args in [
         vec!["init", "--quiet", "--initial-branch=main"],
-        vec!["config", "user.name", "BiBCode Test"],
-        vec!["config", "user.email", "bibcode@example.invalid"],
+        vec!["config", "user.name", "Coddy Studio Test"],
+        vec!["config", "user.email", "coddy-studio@example.invalid"],
         vec!["config", "core.autocrlf", "false"],
     ] {
         assert!(
@@ -1125,8 +1126,8 @@ async fn stacked_commit_as_is_preserves_newer_unstaged_edits() {
     let repository = TempDir::new().expect("temporary repository");
     for args in [
         vec!["init", "--quiet"],
-        vec!["config", "user.name", "BiBCode Test"],
-        vec!["config", "user.email", "bibcode@example.invalid"],
+        vec!["config", "user.name", "Coddy Studio Test"],
+        vec!["config", "user.email", "coddy-studio@example.invalid"],
         vec!["config", "core.autocrlf", "false"],
     ] {
         assert!(
@@ -1566,7 +1567,7 @@ async fn stacked_push_honours_a_configured_remote_push_refspec() {
     let temp = TempDir::new().expect("temporary server directory");
     let root = TempDir::new().expect("temporary fixture root");
     let (remote, consumer, _) = renamed_upstream_fixture(root.path());
-    // `remote.<name>.push` outranks `push.default`, so Git pushes to it and BiBCode must too.
+    // `remote.<name>.push` outranks `push.default`, so Git pushes to it and Coddy Studio must too.
     run_git_in(
         &consumer,
         &[
@@ -2351,7 +2352,7 @@ async fn clone_retry_reuses_an_existing_repository_with_an_instead_of_alias_orig
     initialize_repository(&remote);
     commit_file(remote.path(), "tracked.txt", "base\n", "initial");
     let canonical_url = local_file_url(remote.path());
-    let alias_url = "bibcode-alias://clone-retry-origin";
+    let alias_url = "coddy-studio-alias://clone-retry-origin";
     let instead_of_key = format!("url.{canonical_url}.insteadOf");
     run_git_in(
         remote.path(),
@@ -3206,10 +3207,10 @@ fn git_command(cwd: &Path, args: &[&str]) -> Command {
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_AUTHOR_NAME", "BiBCode Test")
-        .env("GIT_AUTHOR_EMAIL", "bibcode@example.invalid")
-        .env("GIT_COMMITTER_NAME", "BiBCode Test")
-        .env("GIT_COMMITTER_EMAIL", "bibcode@example.invalid");
+        .env("GIT_AUTHOR_NAME", "Coddy Studio Test")
+        .env("GIT_AUTHOR_EMAIL", "coddy-studio@example.invalid")
+        .env("GIT_COMMITTER_NAME", "Coddy Studio Test")
+        .env("GIT_COMMITTER_EMAIL", "coddy-studio@example.invalid");
     command
 }
 
@@ -3219,8 +3220,11 @@ fn initialize_repository_in(cwd: &Path) {
 }
 
 fn initialize_repository_identity(cwd: &Path) {
-    run_git_in(cwd, &["config", "user.name", "BiBCode Test"]);
-    run_git_in(cwd, &["config", "user.email", "bibcode@example.invalid"]);
+    run_git_in(cwd, &["config", "user.name", "Coddy Studio Test"]);
+    run_git_in(
+        cwd,
+        &["config", "user.email", "coddy-studio@example.invalid"],
+    );
     run_git_in(cwd, &["config", "core.autocrlf", "false"]);
 }
 
@@ -3274,7 +3278,7 @@ async fn start_git_server(
     parallelism_permit: OwnedSemaphorePermit,
 ) -> (
     OwnedSemaphorePermit,
-    bibcode_server::ServerHandle,
+    coddy_studio_server::ServerHandle,
     WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 ) {
     let mut registry = RpcRegistry::empty();

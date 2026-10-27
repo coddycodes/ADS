@@ -6,10 +6,10 @@ import {
   type ServerLifecycleWelcomePayload,
   type ServerProvider,
   type ServerSettings,
-} from "@bibcode/contracts";
-import { createServerEnvironmentAtoms } from "@bibcode/client-runtime/state/server";
-import { createEnvironmentServerConfigsAtom } from "@bibcode/client-runtime/state/shell";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@bibcode/shared/keybindings";
+} from "@coddy/contracts";
+import { createServerEnvironmentAtoms } from "@coddy/client-runtime/state/server";
+import { createEnvironmentServerConfigsAtom } from "@coddy/client-runtime/state/shell";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@coddy/shared/keybindings";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 

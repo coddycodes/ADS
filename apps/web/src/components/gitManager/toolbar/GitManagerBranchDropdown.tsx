@@ -1,9 +1,9 @@
-import { projectKey } from "@bibcode/client-runtime/state/entities";
+import { projectKey } from "@coddy/client-runtime/state/entities";
 import type {
   GitManagerBlockedReason,
   GitManagerRefEntry,
   ScopedProjectRef,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { LegendList } from "@legendapp/list/react";
 import {
   CheckIcon,

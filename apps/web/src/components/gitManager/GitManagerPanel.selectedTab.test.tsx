@@ -3,15 +3,15 @@
 import {
   AVAILABLE_CONNECTION_STATE,
   type SupervisorConnectionState,
-} from "@bibcode/client-runtime/connection";
+} from "@coddy/client-runtime/connection";
 import type {
   GitManagerRefsSnapshot,
   ServerConfig,
   VcsStatusResult,
   VcsStatusStreamEvent,
-} from "@bibcode/contracts";
-import { applyGitStatusStreamEvent } from "@bibcode/shared/git";
-import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
+} from "@coddy/contracts";
+import { applyGitStatusStreamEvent } from "@coddy/shared/git";
+import { makeTestExecutionEnvironmentCapabilities } from "@coddy/shared/testSupport";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

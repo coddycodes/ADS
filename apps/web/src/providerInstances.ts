@@ -21,7 +21,7 @@ import {
   type ServerProviderModel,
   type ServerSettings,
   type ServerProviderState,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
 

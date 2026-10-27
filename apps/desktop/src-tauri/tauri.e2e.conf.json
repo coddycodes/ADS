@@ -1,5 +1,5 @@
 {
-  "identifier": "com.bibcode.desktop.e2e",
+  "identifier": "com.coddy.studio.desktop.e2e",
   "app": {
     "withGlobalTauri": true,
     "security": {

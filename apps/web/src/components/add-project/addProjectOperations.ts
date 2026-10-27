@@ -1,5 +1,5 @@
-import type { VcsCloneProgress } from "@bibcode/client-runtime/state/vcs";
-import type { EnvironmentId, ProjectId, ThreadId } from "@bibcode/contracts";
+import type { VcsCloneProgress } from "@coddy/client-runtime/state/vcs";
+import type { EnvironmentId, ProjectId, ThreadId } from "@coddy/contracts";
 
 import { findProjectByPath, inferProjectTitleFromPath } from "~/lib/projectPaths";
 import { newProjectId } from "~/lib/utils";

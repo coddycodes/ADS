@@ -1,8 +1,8 @@
 export function SplashScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="flex size-24 items-center justify-center" aria-label="BiBCode splash screen">
-        <img alt="BiBCode" className="size-16 object-contain" src="/apple-touch-icon.png" />
+      <div className="flex size-24 items-center justify-center" aria-label="Coddy Studio splash screen">
+        <img alt="Coddy Studio" className="size-16 object-contain" src="/apple-touch-icon.png" />
       </div>
     </div>
   );

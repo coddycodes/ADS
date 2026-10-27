@@ -1,5 +1,5 @@
 {
-  "name": "@bibcode/contracts",
+  "name": "@coddy/contracts",
   "version": "0.11.0",
   "private": true,
   "files": [

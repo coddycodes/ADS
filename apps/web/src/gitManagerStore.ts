@@ -1,11 +1,11 @@
-import { parseProjectKey, projectKey } from "@bibcode/client-runtime/state/entities";
-import type { ScopedProjectRef } from "@bibcode/contracts";
+import { parseProjectKey, projectKey } from "@coddy/client-runtime/state/entities";
+import type { ScopedProjectRef } from "@coddy/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const GIT_MANAGER_STORAGE_KEY = "bibcode:git-manager-state:v1";
+export const GIT_MANAGER_STORAGE_KEY = "coddy-studio:git-manager-state:v1";
 const GIT_MANAGER_STORAGE_VERSION = 1;
 const GIT_MANAGER_VIEW_STATE_LIMIT = 2;
 

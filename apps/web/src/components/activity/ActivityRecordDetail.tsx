@@ -7,8 +7,8 @@ import {
   type ActivityRecordSummary,
   type ActivitySection,
   type ActivitySnapshot,
-} from "@bibcode/contracts";
-import type { TimestampFormat } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import type { TimestampFormat } from "@coddy/contracts/settings";
 import { ArrowLeftIcon } from "lucide-react";
 import { useMemo, type RefObject } from "react";
 

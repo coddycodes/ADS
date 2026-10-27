@@ -2,7 +2,7 @@ import {
   isEnvironmentQueryAwaitingRetry,
   isQueryTransportCutoff,
   retryEnvironmentQuery,
-} from "@bibcode/client-runtime/state/runtime";
+} from "@coddy/client-runtime/state/runtime";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";

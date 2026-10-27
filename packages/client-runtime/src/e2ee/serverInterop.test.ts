@@ -1,8 +1,8 @@
 // Cross-language E2EE interop: TypeScript Noise NK initiator against the real
 // Rust responder. Opt-in: requires a freshly built server binary.
 //
-//   cargo build -p bibcode-server
-//   BIBCODE_E2EE_SERVER_BIN=$PWD/target/debug/bibcode vp test run src/e2ee/serverInterop.test.ts
+//   cargo build -p coddy-studio-server
+//   CODDY_STUDIO_E2EE_SERVER_BIN=$PWD/target/debug/coddy-studio vp test run src/e2ee/serverInterop.test.ts
 //
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalFetch:off - This opt-in harness probes a real loopback server process.
@@ -15,8 +15,8 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   type RemotePairingCodePayload,
-} from "@bibcode/contracts";
-import { parsePairingCode } from "@bibcode/shared/pairingCode";
+} from "@coddy/contracts";
+import { parsePairingCode } from "@coddy/shared/pairingCode";
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 
 import { decodeBase64UrlKey } from "./noise.ts";

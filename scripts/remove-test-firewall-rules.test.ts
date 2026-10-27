@@ -14,13 +14,13 @@ import {
   type WindowsFirewallRuleRecord,
 } from "./remove-test-firewall-rules.ts";
 
-const testExecutable = String.raw`C:\bibcode-validation\BibCode\target\aarch64-pc-windows-msvc\release\bibcode-desktop.exe`;
-const installedExecutable = String.raw`C:\Program Files\BiBCode\BiBCode.exe`;
+const testExecutable = String.raw`C:\coddy-studio-validation\CoddyStudio\target\aarch64-pc-windows-msvc\release\coddy-studio-desktop.exe`;
+const installedExecutable = String.raw`C:\Program Files\Coddy Studio\Coddy Studio.exe`;
 
 function rule(overrides: Partial<WindowsFirewallRuleRecord>): WindowsFirewallRuleRecord {
   return {
     name: "{00000000-0000-0000-0000-000000000000}",
-    displayName: "BiBCode",
+    displayName: "Coddy Studio",
     direction: "Inbound",
     action: "Block",
     enabled: "True",
@@ -42,8 +42,8 @@ describe("remove-test-firewall-rules", () => {
   });
 
   it("selects only rules program-scoped to the exact test executable", () => {
-    const tcp = rule({ name: "{tcp}", displayName: "BiBCode" });
-    const udp = rule({ name: "{udp}", displayName: "BiBCode" });
+    const tcp = rule({ name: "{tcp}", displayName: "Coddy Studio" });
+    const udp = rule({ name: "{udp}", displayName: "Coddy Studio" });
     const allowed = rule({ name: "{allow}", action: "Allow", profile: "Private" });
     const caseVariant = rule({ name: "{case}", program: testExecutable.toUpperCase() });
     const otherBuild = rule({
@@ -75,13 +75,13 @@ describe("remove-test-firewall-rules", () => {
   it("refuses installed or malformed cleanup targets", () => {
     expect(assertCleanupTarget(testExecutable)).toBe(testExecutable);
     expect(() => assertCleanupTarget("")).toThrow(FirewallCleanupTargetError);
-    expect(() => assertCleanupTarget("bibcode-desktop.exe")).toThrow(/absolute Windows path/);
-    expect(() => assertCleanupTarget(String.raw`C:\repo\target\release\bibcode-desktop`)).toThrow(
+    expect(() => assertCleanupTarget("coddy-studio-desktop.exe")).toThrow(/absolute Windows path/);
+    expect(() => assertCleanupTarget(String.raw`C:\repo\target\release\coddy-studio-desktop`)).toThrow(
       /\.exe/,
     );
     expect(() => assertCleanupTarget(installedExecutable)).toThrow(/installed location/);
     expect(() =>
-      assertCleanupTarget(String.raw`C:\Users\admin\AppData\Local\Programs\BiBCode\BiBCode.exe`),
+      assertCleanupTarget(String.raw`C:\Users\admin\AppData\Local\Programs\Coddy Studio\Coddy Studio.exe`),
     ).toThrow(/installed location/);
     expect(() => assertCleanupTarget(String.raw`C:\Windows\System32\svchost.exe`)).toThrow(
       /installed location/,
@@ -94,7 +94,7 @@ describe("remove-test-firewall-rules", () => {
     const single = parseFirewallRuleRecords(
       JSON.stringify({
         name: "{a}",
-        displayName: "BiBCode",
+        displayName: "Coddy Studio",
         direction: "Inbound",
         action: "Block",
         enabled: "True",
@@ -124,11 +124,11 @@ describe("remove-test-firewall-rules", () => {
         return { stdout: "", status: 0 };
       }
       const rules = removed
-        ? [rule({ name: "{managed}", displayName: "BiBCode Remote Access", action: "Allow" })]
+        ? [rule({ name: "{managed}", displayName: "Coddy Studio Remote Access", action: "Allow" })]
         : [
             rule({ name: "{tcp}" }),
             rule({ name: "{udp}" }),
-            rule({ name: "{managed}", displayName: "BiBCode Remote Access", action: "Allow" }),
+            rule({ name: "{managed}", displayName: "Coddy Studio Remote Access", action: "Allow" }),
           ];
       return { stdout: JSON.stringify(rules), status: 0 };
     });
@@ -145,9 +145,9 @@ describe("remove-test-firewall-rules", () => {
       FIREWALL_RULE_REMOVE_SCRIPT,
       FIREWALL_RULE_QUERY_SCRIPT,
     ]);
-    expect(calls[0]!.env).toEqual({ BIBCODE_FIREWALL_TARGET: testExecutable });
-    expect(calls[1]!.env).toEqual({ BIBCODE_FIREWALL_RULE_NAMES: "{tcp}|{udp}" });
-    expect(writes.join("")).toContain("Keeping protected rule BiBCode Remote Access");
+    expect(calls[0]!.env).toEqual({ CODDY_STUDIO_FIREWALL_TARGET: testExecutable });
+    expect(calls[1]!.env).toEqual({ CODDY_STUDIO_FIREWALL_RULE_NAMES: "{tcp}|{udp}" });
+    expect(writes.join("")).toContain("Keeping protected rule Coddy Studio Remote Access");
     expect(writes.join("")).toContain("Verified zero test-generated rules remain");
     expect(FIREWALL_RULE_QUERY_SCRIPT).toContain("$_.Program -ieq $target");
     expect(FIREWALL_RULE_REMOVE_SCRIPT).toContain("Remove-NetFirewallRule -Name $name");
@@ -166,7 +166,7 @@ describe("remove-test-firewall-rules", () => {
         { powerShell: survivingPowerShell, platform: "win32", write: (text) => writes.push(text) },
       ),
     ).toBe(1);
-    expect(writes.join("")).toContain("Still present: BiBCode ({tcp})");
+    expect(writes.join("")).toContain("Still present: Coddy Studio ({tcp})");
 
     const dryRunPowerShell = vi.fn(() => ({
       stdout: JSON.stringify([rule({ name: "{tcp}" })]),

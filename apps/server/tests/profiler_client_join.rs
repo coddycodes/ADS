@@ -10,7 +10,7 @@ mod websocket_frames;
 
 use std::time::Duration;
 
-use bibcode_server::{RpcExit, ServerConfig, ServerMessage, ServerRuntime};
+use coddy_studio_server::{RpcExit, ServerConfig, ServerMessage, ServerRuntime};
 use futures_util::SinkExt;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -66,7 +66,7 @@ async fn a_client_batch_is_joined_to_a_request_it_made_in_the_same_session() {
             &id(),
             "server.getConfig",
             json!({}),
-            &[("x-bibcode-profiler-rid", "itest:1")],
+            &[("x-coddy-studio-profiler-rid", "itest:1")],
         )
         .await,
     );

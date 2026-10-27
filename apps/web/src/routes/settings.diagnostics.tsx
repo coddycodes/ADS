@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback } from "react";
 

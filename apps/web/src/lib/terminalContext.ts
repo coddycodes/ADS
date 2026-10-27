@@ -1,4 +1,4 @@
-import { type ThreadId } from "@bibcode/contracts";
+import { type ThreadId } from "@coddy/contracts";
 
 import { extractTrailingElementContexts, type ParsedElementContextEntry } from "./elementContext";
 

@@ -49,7 +49,7 @@ pub(crate) const SCRCPY_SERVER_SHA256: &str =
     "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae";
 
 pub(crate) const HELPER_LABEL: &str = "android-scrcpy";
-const REMOTE_JAR: &str = "/data/local/tmp/bibcode-scrcpy-server-v4.1.jar";
+const REMOTE_JAR: &str = "/data/local/tmp/coddy-studio-scrcpy-server-v4.1.jar";
 const CODEC_H264: u32 = 0x6832_3634;
 /// scrcpy writes these in place of a codec id when it disables the stream or fails to
 /// configure it.
@@ -172,7 +172,7 @@ pub(crate) fn server_args(scid: u32) -> Vec<String> {
         // Nothing reads the control socket, so the server must not write clipboard changes.
         "clipboard_autosync=false".into(),
         // With cleanup on, scrcpy's CleanUp helper deletes the jar as it starts, so every
-        // session would push it again. It restores only options BiBCode never sets.
+        // session would push it again. It restores only options Coddy Studio never sets.
         "cleanup=false".into(),
     ]
     .into()
@@ -609,7 +609,7 @@ async fn write_local_jar() -> Result<PathBuf, DeviceError> {
     let nonce = getrandom::u64()
         .map_err(|error| DeviceError::Io(format!("no random file name: {error}")))?;
     let path = std::env::temp_dir().join(format!(
-        "bibcode-scrcpy-server-v{SCRCPY_VERSION}-{nonce:016x}.jar"
+        "coddy-studio-scrcpy-server-v{SCRCPY_VERSION}-{nonce:016x}.jar"
     ));
     let mut file = tokio::fs::OpenOptions::new()
         .write(true)
@@ -760,7 +760,7 @@ mod tests {
         assert_eq!(
             args[..3],
             [
-                "CLASSPATH=/data/local/tmp/bibcode-scrcpy-server-v4.1.jar".to_owned(),
+                "CLASSPATH=/data/local/tmp/coddy-studio-scrcpy-server-v4.1.jar".to_owned(),
                 "app_process".into(),
                 "/".into()
             ]
@@ -914,7 +914,7 @@ mod tests {
         // The remote hash never matches the fake's, so the jar was pushed.
         assert!(
             log.contains("push ")
-                && log.contains(" /data/local/tmp/bibcode-scrcpy-server-v4.1.jar"),
+                && log.contains(" /data/local/tmp/coddy-studio-scrcpy-server-v4.1.jar"),
             "{log}"
         );
         let forward = log

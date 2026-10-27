@@ -14,7 +14,7 @@ export const LOCK_POLL_MS = 250;
 const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const webDirectory = NodePath.join(repoRoot, "apps", "web");
 const lockDigest = NodeCrypto.createHash("sha1").update(webDirectory).digest("hex");
-const lockDirectory = NodePath.join(NodeOS.tmpdir(), `bibcode-web-build-${lockDigest}.lock`);
+const lockDirectory = NodePath.join(NodeOS.tmpdir(), `coddy-studio-web-build-${lockDigest}.lock`);
 const lockOwnerFile = NodePath.join(lockDirectory, "owner.txt");
 
 export function isErrorCode(error, code) {

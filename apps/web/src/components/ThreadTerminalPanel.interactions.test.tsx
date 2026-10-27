@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 
-import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { scopeThreadRef } from "@coddy/client-runtime/environment";
 import {
   createTerminalTranscriptRuntime,
   type TerminalTranscriptRuntime,
-} from "@bibcode/client-runtime/state/terminal";
+} from "@coddy/client-runtime/state/terminal";
 import {
   type ActivityActorSummary,
   type ActivitySnapshot,
@@ -18,8 +18,8 @@ import {
   type TerminalAttachStreamEvent,
   type TerminalLaunchCommand,
   type TerminalSessionSnapshot,
-} from "@bibcode/contracts";
-import type { TerminalFontPreference, TerminalThemePreference } from "@bibcode/contracts/settings";
+} from "@coddy/contracts";
+import type { TerminalFontPreference, TerminalThemePreference } from "@coddy/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -2872,8 +2872,8 @@ describe("TerminalViewport mounted lifecycle", () => {
       terminal: { env?: Record<string, string> };
     };
     expect(lightSpec.terminal.env).toMatchObject({
-      BIBCODE_OSC_BACKGROUND: "255,255,255",
-      BIBCODE_OSC_FOREGROUND: "28,33,41",
+      CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+      CODDY_STUDIO_OSC_FOREGROUND: "28,33,41",
     });
 
     testState.attachedSessionInputs.length = 0;
@@ -2886,7 +2886,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     const darkSpec = testState.attachedSessionInputs.at(-1) as {
       terminal: { env?: Record<string, string> };
     };
-    expect(darkSpec.terminal.env).toMatchObject({ BIBCODE_OSC_BACKGROUND: "14,18,24" });
+    expect(darkSpec.terminal.env).toMatchObject({ CODDY_STUDIO_OSC_BACKGROUND: "14,18,24" });
   });
 
   it("limits the persistent Windows console theme to Codex", async () => {
@@ -2900,13 +2900,13 @@ describe("TerminalViewport mounted lifecycle", () => {
             executable: "codex.exe",
             args: [],
             env: {
-              BIBCODE_OSC_BACKGROUND: "0,0,0",
-              BIBCODE_WINDOWS_CONSOLE_THEME: "command",
+              CODDY_STUDIO_OSC_BACKGROUND: "0,0,0",
+              CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "command",
             },
           })!,
           runtimeEnv: {
-            BIBCODE_OSC_FOREGROUND: "0,0,0",
-            BIBCODE_WINDOWS_CONSOLE_THEME: "runtime",
+            CODDY_STUDIO_OSC_FOREGROUND: "0,0,0",
+            CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "runtime",
           },
         })}
       />,
@@ -2915,10 +2915,10 @@ describe("TerminalViewport mounted lifecycle", () => {
       terminal: { env?: Record<string, string> };
     };
     expect(codexSpec.terminal.env).toMatchObject({
-      BIBCODE_OSC_BACKGROUND: "255,255,255",
-      BIBCODE_OSC_FOREGROUND: "28,33,41",
-      BIBCODE_OSC_CURSOR: "38,56,78",
-      BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+      CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+      CODDY_STUDIO_OSC_FOREGROUND: "28,33,41",
+      CODDY_STUDIO_OSC_CURSOR: "38,56,78",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
     });
 
     for (const [terminalId, executable, args, expected] of [
@@ -2943,7 +2943,7 @@ describe("TerminalViewport mounted lifecycle", () => {
       const spec = testState.attachedSessionInputs.at(-1) as {
         terminal: { env?: Record<string, string> };
       };
-      expect(spec.terminal.env?.BIBCODE_WINDOWS_CONSOLE_THEME).toBe(expected);
+      expect(spec.terminal.env?.CODDY_STUDIO_WINDOWS_CONSOLE_THEME).toBe(expected);
     }
   });
 
@@ -2966,7 +2966,7 @@ describe("TerminalViewport mounted lifecycle", () => {
       terminal: { env?: Record<string, string> };
     };
     expect(spec.terminal.env).toMatchObject({
-      BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
     });
   });
 
@@ -2990,7 +2990,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     expect(testState.attachedSessionInputs.at(-1)).toMatchObject({
       attach: true,
       terminal: {
-        env: expect.objectContaining({ BIBCODE_WINDOWS_CONSOLE_THEME: "dark" }),
+        env: expect.objectContaining({ CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "dark" }),
       },
     });
   });
@@ -3015,8 +3015,8 @@ describe("TerminalViewport mounted lifecycle", () => {
       attach: true,
       terminal: {
         env: expect.objectContaining({
-          BIBCODE_OSC_BACKGROUND: "255,255,255",
-          BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+          CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+          CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
         }),
       },
     });
@@ -4839,7 +4839,7 @@ describe("TerminalViewport mounted lifecycle", () => {
         "an older server",
         {},
         png(),
-        "Image paste needs a newer BiBCode server on this environment.",
+        "Image paste needs a newer Coddy Studio server on this environment.",
       ],
       [
         "an unsupported image type",
@@ -5050,7 +5050,7 @@ describe("TerminalViewport mounted lifecycle", () => {
       const attachment = testState.attachedSessionInputs.at(-1) as {
         terminal: { env?: Record<string, string> };
       };
-      expect(attachment.terminal.env).not.toHaveProperty("BIBCODE_WINDOWS_CONSOLE_THEME");
+      expect(attachment.terminal.env).not.toHaveProperty("CODDY_STUDIO_WINDOWS_CONSOLE_THEME");
     } finally {
       document.documentElement.classList.remove("dark");
       document.body.style.removeProperty("background-color");
@@ -5085,8 +5085,8 @@ describe("TerminalViewport mounted lifecycle", () => {
     };
     expect(attachmentAfterThemeChange.terminal).toEqual(initialAttachment.terminal);
     expect(attachmentAfterThemeChange.terminal.env).toMatchObject({
-      BIBCODE_OSC_BACKGROUND: "14,18,24",
-      BIBCODE_WINDOWS_CONSOLE_THEME: "dark",
+      CODDY_STUDIO_OSC_BACKGROUND: "14,18,24",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "dark",
     });
     expect(xtermState.terminals).toHaveLength(1);
     expect(terminal.options.theme).toEqual(
@@ -5112,10 +5112,10 @@ describe("TerminalViewport mounted lifecycle", () => {
         env: {
           COMMAND_ONLY: "yes",
           RUNTIME_ONLY: "yes",
-          BIBCODE_OSC_BACKGROUND: "255,255,255",
-          BIBCODE_OSC_FOREGROUND: "28,33,41",
-          BIBCODE_OSC_CURSOR: "38,56,78",
-          BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+          CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+          CODDY_STUDIO_OSC_FOREGROUND: "28,33,41",
+          CODDY_STUDIO_OSC_CURSOR: "38,56,78",
+          CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
         },
         command,
       },
@@ -5148,7 +5148,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     expect(buttonByLabel("Restart Codex Terminal to apply Light theme").disabled).toBe(false);
     const attachmentThemes = testState.attachedSessionInputs.map((value) => {
       const input = value as { terminal: { env?: Record<string, string> } };
-      return input.terminal.env?.BIBCODE_WINDOWS_CONSOLE_THEME;
+      return input.terminal.env?.CODDY_STUDIO_WINDOWS_CONSOLE_THEME;
     });
     expect(attachmentThemes.filter((theme) => theme !== undefined)).toEqual(
       expect.arrayContaining(["dark"]),
@@ -5175,8 +5175,8 @@ describe("TerminalViewport mounted lifecycle", () => {
       terminal: { env?: Record<string, string> };
     };
     expect(confirmedAttachment.terminal.env).toMatchObject({
-      BIBCODE_OSC_BACKGROUND: "255,255,255",
-      BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+      CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
     });
 
     runtime.ingest(restartedEvent("follow-up producer snapshot"));
@@ -5187,13 +5187,13 @@ describe("TerminalViewport mounted lifecycle", () => {
       terminal: { env?: Record<string, string> };
     };
     expect(stableAttachment.terminal.env).toMatchObject({
-      BIBCODE_OSC_BACKGROUND: "255,255,255",
-      BIBCODE_WINDOWS_CONSOLE_THEME: "light",
+      CODDY_STUDIO_OSC_BACKGROUND: "255,255,255",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "light",
     });
     const attachmentThemeTransitions = testState.attachedSessionInputs
       .map((value) => {
         const input = value as { terminal: { env?: Record<string, string> } };
-        return input.terminal.env?.BIBCODE_WINDOWS_CONSOLE_THEME;
+        return input.terminal.env?.CODDY_STUDIO_WINDOWS_CONSOLE_THEME;
       })
       .filter((theme): theme is string => theme !== undefined)
       .filter((theme, index, themes) => index === 0 || theme !== themes[index - 1]);
@@ -5388,8 +5388,8 @@ describe("TerminalViewport mounted lifecycle", () => {
     };
     expect(attachmentAfterThemeChange.terminal).toEqual(initialAttachment.terminal);
     expect(attachmentAfterThemeChange.terminal.env).toMatchObject({
-      BIBCODE_OSC_BACKGROUND: "14,18,24",
-      BIBCODE_WINDOWS_CONSOLE_THEME: "dark",
+      CODDY_STUDIO_OSC_BACKGROUND: "14,18,24",
+      CODDY_STUDIO_WINDOWS_CONSOLE_THEME: "dark",
     });
     expect(xtermState.terminals).toHaveLength(1);
     expect(terminal.options.theme).toEqual(
@@ -6110,7 +6110,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     expect(link).toBeDefined();
     terminal.writes.length = 0;
 
-    const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+    const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
     await act(async () =>
       mounted.root.render(<TerminalViewport {...props} workspaceUnavailable={reason} />),
     );
@@ -6400,7 +6400,7 @@ describe("ThreadTerminalPanel mounted controls", () => {
   });
 
   it("disables create, split, restart, and terminal writes with one workspace reason", async () => {
-    const reason = "Workspace unavailable. Retry detection or remove it from BiBCode.";
+    const reason = "Workspace unavailable. Retry detection or remove it from Coddy Studio.";
     const onSplitTerminal = vi.fn();
     const onNewTerminal = vi.fn();
     await mount(

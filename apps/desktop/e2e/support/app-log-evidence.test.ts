@@ -8,7 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { copyAppLogEvidence } from "./app-log-evidence.ts";
 
 const temporaryDirectory = () =>
-  NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-app-log-evidence-"));
+  NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coddy-studio-app-log-evidence-"));
 
 describe("packaged app log evidence", () => {
   it("keeps the end of each app log next to the run's screenshots", () => {

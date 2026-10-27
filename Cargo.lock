@@ -440,145 +440,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
-name = "bibcode-desktop"
-version = "0.11.0"
-dependencies = [
- "base64 0.22.1",
- "bibcode-server",
- "block2",
- "cairo-rs",
- "futures-util",
- "gtk",
- "if-addrs",
- "libc",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-web-kit",
- "portpicker",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "socket2",
- "tauri",
- "tauri-build",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tauri-plugin-updater",
- "tauri-plugin-wdio",
- "tauri-plugin-wdio-webdriver",
- "tempfile",
- "thiserror 2.0.21",
- "time",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "toml 1.1.6+spec-1.1.0",
- "tracing",
- "url",
- "uuid",
- "webkit2gtk",
- "webview2-com",
- "windows 0.61.3",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "bibcode-server"
-version = "0.11.0"
-dependencies = [
- "axum",
- "backtrace",
- "base64 0.22.1",
- "bibcode-server",
- "block2",
- "breakpad-symbols",
- "bytes",
- "clap",
- "crash-handler",
- "dirs",
- "dispatch2",
- "ed25519-dalek",
- "flate2",
- "futures-util",
- "getrandom 0.4.3",
- "hmac",
- "http-body-util",
- "httpdate",
- "hyper",
- "hyper-util",
- "jpeg-encoder",
- "junction",
- "libc",
- "mime_guess",
- "minidump",
- "minidump-processor",
- "minidumper",
- "notify",
- "objc2",
- "objc2-core-foundation",
- "objc2-core-media",
- "objc2-core-video",
- "objc2-foundation",
- "objc2-io-surface",
- "objc2-video-toolbox",
- "object",
- "open",
- "p256",
- "percent-encoding",
- "png 0.18.1",
- "portable-pty",
- "process-wrap",
- "prost",
- "protox",
- "reqwest",
- "rusqlite",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "snow",
- "subtle",
- "sysinfo",
- "tempfile",
- "thiserror 2.0.21",
- "time",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tower",
- "tower-http 0.7.1",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
- "windows-sys 0.61.2",
- "zip 9.0.0",
-]
-
-[[package]]
-name = "bibcode-updater-verifier"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "minisign-verify",
- "percent-encoding",
- "serde",
- "serde_json",
- "tempfile",
- "url",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -996,6 +857,146 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
+name = "coddy-studio-desktop"
+version = "0.11.0"
+dependencies = [
+ "base64 0.22.1",
+ "block2",
+ "cairo-rs",
+ "coddy-studio-server",
+ "futures-util",
+ "gtk",
+ "if-addrs",
+ "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
+ "portpicker",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "socket2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tauri-plugin-updater",
+ "tauri-plugin-wdio",
+ "tauri-plugin-wdio-webdriver",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "toml 1.1.6+spec-1.1.0",
+ "tracing",
+ "url",
+ "uuid",
+ "webkit2gtk",
+ "webview2-com",
+ "windows 0.61.3",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "coddy-studio-server"
+version = "0.11.0"
+dependencies = [
+ "axum",
+ "backtrace",
+ "base64 0.22.1",
+ "block2",
+ "breakpad-symbols",
+ "bytes",
+ "clap",
+ "coddy-studio-server",
+ "crash-handler",
+ "dirs",
+ "dispatch2",
+ "ed25519-dalek",
+ "flate2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hmac",
+ "http-body-util",
+ "httpdate",
+ "hyper",
+ "hyper-util",
+ "jpeg-encoder",
+ "junction",
+ "libc",
+ "mime_guess",
+ "minidump",
+ "minidump-processor",
+ "minidumper",
+ "notify",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-foundation",
+ "objc2-io-surface",
+ "objc2-video-toolbox",
+ "object",
+ "open",
+ "p256",
+ "percent-encoding",
+ "png 0.18.1",
+ "portable-pty",
+ "process-wrap",
+ "prost",
+ "protox",
+ "reqwest",
+ "rusqlite",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.1",
+ "snow",
+ "subtle",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+ "zip 9.0.0",
+]
+
+[[package]]
+name = "coddy-studio-updater-verifier"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "minisign-verify",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
+]
 
 [[package]]
 name = "colorchoice"
@@ -1506,7 +1507,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1783,7 +1784,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2300,7 +2301,7 @@ dependencies = [
  "gobject-sys 0.21.5",
  "libc",
  "system-deps 7.0.8",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2750,7 +2751,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -3218,7 +3219,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cde48f36530cbd91b65f050101e6c056d6eb743cea2a8f0f19beef69c6742ff8"
 dependencies = [
  "scopeguard",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3802,7 +3803,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4238,7 +4239,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4772,7 +4773,7 @@ version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools",
  "log",
  "multimap",
@@ -4937,7 +4938,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5285,7 +5286,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5343,7 +5344,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5706,6 +5707,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.14.1",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -6744,10 +6758,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7448,6 +7462,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7791,7 +7811,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

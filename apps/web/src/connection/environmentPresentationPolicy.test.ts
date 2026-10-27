@@ -5,8 +5,8 @@ import {
   SshConnectionTarget,
   UnavailableConnectionTarget,
   type ConnectionTarget,
-} from "@bibcode/client-runtime/connection";
-import { EnvironmentId } from "@bibcode/contracts";
+} from "@coddy/client-runtime/connection";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { desktopLocalConnectionId } from "./desktopLocal";

@@ -9,15 +9,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import * as React from "react";
 import { afterEach, beforeEach, describe, vi } from "vite-plus/test";
 
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@bibcode/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
-import { createModelSelection } from "@bibcode/shared/model";
-import { scopedThreadKey, scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@coddy/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@coddy/contracts/settings";
+import { createModelSelection } from "@coddy/shared/model";
+import { scopedThreadKey, scopeThreadRef } from "@coddy/client-runtime/environment";
 import { createEnvironmentPresentationPolicy } from "../connection/environmentPresentationPolicy";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-} from "@bibcode/client-runtime/state/shell";
+} from "@coddy/client-runtime/state/shell";
 
 const browserRuntime =
   typeof document !== "undefined" && typeof document.createElement === "function";
@@ -547,7 +547,7 @@ vi.mock("./WorktreeAvailabilityWarning", () => ({
           Retry detection
         </button>
         <button type="button" onClick={onRemove}>
-          Remove from BiBCode
+          Remove from Coddy Studio
         </button>
       </div>
     );
@@ -870,23 +870,23 @@ function cardDataProps(thread: EnvironmentThreadShell) {
     isPinned: h.metaStore.getState().pinnedThreadKeys.includes(key),
     isUnread: h.metaStore.getState().unreadThreadKeys.includes(key),
     worktreeStatus: (catalog?.adoptedWorkspaces.find((row) => row.threadId === thread.id) ??
-      null) as import("@bibcode/contracts").VcsAdoptedWorktreeStatus | null,
+      null) as import("@coddy/contracts").VcsAdoptedWorktreeStatus | null,
     runningTerminalIds: h.state.runningTerminalIds as readonly string[],
     discoveredPorts: (h.state.discoveredPortsByThreadId[thread.id] ??
-      []) as readonly import("@bibcode/contracts").DiscoveredLocalServer[],
+      []) as readonly import("@coddy/contracts").DiscoveredLocalServer[],
   };
 }
 
 vi.mock("./sidebar/useWorkspaceCardLookups", async () => {
   const indexes = await import("./sidebar/workspaceCardLookups");
   const { selectWorktreeCatalogCapabilityPolicy: policy } =
-    await import("@bibcode/client-runtime/state/worktrees");
+    await import("@coddy/client-runtime/state/worktrees");
   return {
     useWorkspaceCardLookups: (input: {
       project: import("../sidebarProjectGrouping").SidebarProjectSnapshot;
       serverConfigs: ReadonlyMap<
-        import("@bibcode/contracts").EnvironmentId,
-        import("@bibcode/contracts").ServerConfig
+        import("@coddy/contracts").EnvironmentId,
+        import("@coddy/contracts").ServerConfig
       >;
       active: boolean;
       threads: readonly EnvironmentThreadShell[];

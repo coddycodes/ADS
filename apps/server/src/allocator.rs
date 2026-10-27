@@ -1,6 +1,6 @@
 //! Process-wide allocator policy.
 //!
-//! On Linux, BiBCode allocates through glibc malloc, which keeps freed memory in the arena
+//! On Linux, Coddy Studio allocates through glibc malloc, which keeps freed memory in the arena
 //! that served it and returns only the free space at the top of a heap. One live chunk above
 //! a large freed region, which any later allocation can be, keeps the whole region resident.
 //! A full-store load or the startup validation snapshot therefore left gigabytes of free but
@@ -22,7 +22,7 @@ pub fn start_heap_trimmer() {
         return;
     }
     let spawned = std::thread::Builder::new()
-        .name("bibcode-heap-trim".to_owned())
+        .name("coddy-studio-heap-trim".to_owned())
         .spawn(|| {
             loop {
                 std::thread::sleep(TRIM_INTERVAL);
@@ -31,7 +31,7 @@ pub fn start_heap_trimmer() {
         });
     if let Err(error) = spawned {
         // Before logging starts, so stderr is the only place this can go.
-        eprintln!("bibcode: the heap trimmer did not start: {error}");
+        eprintln!("coddy-studio: the heap trimmer did not start: {error}");
     }
 }
 

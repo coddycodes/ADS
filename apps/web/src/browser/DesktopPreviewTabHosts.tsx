@@ -1,6 +1,6 @@
 "use client";
 
-import type { PreviewSessionSnapshot, ScopedThreadRef } from "@bibcode/contracts";
+import type { PreviewSessionSnapshot, ScopedThreadRef } from "@coddy/contracts";
 import { useEffect, useRef } from "react";
 
 import type { RightPanelSurface } from "~/rightPanelStore";

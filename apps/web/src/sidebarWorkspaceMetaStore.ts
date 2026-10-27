@@ -12,7 +12,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-const SIDEBAR_WORKSPACE_META_STORAGE_KEY = "bibcode:sidebar-workspace-meta:v1";
+const SIDEBAR_WORKSPACE_META_STORAGE_KEY = "coddy-studio:sidebar-workspace-meta:v1";
 const SIDEBAR_WORKSPACE_META_STORAGE_VERSION = 1;
 
 export interface SidebarWorkspaceMetaState {

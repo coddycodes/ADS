@@ -1,4 +1,4 @@
-use bibcode_server::{
+use coddy_studio_server::{
     assets,
     git::canonical_worktree_path_key,
     production::host_paths::process_compatible_path,
@@ -302,9 +302,9 @@ fn git_in(cwd: &Path, args: &[&str]) {
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "BiBCode Test")
+        .env("GIT_AUTHOR_NAME", "Coddy Studio Test")
         .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
-        .env("GIT_COMMITTER_NAME", "BiBCode Test")
+        .env("GIT_COMMITTER_NAME", "Coddy Studio Test")
         .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
         .output()
         .expect("git must be installed for integration tests");
@@ -313,7 +313,7 @@ fn git_in(cwd: &Path, args: &[&str]) {
 
 fn init_isolated_git_fixture(root: &Path) {
     git_in(root, &["init", "-b", "main"]);
-    let excludes = root.join(".git/bibcode-test-global-excludes");
+    let excludes = root.join(".git/coddy-studio-test-global-excludes");
     std::fs::write(&excludes, "").expect("empty fixture excludes file");
     git_in(
         root,
@@ -825,7 +825,7 @@ async fn entry_change_subscribers_share_one_sweep_per_root() {
 /// The save a formatter or editor makes: write a sibling temp file, then rename it over the target.
 async fn save_atomically(root: &Path, relative: &str, contents: &[u8]) {
     let target = root.join(relative);
-    let temp = target.with_extension("bibcode-save-tmp");
+    let temp = target.with_extension("coddy-studio-save-tmp");
     tokio::fs::write(&temp, contents).await.expect("temp file");
     tokio::fs::rename(&temp, &target)
         .await
@@ -1664,10 +1664,10 @@ async fn write_file_new_parent_paths_invalidates_cached_index_once_and_preserves
 async fn write_file_nested_gitignore_rebuilds_cached_classification() {
     let root = TempDir::new().expect("root");
     git_in(root.path(), &["init", "-b", "main"]);
-    write(root.path(), ".bibcode-task2-empty-excludes", b"").await;
+    write(root.path(), ".coddy-studio-task2-empty-excludes", b"").await;
     let empty_excludes = root
         .path()
-        .join(".bibcode-task2-empty-excludes")
+        .join(".coddy-studio-task2-empty-excludes")
         .to_string_lossy()
         .replace('\\', "/");
     git_in(
@@ -1677,7 +1677,7 @@ async fn write_file_nested_gitignore_rebuilds_cached_classification() {
     write(root.path(), "nested/.gitignore", b"").await;
     write(
         root.path(),
-        "nested/bibcode-task2-classification-9f3a7c1b",
+        "nested/coddy-studio-task2-classification-9f3a7c1b",
         b"target",
     )
     .await;
@@ -1690,7 +1690,7 @@ async fn write_file_nested_gitignore_rebuilds_cached_classification() {
         .expect("warm index");
     assert!(!entry_is_ignored(
         &initial,
-        "nested/bibcode-task2-classification-9f3a7c1b"
+        "nested/coddy-studio-task2-classification-9f3a7c1b"
     ));
 
     rpc.handle(
@@ -1698,7 +1698,7 @@ async fn write_file_nested_gitignore_rebuilds_cached_classification() {
         json!({
             "cwd": cwd,
             "relativePath": "nested/.gitignore",
-            "contents": "bibcode-task2-classification-9f3a7c1b\n"
+            "contents": "coddy-studio-task2-classification-9f3a7c1b\n"
         }),
     )
     .await
@@ -1709,7 +1709,7 @@ async fn write_file_nested_gitignore_rebuilds_cached_classification() {
         .expect("rebuild ignored classification");
     assert!(entry_is_ignored(
         &ignored,
-        "nested/bibcode-task2-classification-9f3a7c1b"
+        "nested/coddy-studio-task2-classification-9f3a7c1b"
     ));
     assert_eq!(rpc.index_scans(), 2);
 
@@ -1725,7 +1725,7 @@ async fn write_file_nested_gitignore_rebuilds_cached_classification() {
         .expect("rebuild unignored classification");
     assert!(!entry_is_ignored(
         &unignored,
-        "nested/bibcode-task2-classification-9f3a7c1b"
+        "nested/coddy-studio-task2-classification-9f3a7c1b"
     ));
     assert_eq!(rpc.index_scans(), 3);
 }
@@ -1734,10 +1734,10 @@ async fn write_file_nested_gitignore_rebuilds_cached_classification() {
 async fn write_file_git_internal_controls_rebuild_cached_classification() {
     let root = TempDir::new().expect("root");
     git_in(root.path(), &["init", "-b", "main"]);
-    write(root.path(), ".bibcode-task2-empty-excludes", b"").await;
+    write(root.path(), ".coddy-studio-task2-empty-excludes", b"").await;
     let empty_excludes = root
         .path()
-        .join(".bibcode-task2-empty-excludes")
+        .join(".coddy-studio-task2-empty-excludes")
         .to_string_lossy()
         .replace('\\', "/");
     git_in(
@@ -1746,20 +1746,20 @@ async fn write_file_git_internal_controls_rebuild_cached_classification() {
     );
     write(
         root.path(),
-        "bibcode-task2-info-exclude-41ac90d7",
+        "coddy-studio-task2-info-exclude-41ac90d7",
         b"target",
     )
     .await;
     write(
         root.path(),
-        "bibcode-task2-config-exclude-6e2d38f4",
+        "coddy-studio-task2-config-exclude-6e2d38f4",
         b"target",
     )
     .await;
     write(
         root.path(),
         ".task2-global-ignore",
-        b"bibcode-task2-config-exclude-6e2d38f4\n",
+        b"coddy-studio-task2-config-exclude-6e2d38f4\n",
     )
     .await;
     let original_exclude =
@@ -1775,11 +1775,11 @@ async fn write_file_git_internal_controls_rebuild_cached_classification() {
         .expect("warm index");
     assert!(!entry_is_ignored(
         &initial,
-        "bibcode-task2-info-exclude-41ac90d7"
+        "coddy-studio-task2-info-exclude-41ac90d7"
     ));
     assert!(!entry_is_ignored(
         &initial,
-        "bibcode-task2-config-exclude-6e2d38f4"
+        "coddy-studio-task2-config-exclude-6e2d38f4"
     ));
 
     rpc.handle(
@@ -1798,7 +1798,7 @@ async fn write_file_git_internal_controls_rebuild_cached_classification() {
         .expect("rebuild exclude classification");
     assert!(entry_is_ignored(
         &excluded,
-        "bibcode-task2-info-exclude-41ac90d7"
+        "coddy-studio-task2-info-exclude-41ac90d7"
     ));
     assert_eq!(rpc.index_scans(), 2);
 
@@ -1825,11 +1825,11 @@ async fn write_file_git_internal_controls_rebuild_cached_classification() {
         .expect("rebuild configured classification");
     assert!(entry_is_ignored(
         &configured,
-        "bibcode-task2-info-exclude-41ac90d7"
+        "coddy-studio-task2-info-exclude-41ac90d7"
     ));
     assert!(entry_is_ignored(
         &configured,
-        "bibcode-task2-config-exclude-6e2d38f4"
+        "coddy-studio-task2-config-exclude-6e2d38f4"
     ));
     assert_eq!(rpc.index_scans(), 3);
 
@@ -1845,11 +1845,11 @@ async fn write_file_git_internal_controls_rebuild_cached_classification() {
         .expect("rebuild restored config classification");
     assert!(entry_is_ignored(
         &config_restored,
-        "bibcode-task2-info-exclude-41ac90d7"
+        "coddy-studio-task2-info-exclude-41ac90d7"
     ));
     assert!(!entry_is_ignored(
         &config_restored,
-        "bibcode-task2-config-exclude-6e2d38f4"
+        "coddy-studio-task2-config-exclude-6e2d38f4"
     ));
     assert_eq!(rpc.index_scans(), 4);
 
@@ -1869,7 +1869,7 @@ async fn write_file_git_internal_controls_rebuild_cached_classification() {
         .expect("rebuild restored exclude classification");
     assert!(!entry_is_ignored(
         &exclude_restored,
-        "bibcode-task2-info-exclude-41ac90d7"
+        "coddy-studio-task2-info-exclude-41ac90d7"
     ));
     assert_eq!(rpc.index_scans(), 5);
 }
@@ -1881,10 +1881,10 @@ async fn write_file_symlink_aliases_to_classification_controls_invalidate() {
 
     let root = TempDir::new().expect("root");
     git_in(root.path(), &["init", "-b", "main"]);
-    write(root.path(), ".bibcode-task2-empty-excludes", b"").await;
+    write(root.path(), ".coddy-studio-task2-empty-excludes", b"").await;
     let empty_excludes = root
         .path()
-        .join(".bibcode-task2-empty-excludes")
+        .join(".coddy-studio-task2-empty-excludes")
         .to_string_lossy()
         .into_owned();
     git_in(
@@ -1894,13 +1894,13 @@ async fn write_file_symlink_aliases_to_classification_controls_invalidate() {
     write(root.path(), "nested/.gitignore", b"").await;
     write(
         root.path(),
-        "nested/bibcode-task2-alias-ignore-582e713c",
+        "nested/coddy-studio-task2-alias-ignore-582e713c",
         b"target",
     )
     .await;
     write(
         root.path(),
-        "bibcode-task2-alias-exclude-a9306d4e",
+        "coddy-studio-task2-alias-exclude-a9306d4e",
         b"target",
     )
     .await;
@@ -1927,7 +1927,7 @@ async fn write_file_symlink_aliases_to_classification_controls_invalidate() {
         json!({
             "cwd": cwd,
             "relativePath": "ignore-control-alias",
-            "contents": "bibcode-task2-alias-ignore-582e713c\n"
+            "contents": "coddy-studio-task2-alias-ignore-582e713c\n"
         }),
     )
     .await
@@ -1938,7 +1938,7 @@ async fn write_file_symlink_aliases_to_classification_controls_invalidate() {
         .expect("rebuild ignore alias");
     assert!(entry_is_ignored(
         &ignored,
-        "nested/bibcode-task2-alias-ignore-582e713c"
+        "nested/coddy-studio-task2-alias-ignore-582e713c"
     ));
     assert_eq!(rpc.index_scans(), 2);
 
@@ -1960,7 +1960,7 @@ async fn write_file_symlink_aliases_to_classification_controls_invalidate() {
         .expect("rebuild Git control alias");
     assert!(entry_is_ignored(
         &excluded,
-        "bibcode-task2-alias-exclude-a9306d4e"
+        "coddy-studio-task2-alias-exclude-a9306d4e"
     ));
     assert_eq!(rpc.index_scans(), 3);
 }
@@ -2645,7 +2645,7 @@ async fn transfer_urls_are_minted_for_files_folders_and_root_and_reject_escapes(
     let rpc = WorkspaceRpc::with_dependencies(
         WorkspaceService::default(),
         WorkspaceRpcDependencies {
-            transfer_access: Some(bibcode_server::transfer::TransferAccess::new(
+            transfer_access: Some(coddy_studio_server::transfer::TransferAccess::new(
                 b"secret".to_vec(),
             )),
             ..WorkspaceRpcDependencies::default()
@@ -2731,7 +2731,7 @@ async fn minting_an_upload_refuses_a_name_that_is_not_a_plain_file_name() {
     let rpc = WorkspaceRpc::with_dependencies(
         WorkspaceService::default(),
         WorkspaceRpcDependencies {
-            transfer_access: Some(bibcode_server::transfer::TransferAccess::new(
+            transfer_access: Some(coddy_studio_server::transfer::TransferAccess::new(
                 b"secret".to_vec(),
             )),
             ..WorkspaceRpcDependencies::default()
@@ -2767,11 +2767,11 @@ async fn minting_a_folder_download_refuses_a_tree_over_the_archive_limits() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/app.ts"), "0123456789").unwrap();
     let cwd = path_string(&root);
-    let rpc_with = |limits: bibcode_server::transfer::archive::ArchiveLimits| {
+    let rpc_with = |limits: coddy_studio_server::transfer::archive::ArchiveLimits| {
         WorkspaceRpc::with_dependencies(
             WorkspaceService::default(),
             WorkspaceRpcDependencies {
-                transfer_access: Some(bibcode_server::transfer::TransferAccess::new(
+                transfer_access: Some(coddy_studio_server::transfer::TransferAccess::new(
                     b"secret".to_vec(),
                 )),
                 archive_limits: limits,
@@ -2782,7 +2782,7 @@ async fn minting_a_folder_download_refuses_a_tree_over_the_archive_limits() {
 
     // The person sees why the download was refused, at mint time, in the panel's toast --
     // rather than a bare HTTP status once the transfer is already under way.
-    let too_many_bytes = rpc_with(bibcode_server::transfer::archive::ArchiveLimits {
+    let too_many_bytes = rpc_with(coddy_studio_server::transfer::archive::ArchiveLimits {
         max_entries: 1_000,
         max_bytes: 2 * 1024 * 1024 * 1024,
     });
@@ -2798,7 +2798,7 @@ async fn minting_a_folder_download_refuses_a_tree_over_the_archive_limits() {
         "archive"
     );
 
-    let over_bytes = rpc_with(bibcode_server::transfer::archive::ArchiveLimits {
+    let over_bytes = rpc_with(coddy_studio_server::transfer::archive::ArchiveLimits {
         max_entries: 1_000,
         max_bytes: 4,
     })
@@ -2815,7 +2815,7 @@ async fn minting_a_folder_download_refuses_a_tree_over_the_archive_limits() {
         "Folder exceeds the 4 bytes download limit. Download a subfolder instead."
     );
 
-    let over_entries = rpc_with(bibcode_server::transfer::archive::ArchiveLimits {
+    let over_entries = rpc_with(coddy_studio_server::transfer::archive::ArchiveLimits {
         max_entries: 0,
         max_bytes: 2 * 1024 * 1024 * 1024,
     })
@@ -2833,7 +2833,7 @@ async fn minting_a_folder_download_refuses_a_tree_over_the_archive_limits() {
 
     // A single file never runs the walk, so a tiny archive budget cannot refuse it.
     assert_eq!(
-        rpc_with(bibcode_server::transfer::archive::ArchiveLimits {
+        rpc_with(coddy_studio_server::transfer::archive::ArchiveLimits {
             max_entries: 0,
             max_bytes: 0,
         })

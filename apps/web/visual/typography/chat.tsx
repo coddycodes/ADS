@@ -6,7 +6,7 @@ import {
   TurnId,
   type ActivityEntry,
   type PreviewAnnotationPayload,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { ActivityEntryRow } from "../../src/components/activity/ActivityEntryRow";
 import { ChangedFilesCard } from "../../src/components/chat/ChangedFilesTree";
 import { ComposerPendingElementContextChip } from "../../src/components/chat/ComposerPendingElementContexts";

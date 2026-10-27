@@ -1,7 +1,7 @@
 import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";

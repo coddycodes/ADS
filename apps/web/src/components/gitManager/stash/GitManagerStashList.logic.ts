@@ -2,7 +2,7 @@ import type {
   GitManagerBlockedReason,
   GitManagerChangedFile,
   GitManagerStashEntry,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 
 export interface GitManagerStashRow {
   readonly index: number;

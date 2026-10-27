@@ -17,7 +17,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderSessionDefault,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import type { DriverOption } from "./providerDriverMeta";
 
 const harness = vi.hoisted(() => {

@@ -1,9 +1,9 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 
 import type { BearerConnectionTarget } from "./model.ts";
 
 /**
- * Every BiBCode server declares the same environment id (`"local"`), so a
+ * Every Coddy Studio server declares the same environment id (`"local"`), so a
  * host's own claim about itself cannot key the client's environment registry:
  * the desktop app's own Local environment and every remote host would fight
  * over one key. A saved remote is keyed by its storage instance id instead —

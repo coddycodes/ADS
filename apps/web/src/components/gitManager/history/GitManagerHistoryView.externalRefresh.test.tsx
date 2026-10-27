@@ -5,15 +5,15 @@ import {
   type GitManagerCommitEntry,
   type GitManagerCommitPage,
   type GitManagerGetCommitsInput,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { RegistryContext } from "@effect/atom-react";
-import { createGitManagerEnvironmentAtoms } from "@bibcode/client-runtime/state/git-manager";
+import { createGitManagerEnvironmentAtoms } from "@coddy/client-runtime/state/git-manager";
 import {
   EnvironmentRegistry,
   EnvironmentSupervisor,
   Wakeups,
-} from "@bibcode/client-runtime/connection";
-import type { RpcSession } from "@bibcode/client-runtime/rpc";
+} from "@coddy/client-runtime/connection";
+import type { RpcSession } from "@coddy/client-runtime/rpc";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";

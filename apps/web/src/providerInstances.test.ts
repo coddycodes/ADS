@@ -1,4 +1,4 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@bibcode/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,

@@ -1,4 +1,4 @@
-import type { ContextMenuEntry, ContextMenuItem } from "@bibcode/contracts";
+import type { ContextMenuEntry, ContextMenuItem } from "@coddy/contracts";
 
 import {
   consumeKeyboardContextMenuOpenedAt,
@@ -11,7 +11,7 @@ let nextMenuElementId = 0;
 /** A document-unique id for the label and reason spans an item references. */
 function menuElementId(part: "label" | "reason"): string {
   nextMenuElementId += 1;
-  return `bibcode-context-menu-${part}-${nextMenuElementId}`;
+  return `coddy-studio-context-menu-${part}-${nextMenuElementId}`;
 }
 
 // Inline Lucide-style icon paths (stroke-based, viewBox 0 0 24 24, strokeWidth 2).

@@ -5,8 +5,8 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
-import { type ServerProviderAgent, type ServerProviderSkill } from "@bibcode/contracts";
-import { serializeComposerReference } from "@bibcode/shared/composerReferences";
+import { type ServerProviderAgent, type ServerProviderSkill } from "@coddy/contracts";
+import { serializeComposerReference } from "@coddy/shared/composerReferences";
 import {
   $applyNodeReplacement,
   $createRangeSelection,
@@ -2031,7 +2031,7 @@ export function ComposerPromptEditor({
   const initialSkillMetadataRef = useRef(skillMetadataByName(skills));
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
-      namespace: "bibcode-composer-editor",
+      namespace: "coddy-studio-composer-editor",
       editable: true,
       nodes: [
         ComposerMentionNode,

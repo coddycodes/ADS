@@ -2,7 +2,7 @@
 import * as NodeAssert from "node:assert/strict";
 
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
-import { WS_METHODS } from "@bibcode/contracts";
+import { WS_METHODS } from "@coddy/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcClient from "effect/rpc/RpcClient";

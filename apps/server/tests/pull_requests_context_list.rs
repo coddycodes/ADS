@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bibcode_server::pull_requests::{
+use coddy_studio_server::pull_requests::{
     ContextRead, PullRequestsService,
     host::HostCommandRunner,
     model::{ListQuery, VocabularyKind},
@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-use bibcode_server::{
+use coddy_studio_server::{
     RequestId, RpcRegistry, RpcRequest, ServerConfig, ServerRuntime,
     production::pull_requests_rpc::{
         ConfiguredPullRequestsRpcServices, register_pull_requests_rpc,
@@ -344,7 +344,8 @@ fi
 exec "$FIXTURE_DIR/glab" "$@"
 "#,
         );
-        let hosts = std::sync::Arc::new(bibcode_server::source_control::ProviderHosts::default());
+        let hosts =
+            std::sync::Arc::new(coddy_studio_server::source_control::ProviderHosts::default());
         let service = PullRequestsService::with_runner(
             f.runner
                 .clone()

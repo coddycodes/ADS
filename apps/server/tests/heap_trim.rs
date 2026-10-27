@@ -28,7 +28,7 @@ fn trim_leaves_no_freed_arena_memory_resident() {
         let pinned = chunks.pop();
         drop(chunks);
 
-        bibcode_server::allocator::trim();
+        coddy_studio_server::allocator::trim();
 
         let retained = rss_anon_bytes().saturating_sub(baseline);
         drop(pinned);

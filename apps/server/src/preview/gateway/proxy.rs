@@ -59,10 +59,10 @@ const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PRINCIPAL_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
-const BOOTSTRAP_PATH: &str = "/__bibcode/bootstrap";
-const EXPIRED_COPY: &str = "This preview link expired. Go back to BiBCode and open it again.";
+const BOOTSTRAP_PATH: &str = "/__coddy-studio/bootstrap";
+const EXPIRED_COPY: &str = "This preview link expired. Go back to Coddy Studio and open it again.";
 
-/// Whether a BiBCode session is still active; `Some(expires_at_ms)` while it is.
+/// Whether a Coddy Studio session is still active; `Some(expires_at_ms)` while it is.
 pub trait PrincipalCheck: Send + Sync {
     fn session_expiry<'a>(&'a self, session_id: &'a str) -> BoxFuture<'a, Option<i64>>;
 }
@@ -86,7 +86,7 @@ pub struct GatewayContext {
     pub sessions: Arc<GatewaySessions>,
     pub principal: Arc<dyn PrincipalCheck>,
     pub limits: GatewayLimits,
-    /// The BiBCode session cookie name, never forwarded upstream or accepted back.
+    /// The Coddy Studio session cookie name, never forwarded upstream or accepted back.
     pub session_cookie_name: String,
     /// How often an active principal is re-checked; [`PRINCIPAL_CHECK_INTERVAL`] in production.
     pub principal_check_interval: Duration,
@@ -111,7 +111,7 @@ pub struct RunningTarget {
     /// Open client connections plus in-flight upstream exchanges and WebSocket tunnels;
     /// zero means idle since `last_activity_ms`.
     pub active: Arc<AtomicUsize>,
-    /// The handler the main port serves for BiBCode Connect preview hostnames.
+    /// The handler the main port serves for Coddy Connect preview hostnames.
     pub route: TargetRoute,
 }
 
@@ -161,7 +161,7 @@ impl<B> GatewayBody for B where
 {
 }
 
-/// One running target's handler, for requests the main port routes to it (BiBCode
+/// One running target's handler, for requests the main port routes to it (Coddy Studio
 /// Connect preview hostnames). Closed once the target closes or drains.
 #[derive(Clone)]
 pub struct TargetRoute(Arc<Listener>);
@@ -177,7 +177,7 @@ impl TargetRoute {
         self.0.shutdown.is_cancelled() || self.0.draining.is_cancelled()
     }
 
-    /// Serves a request that reached the main port under this target's BiBCode Connect
+    /// Serves a request that reached the main port under this target's Coddy Connect
     /// preview hostname. TLS ended at Cloudflare, so the client-facing origin is `https`.
     /// Only an authenticated exchange counts as activity: anyone may request a public
     /// hostname, and that must not keep the target (and its slot) from going idle.
@@ -189,7 +189,7 @@ impl TargetRoute {
             page(
                 StatusCode::FORBIDDEN,
                 "Service workers are off",
-                "Service workers don't run in previews over BiBCode Connect.",
+                "Service workers don't run in previews over Coddy Connect.",
             )
         } else {
             handle(self.0.clone(), request, true).await
@@ -421,11 +421,11 @@ async fn serve_connection(stream: TcpStream, state: Arc<Listener>) {
     }
 }
 
-/// Responses to a preview a browser-mode BiBCode UI opened, the gateway's own pages
+/// Responses to a preview a browser-mode Coddy Studio UI opened, the gateway's own pages
 /// included, may be framed by that UI only (see `frame::apply_frame_policy`). Other
 /// sessions (desktop views, system-browser tabs) keep the upstream's framing rules,
 /// and only the preview's own pages may frame them.
-/// `https` marks a request the main port routed from a BiBCode Connect preview hostname.
+/// `https` marks a request the main port routed from a Coddy Connect preview hostname.
 async fn handle<B: GatewayBody>(
     state: Arc<Listener>,
     request: Request<B>,
@@ -452,7 +452,7 @@ async fn handle<B: GatewayBody>(
 #[derive(Clone, Copy)]
 struct GatewayPage;
 
-/// The BiBCode UI allowed to frame this request's preview: a bootstrap's validated
+/// The Coddy Studio UI allowed to frame this request's preview: a bootstrap's validated
 /// `ui=`, or else the browser's current session's, so opening the same target in a
 /// tab (which replaces the shared cookie) keeps an open frame working.
 fn framing_ui_origin<B>(state: &Listener, request: &Request<B>) -> Option<String> {
@@ -471,7 +471,7 @@ fn framing_ui_origin<B>(state: &Listener, request: &Request<B>) -> Option<String
     bootstrap_ui_origin(request.uri().query().unwrap_or_default(), host).or(current)
 }
 
-/// The validated BiBCode UI origin a bootstrap link carries in `ui=`.
+/// The validated Coddy Studio UI origin a bootstrap link carries in `ui=`.
 fn bootstrap_ui_origin(query: &str, host: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let (name, value) = pair.split_once('=')?;
@@ -924,7 +924,7 @@ fn bad_request() -> Response<ProxyBody> {
     page(
         StatusCode::BAD_REQUEST,
         "Invalid preview request",
-        "This preview address is malformed. Go back to BiBCode and open it again.",
+        "This preview address is malformed. Go back to Coddy Studio and open it again.",
     )
 }
 

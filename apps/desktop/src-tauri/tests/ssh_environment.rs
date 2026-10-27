@@ -1,7 +1,7 @@
 //! Desktop-managed SSH environments end to end, with only the SSH hop faked.
 //!
 //! `SshEnvironmentManager` and its tunnel cache, the production launch, stop
-//! and pairing scripts, a real `bibcode serve` / `bibcode pairing issue`, and
+//! and pairing scripts, a real `coddy-studio serve` / `coddy-studio pairing issue`, and
 //! the production `/oauth/token` exchange run unchanged. The stand-in client
 //! (`fixtures/ssh/fake_ssh.py`, Python 3) runs remote commands locally with
 //! OpenSSH semantics: the remote argv is joined with spaces and run by
@@ -11,17 +11,17 @@
 //! as sshd does without a PTY, so killing the client leaves the remote command
 //! running and a remote leak is visible.
 //!
-//! Every test is `#[ignore]`d because it needs a fresh `bibcode`, which
-//! `cargo test -p bibcode-desktop` neither builds nor checks:
+//! Every test is `#[ignore]`d because it needs a fresh `coddy-studio`, which
+//! `cargo test -p coddy-studio-desktop` neither builds nor checks:
 //!
 //! ```sh
-//! cargo test -p bibcode-server --test cli_smoke --no-run -j 2
-//! cargo test -p bibcode-desktop --test ssh_environment -- --ignored
+//! cargo test -p coddy-studio-server --test cli_smoke --no-run -j 2
+//! cargo test -p coddy-studio-desktop --test ssh_environment -- --ignored
 //! ```
 //!
 //! Scenarios run one at a time (`SCENARIO_LOCK`), so the remote servers
-//! never race for a port. `BIBCODE_SSH_FIXTURE_BIBCODE` overrides the binary (default
-//! `target/debug/bibcode`); `BIBCODE_SSH_FIXTURE_PORT_START` overrides the
+//! never race for a port. `CODDY_STUDIO_SSH_FIXTURE_CODDY_STUDIO` overrides the binary (default
+//! `target/debug/coddy-studio`); `CODDY_STUDIO_SSH_FIXTURE_PORT_START` overrides the
 //! first remote port the fake remote scans (default 47310, away from 3773).
 #![cfg(unix)]
 
@@ -34,7 +34,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_desktop_lib::{
+use coddy_studio_desktop_lib::{
     desktop_bridge_bootstrap_ssh_bearer_session,
     ssh::{
         SshEnvironmentBootstrap, SshEnvironmentEnsureOptions, SshEnvironmentManager,
@@ -67,7 +67,7 @@ const DEFAULT_PORT_START: u16 = 47310;
 /// 200 more, so the start must leave that much room below 65535.
 const PORT_START_RANGE: std::ops::RangeInclusive<u16> = 1024..=65000;
 
-/// Parses `BIBCODE_SSH_FIXTURE_PORT_START`; it is interpolated into the fake
+/// Parses `CODDY_STUDIO_SSH_FIXTURE_PORT_START`; it is interpolated into the fake
 /// ssh wrapper, so only a plain port number in range is accepted.
 fn parse_port_start(value: Option<&str>) -> Result<u16, String> {
     let Some(value) = value else {
@@ -79,7 +79,7 @@ fn parse_port_start(value: Option<&str>) -> Result<u16, String> {
         .filter(|port| PORT_START_RANGE.contains(port))
         .ok_or_else(|| {
             format!(
-                "BIBCODE_SSH_FIXTURE_PORT_START must be a port from {} to {}; got {value:?}",
+                "CODDY_STUDIO_SSH_FIXTURE_PORT_START must be a port from {} to {}; got {value:?}",
                 PORT_START_RANGE.start(),
                 PORT_START_RANGE.end()
             )
@@ -90,21 +90,21 @@ fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ssh")
 }
 
-fn real_bibcode() -> PathBuf {
-    let bibcode = std::env::var_os("BIBCODE_SSH_FIXTURE_BIBCODE")
+fn real_coddy_studio() -> PathBuf {
+    let coddy_studio = std::env::var_os("CODDY_STUDIO_SSH_FIXTURE_CODDY_STUDIO")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             let target = std::env::var_os("CARGO_TARGET_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target"));
-            target.join("debug/bibcode")
+            target.join("debug/coddy-studio")
         });
     assert!(
-        bibcode.is_file(),
-        "{} is missing; run `cargo build -p bibcode-server --bin bibcode` first",
-        bibcode.display()
+        coddy_studio.is_file(),
+        "{} is missing; run `cargo build -p coddy-studio-server --bin coddy-studio` first",
+        coddy_studio.display()
     );
-    bibcode
+    coddy_studio
 }
 
 fn standard_scopes() -> Vec<String> {
@@ -175,15 +175,15 @@ impl Harness {
 
     async fn create(alias: &'static str, sshd_sessions: bool) -> Self {
         let scenario = SCENARIO_LOCK.lock().await;
-        let bibcode = real_bibcode();
+        let coddy_studio = real_coddy_studio();
         let root = tempfile::Builder::new()
-            .prefix("bibcode-ssh-environment-")
+            .prefix("coddy-studio-ssh-environment-")
             .tempdir()
             .expect("fixture root");
         let state = root.path().join(alias);
         fs::create_dir_all(&state).expect("fixture state directory");
         hermetic_providers::write_hermetic_settings(
-            &state.join("remote-home/.bibcode/userdata"),
+            &state.join("remote-home/.coddy/studio/userdata"),
             serde_json::json!({ "providers": {
                 "codex": { "enabled": false },
                 "claudeAgent": { "enabled": false },
@@ -193,7 +193,7 @@ impl Harness {
             }}),
         );
         let port_start = parse_port_start(
-            std::env::var("BIBCODE_SSH_FIXTURE_PORT_START")
+            std::env::var("CODDY_STUDIO_SSH_FIXTURE_PORT_START")
                 .ok()
                 .as_deref(),
         )
@@ -205,12 +205,12 @@ impl Harness {
             &ssh_program,
             format!(
                 "#!/bin/sh\n\
-                 SSH_FIXTURE_ROOT={root} SSH_FIXTURE_BIBCODE={bibcode} \
+                 SSH_FIXTURE_ROOT={root} SSH_FIXTURE_CODDY_STUDIO={coddy_studio} \
                  SSH_FIXTURE_REMOTE_BIN={remote_bin} SSH_FIXTURE_REMOTE_PORT_START={port_start} \
                  SSH_FIXTURE_SSHD_SESSIONS={sshd_sessions} \
                  exec python3 {fake} \"$@\"\n",
                 root = quote(root.path()),
-                bibcode = quote(&bibcode),
+                coddy_studio = quote(&coddy_studio),
                 remote_bin = quote(&fixtures_dir().join("remote-bin")),
                 sshd_sessions = u8::from(sshd_sessions),
                 fake = quote(&fixtures_dir().join("fake_ssh.py")),
@@ -257,7 +257,7 @@ impl Harness {
         )
         .await
         .unwrap_or_else(|_| Err(format!("ensure_environment exceeded {STEP_TIMEOUT:?}")));
-        for entry in fs::read_dir(self.remote_home().join(".bibcode-ssh-launch"))
+        for entry in fs::read_dir(self.remote_home().join(".coddy/studio/ssh-launch"))
             .into_iter()
             .flatten()
             .flatten()
@@ -300,8 +300,8 @@ impl Harness {
             .collect()
     }
 
-    fn remote_bibcode_log(&self) -> String {
-        fs::read_to_string(self.state.join("remote-bibcode.log")).unwrap_or_default()
+    fn remote_coddy_studio_log(&self) -> String {
+        fs::read_to_string(self.state.join("remote-coddy-studio.log")).unwrap_or_default()
     }
 
     fn tunnel_pids(&self) -> Vec<u32> {
@@ -335,7 +335,7 @@ impl Harness {
             .collect()
     }
 
-    /// Pids of every hung remote `bibcode pairing` stand-in (`sleep 600`).
+    /// Pids of every hung remote `coddy-studio pairing` stand-in (`sleep 600`).
     fn hang_pids(&self) -> Vec<u32> {
         self.pid_lines_in("hang.pid")
     }
@@ -347,7 +347,7 @@ impl Harness {
 
     /// Pids of the managed remote servers, from the launch script's pid files.
     fn remote_server_pids(&self) -> Vec<u32> {
-        fs::read_dir(self.remote_home().join(".bibcode-ssh-launch"))
+        fs::read_dir(self.remote_home().join(".coddy/studio/ssh-launch"))
             .into_iter()
             .flatten()
             .flatten()
@@ -371,7 +371,7 @@ impl Harness {
 
 impl Drop for Harness {
     /// Last-resort cleanup of processes this harness started, for panics
-    /// before the explicit `disconnect_environment`: remote `bibcode serve`
+    /// before the explicit `disconnect_environment`: remote `coddy-studio serve`
     /// (pid files written by the launch script), fake tunnel forwarders, hung
     /// remote pairing stand-ins, and sshd-like remote sessions still running.
     fn drop(&mut self) {
@@ -435,14 +435,14 @@ fn port_start_override_must_be_a_port_that_leaves_room_for_the_scan() {
     ] {
         let error = parse_port_start(Some(invalid)).expect_err(invalid);
         assert!(
-            error.contains("BIBCODE_SSH_FIXTURE_PORT_START"),
+            error.contains("CODDY_STUDIO_SSH_FIXTURE_PORT_START"),
             "{invalid}: {error}"
         );
     }
 }
 
 #[tokio::test]
-#[ignore = "needs a guarded bibcode: cargo test -p bibcode-server --test cli_smoke --no-run"]
+#[ignore = "needs a guarded coddy-studio: cargo test -p coddy-studio-server --test cli_smoke --no-run"]
 async fn add_then_reconnect_mints_fresh_tokens_with_standard_scopes() {
     let harness = Harness::new("sshd-add").await;
     let manager = harness.manager(SshOperationDeadlines::default());
@@ -453,19 +453,19 @@ async fn add_then_reconnect_mints_fresh_tokens_with_standard_scopes() {
         .await
         .unwrap_or_else(|error| {
             panic!(
-                "onboarding ensure: {error}\nremote bibcode:\n{}",
-                harness.remote_bibcode_log()
+                "onboarding ensure: {error}\nremote coddy-studio:\n{}",
+                harness.remote_coddy_studio_log()
             )
         });
     let first = onboarding.pairing_token.clone().expect("onboarding token");
     assert_eq!(harness.ssh_kinds(), ["launch", "tunnel", "pairing"]);
     assert!(
-        harness.remote_bibcode_log().contains(&format!(
-            "[pairing] [issue] [--base-dir] [{}/.bibcode] [--json]",
+        harness.remote_coddy_studio_log().contains(&format!(
+            "[pairing] [issue] [--base-dir] [{}/.coddy/studio] [--json]",
             harness.remote_home().display()
         )),
         "the pairing command must survive OpenSSH joining:\n{}",
-        harness.remote_bibcode_log()
+        harness.remote_coddy_studio_log()
     );
     assert_eq!(
         exchange(&onboarding, &first).await,
@@ -511,7 +511,7 @@ async fn add_then_reconnect_mints_fresh_tokens_with_standard_scopes() {
 }
 
 #[tokio::test]
-#[ignore = "needs a guarded bibcode: cargo test -p bibcode-server --test cli_smoke --no-run"]
+#[ignore = "needs a guarded coddy-studio: cargo test -p coddy-studio-server --test cli_smoke --no-run"]
 async fn desktop_restart_mints_a_fresh_token() {
     let harness = Harness::new("sshd-restart").await;
     let before_restart = harness.manager(SshOperationDeadlines::default());
@@ -544,7 +544,7 @@ async fn desktop_restart_mints_a_fresh_token() {
 }
 
 #[tokio::test]
-#[ignore = "needs a guarded bibcode: cargo test -p bibcode-server --test cli_smoke --no-run"]
+#[ignore = "needs a guarded coddy-studio: cargo test -p coddy-studio-server --test cli_smoke --no-run"]
 async fn dead_tunnel_reconnects_and_mints_a_fresh_token() {
     let harness = Harness::new("sshd-deadtunnel").await;
     let manager = harness.manager(SshOperationDeadlines::default());
@@ -583,7 +583,7 @@ async fn dead_tunnel_reconnects_and_mints_a_fresh_token() {
 }
 
 #[tokio::test]
-#[ignore = "needs a guarded bibcode: cargo test -p bibcode-server --test cli_smoke --no-run"]
+#[ignore = "needs a guarded coddy-studio: cargo test -p coddy-studio-server --test cli_smoke --no-run"]
 async fn remote_server_stopped_under_a_live_tunnel_is_relaunched() {
     let harness = Harness::new("sshd-relaunch").await;
     let manager = harness.manager(SshOperationDeadlines::default());
@@ -637,12 +637,12 @@ async fn remote_server_stopped_under_a_live_tunnel_is_relaunched() {
 }
 
 /// Real sshd does not signal a remote command without a PTY when the client
-/// goes away, so a hung `bibcode pairing issue` would outlive the desktop's
+/// goes away, so a hung `coddy-studio pairing issue` would outlive the desktop's
 /// deadline. The remote watchdog ends it within its bound
 /// (`SshOperationDeadlines::pairing_watchdog_bound`) plus the TERM-to-KILL
 /// grace; this allows 3 s past the bound.
 #[tokio::test]
-#[ignore = "needs a guarded bibcode: cargo test -p bibcode-server --test cli_smoke --no-run"]
+#[ignore = "needs a guarded coddy-studio: cargo test -p coddy-studio-server --test cli_smoke --no-run"]
 async fn pairing_timeout_terminates_the_ssh_child_and_the_remote_command() {
     let harness = Harness::with_sshd_sessions("hang-pairing").await;
     let deadlines = SshOperationDeadlines {
@@ -696,7 +696,7 @@ async fn pairing_timeout_terminates_the_ssh_child_and_the_remote_command() {
 }
 
 #[tokio::test]
-#[ignore = "needs a guarded bibcode: cargo test -p bibcode-server --test cli_smoke --no-run"]
+#[ignore = "needs a guarded coddy-studio: cargo test -p coddy-studio-server --test cli_smoke --no-run"]
 async fn timed_out_pairing_retries_leave_no_remote_command() {
     let harness = Harness::with_sshd_sessions("hang-pairing-retries").await;
     let deadlines = SshOperationDeadlines {

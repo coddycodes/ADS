@@ -5,7 +5,7 @@ import {
   ProviderInstanceId,
   TERMINAL_LAUNCH_EXECUTABLE_MAX_LENGTH,
   type ServerProvider,
-} from "@bibcode/contracts";
+} from "@coddy/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

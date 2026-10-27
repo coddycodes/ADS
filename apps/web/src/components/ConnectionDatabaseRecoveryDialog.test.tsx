@@ -109,7 +109,7 @@ describe("ConnectionDatabaseRecoveryDialog", () => {
 
     expect(container.textContent).toContain("Connection database needs reset");
     expect(container.textContent).toContain(
-      "This BiBCode build uses an older browser engine than the one that last wrote its connection data, so the connection database cannot be opened.",
+      "This Coddy Studio build uses an older browser engine than the one that last wrote its connection data, so the connection database cannot be opened.",
     );
     await act(async () => button("Reset saved connection data").click());
     expect(deleteDatabase).not.toHaveBeenCalled();

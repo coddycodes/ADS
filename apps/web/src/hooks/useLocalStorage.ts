@@ -78,7 +78,7 @@ export const removeLocalStorageItem = (key: string) => {
   }
 };
 
-const LOCAL_STORAGE_CHANGE_EVENT = "bibcode:local_storage_change";
+const LOCAL_STORAGE_CHANGE_EVENT = "coddy-studio:local_storage_change";
 
 interface LocalStorageChangeDetail {
   key: string;

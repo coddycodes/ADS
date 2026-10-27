@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@bibcode/contracts";
+import { EnvironmentId } from "@coddy/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const primary = vi.hoisted(() => ({ id: null as string | null }));

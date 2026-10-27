@@ -21,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::{RpcRegistry, ServerConfig, ServerHandle, ServerRuntime};
+use coddy_studio_server::{RpcRegistry, ServerConfig, ServerHandle, ServerRuntime};
 use futures_util::{SinkExt, Stream, StreamExt, future::join_all};
 use serde_json::{Value, json};
 use snow::TransportState;
@@ -231,7 +231,7 @@ async fn connect_plain(proxy: SocketAddr, chunked: bool) -> TestSocket {
     if chunked {
         request.headers_mut().insert(
             "Sec-WebSocket-Protocol",
-            HeaderValue::from_static("bibcode.rpc.chunked.v1"),
+            HeaderValue::from_static("coddy-studio.rpc.chunked.v1"),
         );
     }
     let (socket, response) = connect_async(request).await.expect("WebSocket connects");
@@ -240,7 +240,7 @@ async fn connect_plain(proxy: SocketAddr, chunked: bool) -> TestSocket {
             .headers()
             .get("Sec-WebSocket-Protocol")
             .and_then(|value| value.to_str().ok()),
-        chunked.then_some("bibcode.rpc.chunked.v1"),
+        chunked.then_some("coddy-studio.rpc.chunked.v1"),
     );
     socket
 }
@@ -1154,7 +1154,7 @@ async fn proxy_upstream_rate_is_enforced() {
 
 async fn staged_upload_trial(mode: Mode, up_rate: u64) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use bibcode_server::transfer::staging::{UploadClock, UploadLimits, UploadRegistry};
+    use coddy_studio_server::transfer::staging::{UploadClock, UploadLimits, UploadRegistry};
     use sha2::{Digest, Sha256};
     within_trial_deadline("staged upload", async {
         let temp = TempDir::new().unwrap();
@@ -1163,7 +1163,7 @@ async fn staged_upload_trial(mode: Mode, up_rate: u64) {
         let (started_tx, mut started_rx) = tokio::sync::mpsc::channel(1);
         let (ended_tx, mut ended_rx) = tokio::sync::mpsc::channel(1);
         let handle = start_server_with(&temp, |registry| {
-            bibcode_server::production::uploads_rpc::register_uploads_rpc(registry, uploads.clone(), temp.path().join("terminal-pastes"));
+            coddy_studio_server::production::uploads_rpc::register_uploads_rpc(registry, uploads.clone(), temp.path().join("terminal-pastes"));
             registry.register_stream("fixture.watch", move |_, cancellation| {
                 let (sender, receiver) = tokio::sync::mpsc::channel(1);
                 let started = started_tx.clone(); let ended = ended_tx.clone();
